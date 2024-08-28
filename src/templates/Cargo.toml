@@ -1,0 +1,12 @@
+[package]
+name = "arch-bitcoin-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+borsh = "0.9"
+bitcoin = "0.29"
+arch_program = { path = "../program/src" }
+
+[lib]
+crate-type = ["cdylib"]

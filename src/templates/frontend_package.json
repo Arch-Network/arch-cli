@@ -1,0 +1,16 @@
+{
+    "name": "arch-network-frontend",
+    "version": "1.0.0",
+    "description": "Frontend for arch-network app",
+    "scripts": {
+      "start": "react-scripts start",
+      "build": "react-scripts build"
+    },
+    "dependencies": {
+      "react": "^17.0.2",
+      "react-dom": "^17.0.2"
+    },
+    "devDependencies": {
+      "react-scripts": "4.0.3"
+    }
+  }
