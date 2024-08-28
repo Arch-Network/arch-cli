@@ -1,4 +1,3 @@
-use bitcoin::Network;
 use clap::{ Parser, Subcommand, Command };
 use std::fs;
 use tokio;
@@ -6,7 +5,7 @@ use anyhow::{ Context, Result };
 use std::process::Command as ShellCommand;
 use common::helper::*;
 use common::constants::*;
-use bitcoin::{ Address, Network, PublicKey };
+use bitcoin::{ Address, PublicKey };
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
@@ -96,9 +95,13 @@ fn deploy() -> Result<()> {
         "Failed to get program key pair"
     );
 
+    // Convert the program pubkey to a Bitcoin address
+    let bitcoin_address = program_pubkey
+        .to_bitcoin_address(bitcoin::Network::Regtest)
+        .expect("Failed to create Bitcoin address");
+
     // Tell user to deposit funds into the program account
-    let program_address = Address::p2pkh(&program_pubkey, Network::Testnet);
-    println!("Please deposit funds into the program account: {:?}", program_address);
+    println!("Please deposit funds into the program account: {}", bitcoin_address);
 
     // Wait for user to deposit funds
     println!("Waiting for funds to be deposited...");

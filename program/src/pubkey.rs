@@ -1,5 +1,6 @@
-use borsh::{BorshDeserialize, BorshSerialize};
-use serde::{Deserialize, Serialize};
+use borsh::{ BorshDeserialize, BorshSerialize };
+use serde::{ Deserialize, Serialize };
+use bitcoin::{ key::Secp256k1, secp256k1, Address, Network, PublicKey };
 
 #[repr(C)]
 #[derive(
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     BorshSerialize,
-    BorshDeserialize,
+    BorshDeserialize
 )]
 pub struct Pubkey(pub [u8; 32]);
 
@@ -44,7 +45,28 @@ impl Pubkey {
 
     /// Log a `Pubkey` from a program
     pub fn log(&self) {
-        unsafe { crate::syscalls::sol_log_pubkey(self.as_ref() as *const _ as *const u8) };
+        unsafe { crate::syscalls::sol_log_pubkey(self.as_ref() as *const _ as *const u8) }
+    }
+
+    pub fn to_bitcoin_address(
+        &self,
+        network: bitcoin::network::Network
+    ) -> Result<Address, Box<dyn std::error::Error>> {
+        // Create a Secp256k1 context
+        let secp = Secp256k1::new();
+
+        // Create a full PublicKey from the 32-byte array
+        // We're assuming this is a compressed public key, so we prepend 0x02 or 0x03
+        let mut pubkey_bytes = [0u8; 33];
+        pubkey_bytes[0] = 2; // Assume it's a "even" y-coordinate. If not, this might need to be 3.
+        pubkey_bytes[1..].copy_from_slice(&self.0);
+
+        let full_pubkey = PublicKey::from_slice(&pubkey_bytes)?;
+
+        // Create a Bitcoin address from the public key
+        let address = Address::p2wpkh(&full_pubkey, bitcoin::network::Network::Regtest)?;
+
+        Ok(address)
     }
 }
 

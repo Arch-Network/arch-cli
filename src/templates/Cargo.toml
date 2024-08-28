@@ -1,11 +1,11 @@
 [package]
-name = "arch-bitcoin-app"
+name = "arch-network-app"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 borsh = "0.9"
-bitcoin = "0.29"
+bitcoin = "0.31.0"
 arch_program = { path = "../program/src" }
 
 [lib]

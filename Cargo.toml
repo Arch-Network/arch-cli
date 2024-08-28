@@ -7,7 +7,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.2", features = ["derive"] }
 anyhow = "1.0.78"
-bitcoin = "0.30.1"
+bitcoin = "0.31.0"
 tokio = { version = "1.x", features = ["rt-multi-thread", "macros"] }
 hex = { version = "0.4.3", default-features = false }
 memoffset = "0.9.1"
