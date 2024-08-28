@@ -16,7 +16,7 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> Result<(), ProgramError> {
-    msg!("Hello, arch-bitcoin!");
+    msg!("Hello, Arch Network!");
     Ok(())
 }
 

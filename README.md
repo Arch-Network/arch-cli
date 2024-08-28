@@ -1,6 +1,6 @@
 # Arch-CLI
 
-Arch-CLI is a command-line interface tool designed to streamline the development process for Arch Network applications. It provides a set of commands to initialize, manage, and deploy arch-bitcoin programs efficiently.
+Arch-CLI is a command-line interface tool designed to streamline the development process for Arch Network applications. It provides a set of commands to initialize, manage, and deploy Arch Network programs efficiently.
 
 ## Features
 
@@ -43,7 +43,7 @@ Launches the development environment using the `start-server.sh` script.
 arch-cli deploy <example_name>
 ```
 
-Compiles and deploys the specified program to the arch-bitcoin network.
+Compiles and deploys the specified program to the Arch Network network.
 
 ### Stop the development server
 

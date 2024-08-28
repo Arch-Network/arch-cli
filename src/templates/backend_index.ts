@@ -8,7 +8,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.send('Arch-bitcoin backend is running!');
+  res.send('Arch Network backend is running!');
 });
 
 app.listen(PORT, () => {

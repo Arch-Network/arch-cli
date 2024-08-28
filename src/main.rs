@@ -19,6 +19,7 @@ enum Commands {
         example_name: String,
     },
     StopServer,
+    Clean,
 }
 
 #[tokio::main]
@@ -30,13 +31,23 @@ async fn main() -> Result<()> {
         Commands::StartServer => start_server(),
         Commands::Deploy { example_name } => deploy(example_name),
         Commands::StopServer => stop_server(),
+        Commands::Clean => clean(),
     }
 }
 
 fn init() -> Result<()> {
-    println!("Initializing new arch-bitcoin app...");
+    println!("Initializing new Arch Network app...");
+
+    // Navigate to the program folder and run `cargo build-sbf`
+    println!("Building Arch Network program...");
+    ShellCommand::new("cargo")
+        .current_dir("program")
+        .arg("build-sbf")
+        .output()
+        .expect("Failed to build Arch Network program");
 
     // Create project structure
+    println!("Creating project structure...");
     let dirs = ["src/app/program/src", "src/app/backend", "src/app/frontend"];
 
     for dir in dirs.iter() {
@@ -44,6 +55,7 @@ fn init() -> Result<()> {
     }
 
     // Create boilerplate files
+    println!("Creating boilerplate files...");
     let files = [
         ("src/app/program/src/lib.rs", include_str!("templates/program_lib.rs")),
         ("src/app/program/Cargo.toml", include_str!("templates/program_cargo.toml")),
@@ -60,7 +72,7 @@ fn init() -> Result<()> {
             .with_context(|| format!("Failed to write file: {}", file_path))?;
     }
 
-    println!("New arch-bitcoin app initialized successfully!");
+    println!("New Arch Network app initialized successfully!");
     Ok(())
 }
 fn start_server() -> Result<()> {
@@ -90,5 +102,15 @@ fn stop_server() -> Result<()> {
     println!("Stopping development server...");
     ShellCommand::new("pkill").arg("-f").arg("start-server.sh").status()?;
     println!("Development server stopped successfully!");
+    Ok(())
+}
+
+fn clean() -> Result<()> {
+    println!("Cleaning project...");
+
+    // Remove src/app directory
+    fs::remove_dir_all("src/app")?;
+
+    println!("Project cleaned successfully!");
     Ok(())
 }
