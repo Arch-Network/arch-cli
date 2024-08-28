@@ -57,6 +57,7 @@ Gracefully shuts down the development server.
 
 After initialization, your project will have the following structure:
 
+```
 my-arch-project/
 ├── src/
 │   └── app/
@@ -71,6 +72,7 @@ my-arch-project/
 │           ├── index.js
 │           └── package.json
 └── Cargo.toml
+```
 
 ## Development
 
