@@ -1,9 +1,12 @@
+use bitcoin::Network;
 use clap::{ Parser, Subcommand, Command };
 use std::fs;
 use tokio;
 use anyhow::{ Context, Result };
 use std::process::Command as ShellCommand;
-
+use common::helper::*;
+use common::constants::*;
+use bitcoin::{ Address, Network, PublicKey };
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
@@ -15,9 +18,7 @@ struct Cli {
 enum Commands {
     Init,
     StartServer,
-    Deploy {
-        example_name: String,
-    },
+    Deploy,
     StopServer,
     Clean,
 }
@@ -29,7 +30,7 @@ async fn main() -> Result<()> {
     match &cli.command {
         Commands::Init => init(),
         Commands::StartServer => start_server(),
-        Commands::Deploy { example_name } => deploy(example_name),
+        Commands::Deploy => deploy(),
         Commands::StopServer => stop_server(),
         Commands::Clean => clean(),
     }
@@ -48,7 +49,7 @@ fn init() -> Result<()> {
 
     // Create project structure
     println!("Creating project structure...");
-    let dirs = ["src/app/program/src", "src/app/backend", "src/app/frontend"];
+    let dirs = ["src/app/program/src", "src/app/backend", "src/app/frontend", "src/app/keys"];
 
     for dir in dirs.iter() {
         fs::create_dir_all(dir).with_context(|| format!("Failed to create directory: {}", dir))?;
@@ -83,21 +84,33 @@ fn start_server() -> Result<()> {
 
     Ok(())
 }
-fn deploy(example_name: &str) -> Result<()> {
-    println!("Deploying example: {}", example_name);
+fn deploy() -> Result<()> {
+    println!("Deploying your app...");
     // Build the program
     ShellCommand::new("cargo")
-        .args(&["build-sbf", "--manifest-path", &format!("examples/{}/Cargo.toml", example_name)])
+        .args(&["build-sbf", "--manifest-path", &format!("src/app/program/Cargo.toml")])
         .status()?;
-    // Deploy the program (you'll need to implement this part based on your deployment process)
-    // For example:
-    // ShellCommand::new("arch-deploy")
-    //     .arg(&format!("target/sbf-solana-solana/release/{}.so", example_name))
-    //     .status()?;
-    println!("Example {} deployed successfully!", example_name);
+
+    // Have to create a program account for the program
+    let (program_keypair, program_pubkey) = with_secret_key_file(PROGRAM_FILE_PATH).expect(
+        "Failed to get program key pair"
+    );
+
+    // Tell user to deposit funds into the program account
+    let program_address = Address::p2pkh(&program_pubkey, Network::Testnet);
+    println!("Please deposit funds into the program account: {:?}", program_address);
+
+    // Wait for user to deposit funds
+    println!("Waiting for funds to be deposited...");
+    std::thread::sleep(std::time::Duration::from_secs(10));
+    println!("Funds deposited successfully!");
+
+    // let (program_account_txid, program_account_vout) = create_and_fund_account(&program_pubkey);
+    // deploy_program(&program_keypair, &program_pubkey, &program_account_txid, program_account_vout);
+
+    println!("Your app has been deployed successfully!");
     Ok(())
 }
-
 fn stop_server() -> Result<()> {
     println!("Stopping development server...");
     ShellCommand::new("pkill").arg("-f").arg("start-server.sh").status()?;

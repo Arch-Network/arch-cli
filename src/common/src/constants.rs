@@ -1,8 +1,8 @@
 //! This module contains constants
 
 /// The file path where the caller stores information
-pub const CALLER_FILE_PATH: &str = "caller.json";
-pub const PROGRAM_FILE_PATH: &str = "program.json";
+pub const CALLER_FILE_PATH: &str = "src/app/keys/caller.json";
+pub const PROGRAM_FILE_PATH: &str = "src/app/keys/program.json";
 
 /// Local address for node 1
 pub const NODE1_ADDRESS: &str = "http://127.0.0.1:9002/";
