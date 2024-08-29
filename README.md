@@ -40,7 +40,7 @@ Launches the development environment using the `start-server.sh` script.
 ### Deploy a program
 
 ```sh
-arch-cli deploy <example_name>
+arch-cli deploy
 ```
 
 Compiles and deploys the specified program to the Arch Network network.
