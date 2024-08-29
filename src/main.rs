@@ -1,4 +1,5 @@
 use bitcoin::Amount;
+use bitcoincore_rpc::json::GetTransactionResult;
 use clap::{ Parser, Subcommand, Command };
 use std::fs;
 use tokio;
@@ -119,6 +120,8 @@ async fn deploy() -> Result<()> {
         Auth::UserPass(BITCOIN_NODE_USERNAME.to_string(), BITCOIN_NODE_PASSWORD.to_string())
     ).expect("Failed to create RPC client");
 
+    let mut tx_info: Option<GetTransactionResult> = None;
+
     // If REGTEST, then just send the satoshis to the address
     if BITCOIN_NETWORK == bitcoin::Network::Regtest {
         let tx = rpc.send_to_address(
@@ -134,15 +137,15 @@ async fn deploy() -> Result<()> {
         println!("Transaction sent: {}", tx);
 
         // Wait for transaction confirmation
-        println!("Waiting for transaction confirmation...");
         loop {
             match rpc.get_transaction(&tx, None) {
-                Ok(tx_info) => {
-                    if tx_info.info.confirmations > 0 {
+                Ok(info) => {
+                    if info.info.confirmations > 0 {
                         println!(
                             "Transaction confirmed with {} confirmations",
-                            tx_info.info.confirmations
+                            info.info.confirmations
                         );
+                        tx_info = Some(info);
                         break;
                     }
                     println!("Waiting for confirmation...");
@@ -162,7 +165,13 @@ async fn deploy() -> Result<()> {
     println!("Funds deposited successfully!");
 
     // TODO: Deploy the program
-    // deploy_program(&program_keypair, &program_pubkey, &program_account_txid, program_account_vout);
+    if let Some(info) = tx_info {
+        deploy_program(&program_keypair, &program_pubkey, &info.info.txid.to_string(), 0).await;
+    } else {
+        // Handle the case where tx_info is None (for non-REGTEST networks)
+        // You might want to get the transaction ID from somewhere else in this case
+        println!("Warning: No transaction info available for deployment");
+    }
 
     println!("Your app has been deployed successfully!");
     Ok(())

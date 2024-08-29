@@ -16,9 +16,11 @@ use bitcoin::{
     TxIn,
     Witness,
 };
+use futures::future::join_all;
 use bitcoincore_rpc::{ Auth, Client, RawTx, RpcApi };
 use env_logger;
 use log::{ debug, error, info, warn };
+use tokio;
 use reqwest::blocking::Client as HttpClient;
 use serde::Deserialize;
 use serde::Serialize;
@@ -47,7 +49,7 @@ use crate::constants::{
     TRANSACTION_NOT_FOUND_CODE,
 };
 use crate::models::{ BitcoinRpcInfo, CallerInfo };
-use arch_program::message::Message;
+use arch_program::{ account::AccountMeta, message::Message };
 use arch_program::pubkey::Pubkey;
 use crate::runtime_transaction::RuntimeTransaction;
 use crate::signature::Signature;
@@ -231,6 +233,60 @@ pub fn sign_and_send_instruction(
     Ok((result, hashed_instruction))
 }
 
+pub async fn sign_and_send_instruction_async(
+    instruction: Instruction,
+    signers: Vec<UntweakedKeypair>
+) -> Result<(String, String)> {
+    let pubkeys = signers
+        .iter()
+        .map(|signer| Pubkey::from_slice(&XOnlyPublicKey::from_keypair(signer).0.serialize()))
+        .collect::<Vec<Pubkey>>();
+
+    let message = Message {
+        signers: pubkeys,
+        instructions: vec![instruction.clone()],
+    };
+
+    let digest_slice = hex::decode(message.hash())?;
+    let sig_message = secp256k1::Message::from_digest_slice(&digest_slice)?;
+
+    let secp = Secp256k1::new();
+    let signatures = signers
+        .iter()
+        .map(|signer| Signature(secp.sign_schnorr(&sig_message, &signer).serialize().to_vec()))
+        .collect::<Vec<Signature>>();
+
+    let params = RuntimeTransaction {
+        version: 0,
+        signatures,
+        message,
+    };
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(NODE1_ADDRESS)
+        .json(
+            &json!({
+            "jsonrpc": "2.0",
+            "id": "curlycurl",
+            "method": "send_transaction",
+            "params": params
+        })
+        )
+        .send().await?;
+
+    let result = response.text().await?;
+    let result_value: serde_json::Value = serde_json::from_str(&result)?;
+    let result_str = result_value["result"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Failed to extract result as string"))?
+        .to_string();
+
+    let hashed_instruction = instruction.hash();
+
+    Ok((result_str, hashed_instruction))
+}
+
 pub fn sign_and_send_transaction(
     instructions: Vec<Instruction>,
     signers: Vec<UntweakedKeypair>
@@ -269,7 +325,6 @@ pub fn sign_and_send_transaction(
     Ok(result)
 }
 
-/// Deploys the HelloWorld program using the compiled ELF
 pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> Vec<String> {
     info!("Starting program deployment");
     let program_pubkey = Pubkey::from_slice(
@@ -332,6 +387,96 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
     }
 
     txids
+}
+
+pub async fn deploy_program_txs_async(
+    program_keypair: UntweakedKeypair,
+    elf_path: &str
+) -> Result<Vec<String>> {
+    println!("Starting program deployment");
+    let program_pubkey = Pubkey::from_slice(
+        &XOnlyPublicKey::from_keypair(&program_keypair).0.serialize()
+    );
+    let elf = fs::read(elf_path)?;
+    println!("ELF file size: {} bytes", elf.len());
+
+    let txs = elf
+        .chunks(extend_bytes_max_len())
+        .enumerate()
+        .map(|(i, chunk)| {
+            let mut bytes = vec![];
+            let offset: u32 = (i * extend_bytes_max_len()) as u32;
+            let len: u32 = chunk.len() as u32;
+            bytes.extend(offset.to_le_bytes());
+            bytes.extend(len.to_le_bytes());
+            bytes.extend(chunk);
+            let message = Message {
+                signers: vec![program_pubkey.clone()],
+                instructions: vec![
+                    SystemInstruction::new_extend_bytes_instruction(bytes, program_pubkey.clone())
+                ],
+            };
+            let digest_slice = hex
+                ::decode(message.hash())
+                .expect("hashed message should be decodable");
+            let sig_message = secp256k1::Message
+                ::from_digest_slice(&digest_slice)
+                .expect("signed message should be gotten from digest slice");
+            let secp = Secp256k1::new();
+            RuntimeTransaction {
+                version: 0,
+                signatures: vec![
+                    Signature(
+                        secp.sign_schnorr(&sig_message, &program_keypair).serialize().to_vec()
+                    )
+                ],
+                message,
+            }
+        })
+        .collect::<Vec<RuntimeTransaction>>();
+
+    println!("Deploying program with {} transactions", txs.len());
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(NODE1_ADDRESS)
+        .json(
+            &json!({
+            "jsonrpc": "2.0",
+            "id": "curlycurl",
+            "method": "send_transactions",
+            "params": txs
+        })
+        )
+        .send().await?;
+
+    let result: serde_json::Value = response.json().await?;
+    let txids = result["result"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse result as array"))?
+        .iter()
+        .map(|r| r.as_str().unwrap_or_default().to_string())
+        .collect::<Vec<String>>();
+
+    info!("Successfully sent {} transactions for program deployment", txids.len());
+
+    let process_tasks = txids
+        .iter()
+        .enumerate()
+        .map(|(i, txid)| {
+            let txid = txid.clone();
+            tokio::spawn(async move {
+                match get_processed_transaction_async(NODE1_ADDRESS.to_owned(), txid.clone()).await {
+                    Ok(_) => debug!("Transaction {} (ID: {}) processed successfully", i + 1, txid),
+                    Err(e) =>
+                        warn!("Failed to process transaction {} (ID: {}): {:?}", i + 1, txid, e),
+                }
+            })
+        });
+
+    join_all(process_tasks).await;
+
+    Ok(txids)
 }
 
 /// Starts Key Exchange by calling the RPC method
@@ -441,6 +586,44 @@ pub fn get_processed_transaction(url: &str, tx_id: String) -> Result<ProcessedTr
     Ok(serde_json::from_value(processed_tx?).unwrap())
 }
 
+pub async fn get_processed_transaction_async(
+    url: String,
+    tx_id: String
+) -> Result<ProcessedTransaction> {
+    let mut wait_time = 10;
+    let mut total_wait = 0;
+
+    let value = tx_id.clone();
+    loop {
+        let url_clone = url.clone();
+        let value_clone = value.clone();
+        let processed_tx = tokio::task::spawn_blocking(move || {
+            process_get_transaction_result(
+                post_data(&url_clone, GET_PROCESSED_TRANSACTION, value_clone)
+            )
+        }).await?;
+
+        match processed_tx {
+            Ok(Value::Null) => {
+                if total_wait >= 60 {
+                    error!("Failed to retrieve processed transaction after 60 seconds");
+                    return Err(anyhow!("Timeout: Failed to retrieve processed transaction"));
+                }
+                debug!("Transaction not yet processed. Retrying in {} seconds...", wait_time);
+                tokio::time::sleep(Duration::from_secs(wait_time)).await;
+                total_wait += wait_time;
+                wait_time += 10;
+            }
+            Ok(value) => {
+                info!("Successfully retrieved and processed transaction: {}", tx_id);
+                return Ok(serde_json::from_value(value)?);
+            }
+            Err(e) => {
+                return Err(anyhow!("{}", e));
+            }
+        }
+    }
+}
 pub fn prepare_fees() -> String {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
@@ -563,6 +746,64 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
     (txid.to_string(), vout)
 }
 
+pub async fn deploy_program(
+    program_keypair: &bitcoin::secp256k1::Keypair,
+    program_pubkey: &Pubkey,
+    txid: &str,
+    vout: u32
+) {
+    // 1. Create program account
+    let (account_tx_id, _) = sign_and_send_instruction_async(
+        SystemInstruction::new_create_account_instruction(
+            hex::decode(txid).unwrap().try_into().unwrap(),
+            vout,
+            program_pubkey.clone()
+        ),
+        vec![program_keypair.clone()]
+    ).await.expect("Failed to sign and send create account instruction");
+
+    let account_processed_tx = get_processed_transaction_async(
+        NODE1_ADDRESS.to_string(),
+        account_tx_id
+    ).await.expect("Failed to get processed transaction for account creation");
+
+    println!("Program account created successfully");
+
+    // 2. Deploy program
+    let deploy_txids = deploy_program_txs_async(
+        program_keypair.clone(),
+        "src/app/program/target/sbf-solana-solana/release/arch_network_app.so"
+    ).await.expect("Failed to deploy program");
+    info!("Program deployed with transaction IDs: {:?}", deploy_txids);
+
+    // 3. Set program as executable
+    set_account_executable(program_pubkey, program_keypair);
+
+    info!("Program deployed and set as executable successfully");
+
+    println!("Program deployed and set as executable successfully");
+}
+
+pub async fn set_account_executable(pubkey: &Pubkey, keypair: &bitcoin::secp256k1::Keypair) {
+    let (txid, _) = sign_and_send_instruction(
+        Instruction {
+            program_id: Pubkey::system_program(),
+            accounts: vec![AccountMeta {
+                pubkey: pubkey.clone(),
+                is_signer: true,
+                is_writable: true,
+            }],
+            data: vec![2],
+        },
+        vec![keypair.clone()]
+    ).expect("Failed to sign and send set executable instruction");
+
+    let processed_tx = get_processed_transaction_async(
+        NODE1_ADDRESS.to_owned(),
+        txid.clone()
+    ).await.expect("Failed to get processed transaction");
+    println!("Processed transaction for setting executable: {:?}", processed_tx);
+}
 pub async fn get_account_address_async(pubkey: Pubkey) -> Result<String> {
     let client = reqwest::Client::new();
     let response = client
