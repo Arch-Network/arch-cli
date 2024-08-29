@@ -1,3 +1,4 @@
+use bitcoin::Amount;
 use clap::{ Parser, Subcommand, Command };
 use std::fs;
 use tokio;
@@ -6,6 +7,10 @@ use std::process::Command as ShellCommand;
 use common::helper::*;
 use common::constants::*;
 use bitcoin::{ Address, PublicKey };
+use bitcoincore_rpc::{ Auth, Client, RawTx, RpcApi };
+use std::time::Duration;
+use std::str::FromStr;
+
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
@@ -27,15 +32,15 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Init => init(),
-        Commands::StartServer => start_server(),
-        Commands::Deploy => deploy(),
-        Commands::StopServer => stop_server(),
-        Commands::Clean => clean(),
+        Commands::Init => init().await,
+        Commands::StartServer => start_server().await,
+        Commands::Deploy => deploy().await,
+        Commands::StopServer => stop_server().await,
+        Commands::Clean => clean().await,
     }
 }
 
-fn init() -> Result<()> {
+async fn init() -> Result<()> {
     println!("Initializing new Arch Network app...");
 
     // Navigate to the program folder and run `cargo build-sbf`
@@ -75,7 +80,7 @@ fn init() -> Result<()> {
     println!("New Arch Network app initialized successfully!");
     Ok(())
 }
-fn start_server() -> Result<()> {
+async fn start_server() -> Result<()> {
     println!("Starting development server...");
 
     ShellCommand::new("sh").arg("-c").arg("./start-server.sh 3").spawn()?;
@@ -83,7 +88,7 @@ fn start_server() -> Result<()> {
 
     Ok(())
 }
-fn deploy() -> Result<()> {
+async fn deploy() -> Result<()> {
     println!("Deploying your app...");
     // Build the program
     ShellCommand::new("cargo")
@@ -95,33 +100,81 @@ fn deploy() -> Result<()> {
         "Failed to get program key pair"
     );
 
-    // Convert the program pubkey to a Bitcoin address
-    let bitcoin_address = program_pubkey
-        .to_bitcoin_address(bitcoin::Network::Regtest)
-        .expect("Failed to create Bitcoin address");
+    // Retrieve this account's account address from the Arch Network RPC
+    let account_address = get_account_address_async(program_pubkey).await.expect(
+        "Failed to get account address"
+    );
 
-    // Tell user to deposit funds into the program account
-    println!("Please deposit funds into the program account: {}", bitcoin_address);
+    println!("Account address: {}", account_address);
 
-    // Wait for user to deposit funds
-    println!("Waiting for funds to be deposited...");
-    std::thread::sleep(std::time::Duration::from_secs(10));
+    let account_address = bitcoin::Address
+        ::from_str(&account_address)
+        .unwrap()
+        .require_network(BITCOIN_NETWORK)
+        .unwrap();
+
+    // Set up Bitcoin RPC client
+    let rpc = Client::new(
+        BITCOIN_NODE_ENDPOINT,
+        Auth::UserPass(BITCOIN_NODE_USERNAME.to_string(), BITCOIN_NODE_PASSWORD.to_string())
+    ).expect("Failed to create RPC client");
+
+    // If REGTEST, then just send the satoshis to the address
+    if BITCOIN_NETWORK == bitcoin::Network::Regtest {
+        let tx = rpc.send_to_address(
+            &account_address,
+            Amount::from_sat(3000),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )?;
+        println!("Transaction sent: {}", tx);
+
+        // Wait for transaction confirmation
+        println!("Waiting for transaction confirmation...");
+        loop {
+            match rpc.get_transaction(&tx, None) {
+                Ok(tx_info) => {
+                    if tx_info.info.confirmations > 0 {
+                        println!(
+                            "Transaction confirmed with {} confirmations",
+                            tx_info.info.confirmations
+                        );
+                        break;
+                    }
+                    println!("Waiting for confirmation...");
+                }
+                Err(e) => println!("Error checking transaction: {}", e),
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    } else {
+        // For non-REGTEST networks, prompt user to deposit funds
+        println!("Please deposit funds into the program account: {}", account_address);
+        println!("Waiting for funds to be deposited...");
+
+        // TODO: Check balance of account_address and wait until it has at least 3000 satoshi
+    }
+
     println!("Funds deposited successfully!");
 
-    // let (program_account_txid, program_account_vout) = create_and_fund_account(&program_pubkey);
+    // TODO: Deploy the program
     // deploy_program(&program_keypair, &program_pubkey, &program_account_txid, program_account_vout);
 
     println!("Your app has been deployed successfully!");
     Ok(())
 }
-fn stop_server() -> Result<()> {
+async fn stop_server() -> Result<()> {
     println!("Stopping development server...");
     ShellCommand::new("pkill").arg("-f").arg("start-server.sh").status()?;
     println!("Development server stopped successfully!");
     Ok(())
 }
 
-fn clean() -> Result<()> {
+async fn clean() -> Result<()> {
     println!("Cleaning project...");
 
     // Remove src/app directory

@@ -17,6 +17,7 @@ thiserror = "1.0.42"
 borsh = { version = "1.4.0", features = ["derive"] }
 secp256k1 = { version = "0.28.2", features = ["global-context"] }
 common = { path = "./src/common" }
+bitcoincore-rpc = "0.18.0"
 
 [lib]
 path = "src/main.rs"

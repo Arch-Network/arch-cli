@@ -563,7 +563,27 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
     (txid.to_string(), vout)
 }
 
-fn get_account_address(pubkey: Pubkey) -> String {
+pub async fn get_account_address_async(pubkey: Pubkey) -> Result<String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(NODE1_ADDRESS)
+        .json(
+            &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "curlycurl",
+            "method": GET_ACCOUNT_ADDRESS,
+            "params": pubkey,
+        })
+        )
+        .send().await?;
+
+    let result: Value = response.json().await?;
+    process_result(result.to_string()).map(|value|
+        value.as_str().expect("cannot convert result to string").to_string()
+    )
+}
+
+pub fn get_account_address(pubkey: Pubkey) -> String {
     process_result(post_data(NODE1_ADDRESS, GET_ACCOUNT_ADDRESS, pubkey))
         .expect("get_account_address should not fail")
         .as_str()

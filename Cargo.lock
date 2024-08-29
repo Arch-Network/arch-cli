@@ -38,6 +38,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitcoin",
+ "bitcoincore-rpc",
  "borsh",
  "clap",
  "common",

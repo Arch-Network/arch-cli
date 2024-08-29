@@ -1,5 +1,7 @@
 //! This module contains constants
 
+use bitcoin::Network;
+
 /// The file path where the caller stores information
 pub const CALLER_FILE_PATH: &str = "src/app/keys/caller.json";
 pub const PROGRAM_FILE_PATH: &str = "src/app/keys/program.json";
@@ -27,6 +29,9 @@ pub const BITCOIN_NODE_ENDPOINT: &str =
     "https://bitcoin-node.dev.aws.archnetwork.xyz:18443/wallet/testwallet";
 pub const BITCOIN_NODE_USERNAME: &str = "bitcoin";
 pub const BITCOIN_NODE_PASSWORD: &str = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618";
+
+// Specify which Bitcoin network
+pub const BITCOIN_NETWORK: Network = Network::Regtest;
 
 /// Hack for Error codes
 pub const TRANSACTION_NOT_FOUND_CODE: i64 = 404;
