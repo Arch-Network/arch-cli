@@ -14,6 +14,14 @@ Arch-CLI is a command-line interface tool designed to streamline the development
 To install Arch-CLI, make sure you have Rust, Solana-CLI and Cargo installed on your system. Then, run:
 
 ```sh
+git clone https://github.com/hoffmabc/arch-cli.git
+cd arch-cli
+cargo install --path .
+```
+
+TODO:
+
+```sh
 cargo install --git https://github.com/hoffmabc/arch-cli.git
 ```
 
@@ -27,9 +35,11 @@ Here are the main commands available in Arch-CLI:
 arch-cli init
 ```
 
-This command sets up a new Arch Network project with the necessary folder structure and boilerplate code.
+This command sets up a new Arch Network project with the necessary folder structure and boilerplate code. 
 
 ### Start the development server
+
+For now just start the servers on your own. Still working on this.
 
 ```sh
 arch-cli start-server
@@ -38,6 +48,8 @@ arch-cli start-server
 Launches the development environment using the `start-server.sh` script.
 
 ### Deploy a program
+
+This will compile your program and deploy it to the Arch Network network.
 
 ```sh
 arch-cli deploy
@@ -68,9 +80,10 @@ my-arch-project/
 │       │   ├── index.ts
 │       │   └── package.json
 │       └── frontend/
-│           ├── index.html
-│           ├── index.js
-│           └── package.json
+│       |   ├── index.html
+│       |   ├── index.js
+│       |   └── package.json
+|       |── keys/
 └── Cargo.toml
 ```
 
