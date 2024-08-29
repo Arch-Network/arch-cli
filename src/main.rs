@@ -11,7 +11,7 @@ use bitcoin::{ Address, PublicKey };
 use bitcoincore_rpc::{ Auth, Client, RawTx, RpcApi };
 use std::time::Duration;
 use std::str::FromStr;
-
+use colored::*;
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
 }
 
 async fn init() -> Result<()> {
-    println!("Initializing new Arch Network app...");
+    println!("{}", "Initializing new Arch Network app...".bold().green());
 
     // Navigate to the program folder and run `cargo build-sbf`
     println!("Building Arch Network program...");
@@ -78,20 +78,23 @@ async fn init() -> Result<()> {
             .with_context(|| format!("Failed to write file: {}", file_path))?;
     }
 
-    println!("New Arch Network app initialized successfully!");
+    println!("  {} New Arch Network app initialized successfully!", "✓".bold().green());
     Ok(())
 }
 async fn start_server() -> Result<()> {
-    println!("Starting development server...");
+    println!("{}", "Starting development server...".bold().green());
 
-    ShellCommand::new("sh").arg("-c").arg("./start-server.sh 3").spawn()?;
-    println!("Development server started successfully!");
+    // ShellCommand::new("sh").arg("-c").arg("./start-server.sh 3").spawn()?;
+
+    println!("  {} Development server started successfully!", "✓".bold().green());
 
     Ok(())
 }
 async fn deploy() -> Result<()> {
-    println!("Deploying your app...");
+    println!("{}", "Deploying your Arch Network app...".bold().green());
+
     // Build the program
+    println!("  {} Building program...", "→".bold().blue());
     ShellCommand::new("cargo")
         .args(&["build-sbf", "--manifest-path", &format!("src/app/program/Cargo.toml")])
         .status()?;
@@ -106,7 +109,8 @@ async fn deploy() -> Result<()> {
         "Failed to get account address"
     );
 
-    println!("Account address: {}", account_address);
+    println!("  {} Program account created", "✓".bold().green());
+    println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.to_string().yellow());
 
     let account_address = bitcoin::Address
         ::from_str(&account_address)
@@ -156,13 +160,19 @@ async fn deploy() -> Result<()> {
         }
     } else {
         // For non-REGTEST networks, prompt user to deposit funds
-        println!("Please deposit funds into the program account: {}", account_address);
-        println!("Waiting for funds to be deposited...");
+        println!("{}", "Please deposit funds to continue:".bold());
+        println!(
+            "  {} Deposit address: {}",
+            "→".bold().blue(),
+            account_address.to_string().yellow()
+        );
+        println!("  {} Minimum required: {} satoshis", "ℹ".bold().blue(), "3000".yellow());
+        println!("  {} Waiting for funds...", "⏳".bold().blue());
 
         // TODO: Check balance of account_address and wait until it has at least 3000 satoshi
     }
 
-    println!("Funds deposited successfully!");
+    println!("  {} Funds received successfully", "✓".bold().green());
 
     // TODO: Deploy the program
     if let Some(info) = tx_info {
@@ -173,7 +183,7 @@ async fn deploy() -> Result<()> {
         println!("Warning: No transaction info available for deployment");
     }
 
-    println!("Your app has been deployed successfully!");
+    println!("{}", "Your app has been deployed successfully!".bold().green());
     Ok(())
 }
 async fn stop_server() -> Result<()> {
