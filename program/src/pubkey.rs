@@ -1,6 +1,6 @@
 use borsh::{ BorshDeserialize, BorshSerialize };
 use serde::{ Deserialize, Serialize };
-use bitcoin::{ key::Secp256k1, secp256k1, Address, Network, PublicKey };
+use bitcoin::{ key::Secp256k1, Address, PublicKey };
 
 #[repr(C)]
 #[derive(
@@ -50,10 +50,10 @@ impl Pubkey {
 
     pub fn to_bitcoin_address(
         &self,
-        network: bitcoin::network::Network
+        _network: bitcoin::network::Network
     ) -> Result<Address, Box<dyn std::error::Error>> {
         // Create a Secp256k1 context
-        let secp = Secp256k1::new();
+        let _secp = Secp256k1::new();
 
         // Create a full PublicKey from the 32-byte array
         // We're assuming this is a compressed public key, so we prepend 0x02 or 0x03

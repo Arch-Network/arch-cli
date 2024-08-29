@@ -1,6 +1,6 @@
 use bitcoin::Amount;
 use bitcoincore_rpc::json::GetTransactionResult;
-use clap::{ Parser, Subcommand, Command };
+use clap::{ Parser, Subcommand, Args };
 use std::fs;
 use tokio;
 use anyhow::{ Context, Result };
@@ -23,9 +23,18 @@ struct Cli {
 enum Commands {
     Init,
     StartServer,
-    Deploy,
+    Deploy(DeployArgs),
     StopServer,
     Clean,
+}
+
+#[derive(Args)]
+struct DeployArgs {
+    #[clap(long, help = "Directory of your program")]
+    directory: Option<String>,
+
+    #[clap(long, help = "Path to the program key file")]
+    program_key: Option<String>,
 }
 
 #[tokio::main]
@@ -35,7 +44,7 @@ async fn main() -> Result<()> {
     match &cli.command {
         Commands::Init => init().await,
         Commands::StartServer => start_server().await,
-        Commands::Deploy => deploy().await,
+        Commands::Deploy(args) => deploy(args).await,
         Commands::StopServer => stop_server().await,
         Commands::Clean => clean().await,
     }
@@ -90,24 +99,41 @@ async fn start_server() -> Result<()> {
 
     Ok(())
 }
-async fn deploy() -> Result<()> {
+async fn deploy(args: &DeployArgs) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
 
-    // Build the program
-    println!("  {} Building program...", "→".bold().blue());
-    ShellCommand::new("cargo")
-        .args(&["build-sbf", "--manifest-path", &format!("src/app/program/Cargo.toml")])
-        .status()?;
+    if let Some(path) = &args.directory {
+        if !std::path::Path::new(path).exists() {
+            return Err(anyhow::anyhow!("Specified directory does not exist: {}", path));
+        }
+        // Run ShellCommand wiht a manifest path of args.directory + /Cargo.toml
+        ShellCommand::new("cargo")
+            .args(&["build-sbf", "--manifest-path", format!("{}/Cargo.toml", path).as_str()])
+            .status()?;
+    } else {
+        // Default behavior: build the program
+        println!("  {} Building program...", "→".bold().blue());
+        ShellCommand::new("cargo")
+            .args(&["build-sbf", "--manifest-path", "src/app/program/Cargo.toml"])
+            .status()?;
+        "target/deploy/program.so".to_string(); // Adjust this path if necessary
+    }
 
-    // Have to create a program account for the program
-    let (program_keypair, program_pubkey) = with_secret_key_file(PROGRAM_FILE_PATH).expect(
+    // Use the provided program key path or default to PROGRAM_FILE_PATH
+    let program_key_path: &str = if let Some(key) = &args.program_key {
+        key
+    } else {
+        PROGRAM_FILE_PATH
+    };
+
+    let (program_keypair, program_pubkey) = with_secret_key_file(program_key_path).context(
         "Failed to get program key pair"
-    );
+    )?;
 
     // Retrieve this account's account address from the Arch Network RPC
-    let account_address = get_account_address_async(program_pubkey).await.expect(
+    let account_address = get_account_address_async(program_pubkey).await.context(
         "Failed to get account address"
-    );
+    )?;
 
     println!("  {} Program account created", "✓".bold().green());
     println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.to_string().yellow());
@@ -122,7 +148,7 @@ async fn deploy() -> Result<()> {
     let rpc = Client::new(
         BITCOIN_NODE_ENDPOINT,
         Auth::UserPass(BITCOIN_NODE_USERNAME.to_string(), BITCOIN_NODE_PASSWORD.to_string())
-    ).expect("Failed to create RPC client");
+    ).context("Failed to create RPC client")?;
 
     let mut tx_info: Option<GetTransactionResult> = None;
 
@@ -174,12 +200,11 @@ async fn deploy() -> Result<()> {
 
     println!("  {} Funds received successfully", "✓".bold().green());
 
-    // TODO: Deploy the program
+    // Deploy the program
     if let Some(info) = tx_info {
         deploy_program(&program_keypair, &program_pubkey, &info.info.txid.to_string(), 0).await;
     } else {
         // Handle the case where tx_info is None (for non-REGTEST networks)
-        // You might want to get the transaction ID from somewhere else in this case
         println!("Warning: No transaction info available for deployment");
     }
 

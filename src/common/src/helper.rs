@@ -28,6 +28,7 @@ use serde_json::{ from_str, json, Value };
 use std::env;
 use std::fs;
 use std::process::Child;
+use colored::*;
 use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
@@ -326,12 +327,12 @@ pub fn sign_and_send_transaction(
 }
 
 pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> Vec<String> {
-    info!("Starting program deployment");
+    println!("{}", "Starting program deployment".bold().green());
     let program_pubkey = Pubkey::from_slice(
         &XOnlyPublicKey::from_keypair(&program_keypair).0.serialize()
     );
     let elf = fs::read(elf_path).expect("Failed to read ELF file");
-    info!("ELF file size: {} bytes", elf.len());
+    println!("  {} ELF file size: {} bytes", "ℹ".bold().blue(), elf.len().to_string().yellow());
     let txs = elf
         .chunks(extend_bytes_max_len())
         .enumerate()
@@ -367,7 +368,11 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
         })
         .collect::<Vec<RuntimeTransaction>>();
 
-    info!("Deploying program with {} transactions", txs.len());
+    println!(
+        "  {} Deploying program with {} transactions",
+        "→".bold().blue(),
+        txs.len().to_string().yellow()
+    );
 
     let txids = process_result(post_data(NODE1_ADDRESS, "send_transactions", txs))
         .expect("send_transaction should not fail")
@@ -377,12 +382,29 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
         .map(|r| { r.as_str().expect("cannot convert object to string").to_string() })
         .collect::<Vec<String>>();
 
-    info!("Successfully sent {} transactions for program deployment", txids.len());
+    println!(
+        "  {} Successfully sent {} transactions for program deployment",
+        "✓".bold().green(),
+        txids.len().to_string().yellow()
+    );
 
     for (i, txid) in txids.iter().enumerate() {
         match get_processed_transaction(NODE1_ADDRESS, txid.clone()) {
-            Ok(_) => debug!("Transaction {} (ID: {}) processed successfully", i + 1, txid),
-            Err(e) => warn!("Failed to process transaction {} (ID: {}): {:?}", i + 1, txid, e),
+            Ok(_) =>
+                println!(
+                    "    {} Transaction {} (ID: {}) processed successfully",
+                    "✓".bold().green(),
+                    (i + 1).to_string().yellow(),
+                    txid.bright_blue()
+                ),
+            Err(e) =>
+                println!(
+                    "    {} Failed to process transaction {} (ID: {}): {:?}",
+                    "✗".bold().red(),
+                    (i + 1).to_string().yellow(),
+                    txid.bright_blue(),
+                    e.to_string().red()
+                ),
         }
     }
 
@@ -393,12 +415,12 @@ pub async fn deploy_program_txs_async(
     program_keypair: UntweakedKeypair,
     elf_path: &str
 ) -> Result<Vec<String>> {
-    println!("Starting program deployment");
+    println!("{}", "Starting program deployment".bold().green());
     let program_pubkey = Pubkey::from_slice(
         &XOnlyPublicKey::from_keypair(&program_keypair).0.serialize()
     );
     let elf = fs::read(elf_path)?;
-    println!("ELF file size: {} bytes", elf.len());
+    println!("  {} ELF file size: {} bytes", "ℹ".bold().blue(), elf.len().to_string().yellow());
 
     let txs = elf
         .chunks(extend_bytes_max_len())
@@ -435,7 +457,11 @@ pub async fn deploy_program_txs_async(
         })
         .collect::<Vec<RuntimeTransaction>>();
 
-    println!("Deploying program with {} transactions", txs.len());
+    println!(
+        "  {} Deploying program with {} transactions",
+        "→".bold().blue(),
+        txs.len().to_string().yellow()
+    );
 
     let client = reqwest::Client::new();
     let response = client
@@ -458,7 +484,11 @@ pub async fn deploy_program_txs_async(
         .map(|r| r.as_str().unwrap_or_default().to_string())
         .collect::<Vec<String>>();
 
-    info!("Successfully sent {} transactions for program deployment", txids.len());
+    println!(
+        "  {} Successfully sent {} transactions for program deployment",
+        "✓".bold().green(),
+        txids.len().to_string().yellow()
+    );
 
     let process_tasks = txids
         .iter()
@@ -467,9 +497,21 @@ pub async fn deploy_program_txs_async(
             let txid = txid.clone();
             tokio::spawn(async move {
                 match get_processed_transaction_async(NODE1_ADDRESS.to_owned(), txid.clone()).await {
-                    Ok(_) => debug!("Transaction {} (ID: {}) processed successfully", i + 1, txid),
+                    Ok(_) =>
+                        println!(
+                            "    {} Transaction {} (ID: {}) processed successfully",
+                            "✓".bold().green(),
+                            (i + 1).to_string().yellow(),
+                            txid.bright_blue()
+                        ),
                     Err(e) =>
-                        warn!("Failed to process transaction {} (ID: {}): {:?}", i + 1, txid, e),
+                        println!(
+                            "    {} Failed to process transaction {} (ID: {}): {:?}",
+                            "✗".bold().red(),
+                            (i + 1).to_string().yellow(),
+                            txid.bright_blue(),
+                            e.to_string().red()
+                        ),
                 }
             })
         });
@@ -752,7 +794,10 @@ pub async fn deploy_program(
     txid: &str,
     vout: u32
 ) {
+    println!("{}", "Deploying program...".bold().green());
+
     // 1. Create program account
+    println!("  {} Creating program account...", "→".bold().blue());
     let (account_tx_id, _) = sign_and_send_instruction_async(
         SystemInstruction::new_create_account_instruction(
             hex::decode(txid).unwrap().try_into().unwrap(),
@@ -764,28 +809,40 @@ pub async fn deploy_program(
 
     let account_processed_tx = get_processed_transaction_async(
         NODE1_ADDRESS.to_string(),
-        account_tx_id
+        account_tx_id.clone()
     ).await.expect("Failed to get processed transaction for account creation");
 
-    println!("Program account created successfully");
+    println!("  {} Program account created successfully", "✓".bold().green());
+    println!("    {} Transaction ID: {}", "ℹ".bold().blue(), account_tx_id.yellow());
 
     // 2. Deploy program
+    println!("  {} Deploying program code...", "→".bold().blue());
     let deploy_txids = deploy_program_txs_async(
         program_keypair.clone(),
         "src/app/program/target/sbf-solana-solana/release/arch_network_app.so"
     ).await.expect("Failed to deploy program");
-    info!("Program deployed with transaction IDs: {:?}", deploy_txids);
+    println!("  {} Program code deployed successfully", "✓".bold().green());
+    println!(
+        "    {} Number of transactions: {}",
+        "ℹ".bold().blue(),
+        deploy_txids.len().to_string().yellow()
+    );
 
     // 3. Set program as executable
-    set_account_executable(program_pubkey, program_keypair);
+    set_account_executable(program_pubkey, program_keypair).await.expect(
+        "Failed to set program as executable"
+    );
+    println!("  {} Program set as executable", "✓".bold().green());
 
-    info!("Program deployed and set as executable successfully");
-
-    println!("Program deployed and set as executable successfully");
+    println!("{}", "Program deployment completed successfully!".bold().green());
 }
+pub async fn set_account_executable(
+    pubkey: &Pubkey,
+    keypair: &bitcoin::secp256k1::Keypair
+) -> Result<()> {
+    println!("  {} Setting program as executable...", "→".bold().blue());
 
-pub async fn set_account_executable(pubkey: &Pubkey, keypair: &bitcoin::secp256k1::Keypair) {
-    let (txid, _) = sign_and_send_instruction(
+    let (txid, _) = sign_and_send_instruction_async(
         Instruction {
             program_id: Pubkey::system_program(),
             accounts: vec![AccountMeta {
@@ -796,13 +853,18 @@ pub async fn set_account_executable(pubkey: &Pubkey, keypair: &bitcoin::secp256k
             data: vec![2],
         },
         vec![keypair.clone()]
-    ).expect("Failed to sign and send set executable instruction");
+    ).await?;
 
     let processed_tx = get_processed_transaction_async(
         NODE1_ADDRESS.to_owned(),
         txid.clone()
-    ).await.expect("Failed to get processed transaction");
-    println!("Processed transaction for setting executable: {:?}", processed_tx);
+    ).await?;
+
+    println!("  {} Program set as executable", "✓".bold().green());
+    println!("    {} Transaction ID: {}", "ℹ".bold().blue(), txid.yellow());
+    debug!("Processed transaction for setting executable: {:?}", processed_tx);
+
+    Ok(())
 }
 pub async fn get_account_address_async(pubkey: Pubkey) -> Result<String> {
     let client = reqwest::Client::new();

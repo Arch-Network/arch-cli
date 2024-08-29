@@ -322,6 +322,7 @@ dependencies = [
  "bitcoin",
  "bitcoincore-rpc",
  "borsh",
+ "colored",
  "env_logger",
  "futures",
  "hex",
