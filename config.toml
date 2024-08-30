@@ -9,6 +9,7 @@ rpc_port = "18443"
 rpc_user = "bitcoin"
 rpc_password = "password"
 rpc_wallet = "devwallet"
+services = ["bitcoin", "electrs", "btc-rpc-explorer"]
 
 [program]
 key_path = "src/app/keys/program.json"
@@ -26,7 +27,7 @@ port = "3032"
 [arch]
 docker_compose_file = "./arch-docker-compose.yml"
 network_mode = "localnet"
-rust_log = "info"
+rust_log = "debug"
 rust_backtrace = "1"
 bootnode_ip = "172.30.0.10"
 bootnode_p2p_port = "19001"
@@ -40,3 +41,4 @@ validator2_p2p_port = "19004"
 validator2_rpc_port = "9004"
 bitcoin_rpc_endpoint = "bitcoin"
 bitcoin_rpc_wallet = "devwallet"
+services = ["bootnode", "leader", "validator-1", "validator-2", "validator-3"]

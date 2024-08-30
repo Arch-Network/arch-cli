@@ -2,6 +2,7 @@ use bitcoin::Amount;
 use bitcoin::Network;
 use bitcoincore_rpc::json::GetTransactionResult;
 use clap::{ Parser, Subcommand, Args };
+use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 use tokio;
@@ -19,6 +20,12 @@ use config::{ Config, File, Environment };
 use std::env;
 mod docker_manager;
 use anyhow::anyhow;
+
+#[derive(Deserialize)]
+struct ServiceConfig {
+    docker_compose_file: String,
+    services: Vec<String>,
+}
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -58,9 +65,9 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Commands::Init => init().await,
-        Commands::StartServer => start_server().await,
+        Commands::StartServer => start_server(&config).await,
         Commands::Deploy(args) => deploy(args, &config).await,
-        Commands::StopServer => stop_server().await,
+        Commands::StopServer => stop_server(&config).await,
         Commands::Clean => clean().await,
     }
 }
@@ -104,43 +111,104 @@ async fn init() -> Result<()> {
     println!("  {} New Arch Network app initialized successfully!", "✓".bold().green());
     Ok(())
 }
-async fn start_server() -> Result<()> {
-    println!("{}", "Starting development server...".bold().green());
 
-    // Load configuration
-    let config = Config::builder()
-        .add_source(File::with_name("config.toml"))
-        .add_source(Environment::default())
-        .build()
-        .context("Failed to load configuration")?;
+fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
+    println!("Starting {}...", service_name);
+
+    let mut all_containers_exist = true;
+    let mut all_containers_running = true;
+
+    for container in &service_config.services {
+        let ps_output = Command::new("docker-compose")
+            .args(&["-f", &service_config.docker_compose_file, "ps", "-q", container])
+            .output()
+            .context(format!("Failed to check existing container for {}", container))?;
+
+        if ps_output.stdout.is_empty() {
+            all_containers_exist = false;
+            all_containers_running = false;
+            break;
+        }
+
+        let status_output = Command::new("docker")
+            .args(
+                &[
+                    "inspect",
+                    "-f",
+                    "{{.State.Running}}",
+                    &String::from_utf8_lossy(&ps_output.stdout).trim(),
+                ]
+            )
+            .output()
+            .context(format!("Failed to check status of container {}", container))?;
+
+        if String::from_utf8_lossy(&status_output.stdout).trim() != "true" {
+            all_containers_running = false;
+        }
+    }
+
+    if all_containers_exist {
+        if all_containers_running {
+            println!("All {} containers are already running.", service_name);
+        } else {
+            println!("Existing {} containers found. Starting them...", service_name);
+            let start_output = Command::new("docker-compose")
+                .args(&["-f", &service_config.docker_compose_file, "start"])
+                .output()
+                .context(format!("Failed to start existing {} containers", service_name))?;
+
+            if !start_output.status.success() {
+                let error_message = String::from_utf8_lossy(&start_output.stderr);
+                println!(
+                    "Warning: Failed to start some {} containers: {}",
+                    service_name,
+                    error_message
+                );
+            } else {
+                println!("{} containers started successfully.", service_name);
+            }
+        }
+    } else {
+        println!("Some or all {} containers are missing. Creating and starting new ones...", service_name);
+        let up_output = Command::new("docker-compose")
+            .args(&["-f", &service_config.docker_compose_file, "up", "-d"])
+            .output()
+            .context(format!("Failed to create and start {} containers", service_name))?;
+
+        if !up_output.status.success() {
+            let error_message = String::from_utf8_lossy(&up_output.stderr);
+            println!(
+                "Warning: Failed to create and start {} containers: {}",
+                service_name,
+                error_message
+            );
+        } else {
+            println!("{} containers created and started successfully.", service_name);
+        }
+    }
+
+    Ok(())
+}
+async fn start_server(config: &Config) -> Result<()> {
+    println!("{}", "Starting development server...".bold().green());
 
     let network_type = config
         .get_string("network.type")
         .context("Failed to get network type from configuration")?;
 
     if network_type == "development" {
-        // Set environment variables for Bitcoin and Arch Network setups
-        set_env_vars(&config)?;
-
-        // Get Docker Compose file paths
-        let bitcoin_compose_file = config
-            .get_string("bitcoin.docker_compose_file")
-            .context("Failed to get Bitcoin docker compose file path")?;
-        let arch_compose_file = config
-            .get_string("arch.docker_compose_file")
-            .context("Failed to get Arch Network docker compose file path")?;
-
-        // Remove orphaned containers
-        remove_orphaned_containers(&bitcoin_compose_file, &arch_compose_file)?;
-
-        // Create the arch-network if it doesn't exist
+        set_env_vars(config)?;
         create_docker_network("arch-network")?;
 
-        // Start Bitcoin regtest network
-        start_docker_service("Bitcoin regtest network", "bitcoin", &bitcoin_compose_file)?;
+        let bitcoin_config: ServiceConfig = config
+            .get("bitcoin")
+            .context("Failed to get Bitcoin configuration")?;
+        start_or_create_services("Bitcoin regtest network", &bitcoin_config)?;
 
-        // Start Arch Network nodes
-        start_docker_service("Arch Network nodes", "bootnode", &arch_compose_file)?;
+        let arch_config: ServiceConfig = config
+            .get("arch")
+            .context("Failed to get Arch Network configuration")?;
+        start_or_create_services("Arch Network nodes", &arch_config)?;
     } else {
         println!("Using existing network configuration for: {}", network_type);
     }
@@ -182,10 +250,119 @@ async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Your app has been deployed successfully!".bold().green());
     Ok(())
 }
-async fn stop_server() -> Result<()> {
-    println!("Stopping development server...");
-    ShellCommand::new("pkill").arg("-f").arg("start-server.sh").status()?;
-    println!("Development server stopped successfully!");
+async fn stop_server(config: &Config) -> Result<()> {
+    println!("{}", "Stopping development server...".bold().yellow());
+
+    // Stop all containers related to our development environment
+    stop_all_related_containers()?;
+
+    println!("{}", "Development server stopped successfully!".bold().green());
+    println!("{}", "You can restart the server later using the 'start-server' command.".italic());
+    Ok(())
+}
+
+fn stop_all_related_containers() -> Result<()> {
+    let container_prefixes = vec!["arch-cli", "bitcoin", "electrs", "btc-rpc-explorer"];
+
+    for prefix in container_prefixes {
+        println!("Stopping {} containers...", prefix);
+
+        // List all running containers with the given prefix
+        let output = Command::new("docker")
+            .args(&["ps", "-q", "--filter", &format!("name={}", prefix)])
+            .output()
+            .context(format!("Failed to list running {} containers", prefix))?;
+
+        let container_ids = String::from_utf8_lossy(&output.stdout);
+
+        if !container_ids.is_empty() {
+            // Stop the containers
+            let stop_output = Command::new("docker")
+                .arg("stop")
+                .args(container_ids.split_whitespace())
+                .output()
+                .context(format!("Failed to stop {} containers", prefix))?;
+
+            if !stop_output.status.success() {
+                let error_message = String::from_utf8_lossy(&stop_output.stderr);
+                println!("Warning: Failed to stop some {} containers: {}", prefix, error_message);
+            } else {
+                println!("{} containers stopped successfully.", prefix);
+            }
+        } else {
+            println!("No running {} containers found to stop.", prefix);
+        }
+    }
+
+    Ok(())
+}
+
+fn start_existing_containers(compose_file: &str) -> Result<()> {
+    let output = Command::new("docker-compose")
+        .args(&["-f", compose_file, "ps", "-q"])
+        .output()
+        .context("Failed to list existing containers")?;
+
+    if !output.stdout.is_empty() {
+        println!("Found existing containers. Starting them...");
+        let start_output = Command::new("docker-compose")
+            .args(&["-f", compose_file, "start"])
+            .output()
+            .context("Failed to start existing containers")?;
+
+        if !start_output.status.success() {
+            let error_message = String::from_utf8_lossy(&start_output.stderr);
+            println!("Warning: Failed to start some containers: {}", error_message);
+        } else {
+            println!("Existing containers started successfully.");
+        }
+    } else {
+        println!("No existing containers found. Creating new ones...");
+        // Proceed with your existing logic to create new containers
+    }
+
+    Ok(())
+}
+
+fn remove_docker_networks() -> Result<()> {
+    let networks = vec!["arch-network", "internal"];
+
+    for network in networks {
+        println!("Removing Docker network: {}", network);
+
+        let output = Command::new("docker")
+            .args(&["network", "rm", network])
+            .output()
+            .context(format!("Failed to remove Docker network: {}", network))?;
+
+        if !output.status.success() {
+            let error_message = String::from_utf8_lossy(&output.stderr);
+            if error_message.contains("not found") {
+                println!("Network {} not found. Skipping.", network);
+            } else {
+                println!("Warning: Failed to remove network {}: {}", network, error_message);
+            }
+        } else {
+            println!("Network {} removed successfully.", network);
+        }
+    }
+
+    Ok(())
+}
+fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()> {
+    println!("Stopping {} services...", service_name);
+    let output = Command::new("docker-compose")
+        .args(&["-f", compose_file, "down"])
+        .output()
+        .context(format!("Failed to stop {} services", service_name))?;
+
+    if !output.status.success() {
+        let error_message = String::from_utf8_lossy(&output.stderr);
+        println!("Warning: Failed to stop {} services: {}", service_name, error_message);
+    } else {
+        println!("{} services stopped successfully.", service_name);
+    }
+
     Ok(())
 }
 
