@@ -1,0 +1,42 @@
+[network]
+type = "development"
+
+[bitcoin]
+docker_compose_file = "./bitcoin-docker-compose.yml"
+network = "regtest"
+rpc_endpoint = "http://localhost:18443"
+rpc_port = "18443"
+rpc_user = "bitcoin"
+rpc_password = "password"
+rpc_wallet = "devwallet"
+
+[program]
+key_path = "src/app/keys/program.json"
+
+[electrs]
+rest_api_port = "3002"
+electrum_port = "60401"
+
+[btc_rpc_explorer]
+port = "3000"
+
+[ord]
+port = "3032"
+
+[arch]
+docker_compose_file = "./arch-docker-compose.yml"
+network_mode = "localnet"
+rust_log = "info"
+rust_backtrace = "1"
+bootnode_ip = "172.30.0.10"
+bootnode_p2p_port = "19001"
+bootnode_peerid = "16Uiu2HAmA5DZfSpvcEqpuYyPjDSgx5G3e7bJLbgK5m5LBc6rnLes"
+leader_p2p_port = "19002"
+leader_rpc_port = "9002"
+leader_peerid = "16Uiu2HAkwZ1Qt1W71Jv5SrQpskVDze6zMckRkYwDaw3QveL8yQ7K"
+validator1_p2p_port = "19003"
+validator1_rpc_port = "9003"
+validator2_p2p_port = "19004"
+validator2_rpc_port = "9004"
+bitcoin_rpc_endpoint = "bitcoin"
+bitcoin_rpc_wallet = "devwallet"
