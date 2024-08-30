@@ -19,6 +19,8 @@ secp256k1 = { version = "0.28.2", features = ["global-context"] }
 common = { path = "./src/common" }
 bitcoincore-rpc = "0.18.0"
 colored = "2.0"
+config = "0.13"
+arch_program = { path = "./program" }
 
 [lib]
 path = "src/main.rs"
