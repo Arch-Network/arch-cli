@@ -1,3 +1,6 @@
 /target
 **/target
 **/src/app
+**/src/app/keys
+**/src/app/program-keypair.json
+/arch-data
