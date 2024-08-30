@@ -241,6 +241,17 @@ async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     // Set up Bitcoin RPC client
     let rpc = setup_bitcoin_rpc_client(config)?;
 
+    // Ensure the wallet has funds
+    let balance = rpc.get_balance(None, None)?;
+    if balance == Amount::ZERO {
+        println!("Generating initial blocks to receive mining rewards...");
+        let new_address = rpc.get_new_address(None, None)?;
+        let checked_address = new_address.require_network(Network::Regtest)?;
+        rpc.generate_to_address(101, &checked_address)?;
+        println!("Initial blocks generated. Waiting for balance to be available...");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
     // Handle fund transfer based on network type
     let tx_info = handle_fund_transfer(&rpc, &account_address, config).await?;
 
@@ -582,50 +593,80 @@ fn get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
 }
 
 fn setup_bitcoin_rpc_client(config: &Config) -> Result<Client> {
-    let endpoint = config
-        .get_string("bitcoin.rpc_endpoint")
-        .or_else(|_| {
-            let host = config
-                .get_string("bitcoin.rpc_host")
-                .unwrap_or_else(|_| "localhost".to_string());
-            let port = config
-                .get_string("bitcoin.rpc_port")
-                .unwrap_or_else(|_| "18443".to_string());
-            Ok::<String, anyhow::Error>(format!("http://{}:{}", host, port))
-        })
-        .context("Failed to get Bitcoin RPC endpoint")?;
-
-    let username = config
+    let rpc_host = config
+        .get_string("bitcoin.rpc_host")
+        .unwrap_or_else(|_| "localhost".to_string());
+    let rpc_port = config.get_string("bitcoin.rpc_port").context("Failed to get Bitcoin RPC port")?;
+    let rpc_user = config
         .get_string("bitcoin.rpc_user")
         .context("Failed to get Bitcoin RPC username")?;
-    let password = config
+    let rpc_password = config
         .get_string("bitcoin.rpc_password")
         .context("Failed to get Bitcoin RPC password")?;
     let wallet_name = config
         .get_string("bitcoin.rpc_wallet")
-        .unwrap_or_else(|_| "default".to_string());
+        .unwrap_or_else(|_| "devwallet".to_string());
 
-    let client = Client::new(&endpoint, Auth::UserPass(username, password)).context(
-        "Failed to create RPC client"
-    )?;
+    let endpoint = format!("http://{}:{}", rpc_host, rpc_port);
 
-    // Try to load the wallet
+    let client = Client::new(
+        &endpoint,
+        Auth::UserPass(rpc_user.clone(), rpc_password.clone())
+    ).context("Failed to create RPC client")?;
+
+    // Attempt to load the wallet
     match client.load_wallet(&wallet_name) {
         Ok(_) => println!("Wallet '{}' loaded successfully.", wallet_name),
         Err(e) => {
-            // If the wallet doesn't exist, create it
             if e.to_string().contains("Wallet file verification failed") {
+                // Wallet directory exists but might be corrupted or incomplete
+                println!("Wallet '{}' exists but couldn't be loaded. Attempting to create...", wallet_name);
+
+                // Attempt to create the wallet with a new name
+                let new_wallet_name = format!("{}_new", wallet_name);
+                match client.create_wallet(&new_wallet_name, None, None, None, None) {
+                    Ok(_) => {
+                        println!("New wallet '{}' created successfully.", new_wallet_name);
+                        // Update the wallet name in the client
+                        return setup_bitcoin_rpc_client_with_wallet(
+                            &endpoint,
+                            &rpc_user,
+                            &rpc_password,
+                            &new_wallet_name
+                        );
+                    }
+                    Err(create_err) => {
+                        return Err(anyhow!("Failed to create new wallet: {}", create_err));
+                    }
+                }
+            } else if e.to_string().contains("Requested wallet does not exist") {
+                // Wallet doesn't exist, create it
                 println!("Wallet '{}' not found. Creating new wallet...", wallet_name);
                 client.create_wallet(&wallet_name, None, None, None, None)?;
                 println!("Wallet '{}' created successfully.", wallet_name);
             } else {
-                return Err(e.into());
+                return Err(anyhow!("Failed to load wallet: {}", e));
             }
         }
     }
 
-    Ok(client)
+    // Return the client with the wallet loaded
+    setup_bitcoin_rpc_client_with_wallet(&endpoint, &rpc_user, &rpc_password, &wallet_name)
 }
+
+fn setup_bitcoin_rpc_client_with_wallet(
+    endpoint: &str,
+    username: &str,
+    password: &str,
+    wallet_name: &str
+) -> Result<Client> {
+    let wallet_endpoint = format!("{}/wallet/{}", endpoint, wallet_name);
+    Client::new(
+        &wallet_endpoint,
+        Auth::UserPass(username.to_string(), password.to_string())
+    ).context("Failed to create RPC client with wallet")
+}
+
 async fn handle_fund_transfer(
     rpc: &Client,
     account_address: &str,

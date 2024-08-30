@@ -9,12 +9,15 @@ services:
       - bitcoin-data:/home/bitcoin/.bitcoin
     networks:
       - internal
+    environment:
+      - BITCOIN_RPC_AUTH=${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASSWORD}
     command: -printtoconsole
       -txindex=1
       -regtest=1
       -rpcallowip=0.0.0.0/0
       -rpcbind=0.0.0.0
       -rpcuser=${BITCOIN_RPC_USER}
+      -rpcport=${BITCOIN_RPC_PORT}
       -rpcpassword=${BITCOIN_RPC_PASSWORD}
       -fallbackfee=0.00001
     healthcheck:
