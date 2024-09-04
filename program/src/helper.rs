@@ -10,7 +10,7 @@ use crate::{
     program::{get_account_script_pubkey, get_bitcoin_tx},
 };
 
-pub fn get_state_trasition_tx(accounts: &[AccountInfo]) -> Transaction {
+pub fn get_state_transition_tx(accounts: &[AccountInfo]) -> Transaction {
     Transaction {
         version: Version::TWO,
         lock_time: LockTime::ZERO,
