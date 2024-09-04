@@ -22,6 +22,7 @@ colored = "2.0"
 config = "0.13"
 arch_program = { path = "./program" }
 dotenv = "0.15.0"
+reqwest = "0.12.5"
 
 [lib]
 path = "src/main.rs"
