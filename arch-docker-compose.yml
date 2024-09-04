@@ -1,32 +1,49 @@
+version: '3'
 services:
+  init:
+    image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/bootnode:latest}
+    volumes:
+      - ./arch-data:/arch_data
+      - ./arch-data/bootnode:/bootnode_data
+      - ./init.sh:/usr/local/bin/init.sh
+    command: >
+      bash -c "/usr/local/bin/init.sh"
+    environment:
+      - REPLICA_COUNT=2
+
   bootnode:
-    platform: linux/amd64
-    image: ghcr.io/arch-network/bootnode:latest
+    image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/bootnode:latest}
+    command: /usr/local/bin/bootnode.sh
     ports:
       - "${BOOTNODE_P2P_PORT}:${BOOTNODE_P2P_PORT}"
     environment:
       RUST_LOG: "${RUST_LOG:-info}"
       RUST_BACKTRACE: "${RUST_BACKTRACE:-1}"
+      BOOTNODE_P2P_PORT: "${BOOTNODE_P2P_PORT}"
       NETWORK_MODE: "${NETWORK_MODE:-localnet}"
-      DATA_DIR: "/arch-data"
+      DATA_DIR: /arch_data
     volumes:
-      - ./arch-data/bootnode:/arch-data
+      - ./arch-data/bootnode:/arch_data
+      - ./bootnode.sh:/usr/local/bin/bootnode.sh
+    depends_on:
+      - init
     networks:
-      - arch-network
+      arch-network:
+        ipv4_address: 172.30.0.250
 
   leader:
-    platform: linux/amd64
-    image: ghcr.io/arch-network/validator:latest
+    image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
     ports:
       - "${LEADER_P2P_PORT}:${LEADER_P2P_PORT}"
       - "${LEADER_RPC_PORT}:${LEADER_RPC_PORT}"
+    command: /usr/local/bin/leader.sh
     environment:
       RUST_LOG: "${RUST_LOG:-info,validator=debug}"
       RUST_BACKTRACE: "${RUST_BACKTRACE:-1}"
       NETWORK_MODE: "${NETWORK_MODE:-localnet}"
       DATA_DIR: "/arch-data"
       PRIVATE_KEY_PASSWORD: "${PRIVATE_KEY_PASSWORD:-}"
-      BOOT_NODE_ENDPOINT: "/dns4/bootnode/tcp/${BOOTNODE_P2P_PORT}/p2p/${BOOTNODE_PEERID}"
+      BOOTNODE_P2P_PORT: "${BOOTNODE_P2P_PORT}"
       LEADER_PEERID: "${LEADER_PEERID}"
       RPC_BIND_IP: "0.0.0.0"
       RPC_BIND_PORT: "${LEADER_RPC_PORT}"
@@ -37,25 +54,25 @@ services:
       BITCOIN_RPC_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
       BITCOIN_RPC_WALLET: "${BITCOIN_RPC_WALLET:-devwallet}"
     volumes:
-      - ./arch-data/leader:/arch-data
+      - ./arch-data:/arch_data
+      - ./arch-data/bootnode:/bootnode_data:ro
+      - ./leader.sh:/usr/local/bin/leader.sh
     depends_on:
       - bootnode
     networks:
       - arch-network
 
   validator-1:
-    platform: linux/amd64
-    image: ghcr.io/arch-network/validator:latest
-    ports:
-      - "${VALIDATOR1_P2P_PORT}:${VALIDATOR1_P2P_PORT}"
-      - "${VALIDATOR1_RPC_PORT}:${VALIDATOR1_RPC_PORT}"
+    image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
+    command: /usr/local/bin/validator.sh
     environment:
+      VALIDATOR_NUMBER: "1"
       RUST_LOG: "${RUST_LOG:-info,validator=debug}"
       RUST_BACKTRACE: "${RUST_BACKTRACE:-1}"
       NETWORK_MODE: "${NETWORK_MODE:-localnet}"
       DATA_DIR: "/arch-data"
       PRIVATE_KEY_PASSWORD: "${PRIVATE_KEY_PASSWORD:-}"
-      BOOT_NODE_ENDPOINT: "/ip4/${BOOTNODE_IP}/tcp/${BOOTNODE_P2P_PORT}/p2p/${BOOTNODE_PEERID}"
+      BOOTNODE_P2P_PORT: "${BOOTNODE_P2P_PORT}"
       LEADER_PEERID: "${LEADER_PEERID}"
       RPC_BIND_IP: "0.0.0.0"
       RPC_BIND_PORT: "${VALIDATOR1_RPC_PORT}"
@@ -66,25 +83,28 @@ services:
       BITCOIN_RPC_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
       BITCOIN_RPC_WALLET: "${BITCOIN_RPC_WALLET:-devwallet}"
     volumes:
-      - ./arch-data/validator-1:/arch-data
+      - ./arch-data/validators:/arch_data
+      - ./arch-data/bootnode:/bootnode_data:ro
+      - ./validator.sh:/usr/local/bin/validator.sh
     depends_on:
       - bootnode
+    ports:
+      - "${VALIDATOR1_P2P_PORT}:${VALIDATOR1_P2P_PORT}"
+      - "${VALIDATOR1_RPC_PORT}:${VALIDATOR1_RPC_PORT}"
     networks:
       - arch-network
 
   validator-2:
-    platform: linux/amd64
-    image: ghcr.io/arch-network/validator:latest
-    ports:
-      - "${VALIDATOR2_P2P_PORT}:${VALIDATOR2_P2P_PORT}"
-      - "${VALIDATOR2_RPC_PORT}:${VALIDATOR2_RPC_PORT}"
+    image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
+    command: /usr/local/bin/validator.sh
     environment:
+      VALIDATOR_NUMBER: "2"
       RUST_LOG: "${RUST_LOG:-info,validator=debug}"
       RUST_BACKTRACE: "${RUST_BACKTRACE:-1}"
       NETWORK_MODE: "${NETWORK_MODE:-localnet}"
       DATA_DIR: "/arch-data"
       PRIVATE_KEY_PASSWORD: "${PRIVATE_KEY_PASSWORD:-}"
-      BOOT_NODE_ENDPOINT: "/ip4/${BOOTNODE_IP}/tcp/${BOOTNODE_P2P_PORT}/p2p/${BOOTNODE_PEERID}"
+      BOOTNODE_P2P_PORT: "${BOOTNODE_P2P_PORT}"
       LEADER_PEERID: "${LEADER_PEERID}"
       RPC_BIND_IP: "0.0.0.0"
       RPC_BIND_PORT: "${VALIDATOR2_RPC_PORT}"
@@ -95,9 +115,14 @@ services:
       BITCOIN_RPC_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
       BITCOIN_RPC_WALLET: "${BITCOIN_RPC_WALLET:-devwallet}"
     volumes:
-      - ./arch-data/validator-2:/arch-data
+      - ./arch-data/validators:/arch_data
+      - ./arch-data/bootnode:/bootnode_data:ro
+      - ./validator.sh:/usr/local/bin/validator.sh
     depends_on:
       - bootnode
+    ports:
+      - "${VALIDATOR2_P2P_PORT}:${VALIDATOR2_P2P_PORT}"
+      - "${VALIDATOR2_RPC_PORT}:${VALIDATOR2_RPC_PORT}"
     networks:
       - arch-network
 
