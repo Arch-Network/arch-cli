@@ -1,14 +1,19 @@
-use std::process::Command;
-use anyhow::{ Result, Context };
+use anyhow::{Context, Result};
 use std::env;
+use std::process::Command;
 
 pub fn start_docker_compose(file_path: &str) -> Result<()> {
     if !is_docker_compose_installed() {
-        return Err(anyhow::anyhow!("Docker Compose is not installed or not in PATH"));
+        return Err(anyhow::anyhow!(
+            "Docker Compose is not installed or not in PATH"
+        ));
     }
 
     if !std::path::Path::new(file_path).exists() {
-        return Err(anyhow::anyhow!("Docker Compose file not found: {}", file_path));
+        return Err(anyhow::anyhow!(
+            "Docker Compose file not found: {}",
+            file_path
+        ));
     }
 
     println!("Starting Docker Compose with file: {}", file_path);
@@ -26,10 +31,17 @@ pub fn start_docker_compose(file_path: &str) -> Result<()> {
 }
 
 pub fn stop_docker_compose(file_path: &str) -> Result<()> {
-    Command::new("docker-compose").arg("-f").arg(file_path).arg("down").status()?;
+    Command::new("docker-compose")
+        .arg("-f")
+        .arg(file_path)
+        .arg("down")
+        .status()?;
     Ok(())
 }
 
 fn is_docker_compose_installed() -> bool {
-    Command::new("docker-compose").arg("--version").output().is_ok()
+    Command::new("docker-compose")
+        .arg("--version")
+        .output()
+        .is_ok()
 }

@@ -20,6 +20,7 @@ use config::{ Config, File, Environment };
 use std::env;
 mod docker_manager;
 use anyhow::anyhow;
+use dotenv::dotenv;
 
 #[derive(Deserialize)]
 struct ServiceConfig {
@@ -54,6 +55,7 @@ struct DeployArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv().ok();
     let cli = Cli::parse();
 
     // Load configuration
@@ -171,7 +173,8 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
     } else {
         println!("Some or all {} containers are missing. Creating and starting new ones...", service_name);
         let up_output = Command::new("docker-compose")
-            .args(&["-f", &service_config.docker_compose_file, "up", "-d"])
+            .args(&["-f", &service_config.docker_compose_file, "up", "--build", "-d"])
+            .envs(std::env::vars())
             .output()
             .context(format!("Failed to create and start {} containers", service_name))?;
 
@@ -224,11 +227,15 @@ async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     // Build the program
     build_program(args)?;
 
+    println!("{}", "Program built successfully".bold().green());
+
     // Get program key and public key
     let program_key_path = get_program_key_path(args, config)?;
     let (program_keypair, program_pubkey) = with_secret_key_file(&program_key_path).context(
         "Failed to get program key pair"
     )?;
+
+    println!("  {} Program keypair: {:?}", "ℹ".bold().blue(), program_keypair);
 
     // Get account address
     let account_address = get_account_address_async(program_pubkey).await.context(
@@ -453,17 +460,15 @@ fn set_env_vars(config: &Config) -> Result<()> {
         ("RUST_LOG", "arch.rust_log"),
         ("RUST_BACKTRACE", "arch.rust_backtrace"),
         ("BOOTNODE_IP", "arch.bootnode_ip"),
-        ("BOOTNODE_P2P_PORT", "arch.bootnode_p2p_port"),
-        ("BOOTNODE_PEERID", "arch.bootnode_peerid"),
         ("LEADER_P2P_PORT", "arch.leader_p2p_port"),
         ("LEADER_RPC_PORT", "arch.leader_rpc_port"),
-        ("LEADER_PEERID", "arch.leader_peerid"),
         ("VALIDATOR1_P2P_PORT", "arch.validator1_p2p_port"),
         ("VALIDATOR1_RPC_PORT", "arch.validator1_rpc_port"),
         ("VALIDATOR2_P2P_PORT", "arch.validator2_p2p_port"),
         ("VALIDATOR2_RPC_PORT", "arch.validator2_rpc_port"),
         ("BITCOIN_RPC_ENDPOINT", "arch.bitcoin_rpc_endpoint"),
         ("BITCOIN_RPC_WALLET", "arch.bitcoin_rpc_wallet"),
+        ("REPLICA_COUNT", "arch.replica_count"),
     ];
 
     for (env_var, config_key) in vars.iter() {
@@ -565,13 +570,14 @@ fn build_program(args: &DeployArgs) -> Result<()> {
         if !std::path::Path::new(path).exists() {
             return Err(anyhow::anyhow!("Specified directory does not exist: {}", path));
         }
+        println!("  {} Building program...", "→".bold().blue()); // Added colorful logging
         std::process::Command
             ::new("cargo")
             .args(&["build-sbf", "--manifest-path", &format!("{}/Cargo.toml", path)])
             .status()
             .context("Failed to build program")?;
     } else {
-        println!("  {} Building program...", "→".bold().blue());
+        println!("  {} Building program...", "→".bold().blue()); // Added colorful logging
         std::process::Command
             ::new("cargo")
             .args(&["build-sbf", "--manifest-path", "src/app/program/Cargo.toml"])

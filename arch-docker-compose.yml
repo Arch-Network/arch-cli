@@ -1,7 +1,7 @@
 version: '3'
 services:
   init:
-    image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/bootnode:latest}
+    image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
     volumes:
       - ./arch-data:/arch_data
       - ./arch-data/bootnode:/bootnode_data
