@@ -113,32 +113,3 @@ volumes:
     driver: local
   ord-data:
     driver: local
-
-  # ordinals-ord:
-  #   platform: linux/amd64
-  #   image: haffjjj/ordinals-ord:v0.18.4
-  #   restart: unless-stopped
-  #   ports:
-  #     - 3032:3032
-  #   volumes:
-  #     - ord-data:/root/.local/share
-  #   depends_on:
-  #     bitcoin:
-  #       condition: service_healthy
-  #   networks:
-  #     - internal
-  #   command: --chain=regtest
-  #     --bitcoin-rpc-url=http://bitcoin:18443
-  #     --bitcoin-rpc-username=${BITCOIN_USER}
-  #     --bitcoin-rpc-password=${BITCOIN_PASSWORD}
-  #     --index-sats
-  #     --index-runes
-  #     server
-  #     --http-port=3032
-  #   healthcheck:
-  #     test: curl -f localhost:3032/blockheight || exit 1
-  #     start_period: 5s
-  #     interval: 5s
-  #     timeout: 5s
-  #     retries: 3
-
