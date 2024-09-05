@@ -29,6 +29,7 @@ use std::env;
 mod docker_manager;
 use anyhow::anyhow;
 use dotenv::dotenv;
+use common::wallet_manager::*;
 
 #[derive(Deserialize)]
 struct ServiceConfig {
@@ -285,15 +286,20 @@ async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
 
     // Set up Bitcoin RPC client
-    let rpc = setup_bitcoin_rpc_client(config)?;
+    let wallet_manager = WalletManager::new(config)?;
 
-    // Ensure the wallet has funds
-    let balance = rpc.get_balance(None, None)?;
+    // Check if wallet_manager.client is connected
+    let connected = wallet_manager.client.get_blockchain_info()?;
+    println!("  {} Connected: {:?}", "ℹ".bold().blue(), connected);
+
+    let balance = wallet_manager.client.get_balance(None, None)?;
+
+    println!("  {} Balance: {}", "ℹ".bold().blue(), balance);
     if balance == Amount::ZERO {
         println!("  {} Generating initial blocks to receive mining rewards...", "→".bold().blue());
-        let new_address = rpc.get_new_address(None, None)?;
+        let new_address = wallet_manager.client.get_new_address(None, None)?;
         let checked_address = new_address.require_network(Network::Regtest)?;
-        rpc.generate_to_address(101, &checked_address)?;
+        wallet_manager.client.generate_to_address(101, &checked_address)?;
         println!(
             "  {} Initial blocks generated. Waiting for balance to be available...",
             "✓".bold().green()
@@ -302,15 +308,16 @@ async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     }
 
     // Handle fund transfer based on network type
-    let tx_info = fund_address(&rpc, &account_address, config).await?;
+    let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
     deploy_program_with_tx_info(config, &program_keypair, &program_pubkey, tx_info).await?;
 
+    wallet_manager.close_wallet()?;
+
     println!("{}", "Your app has been deployed successfully!".bold().green());
     Ok(())
 }
-
 async fn stop_server(config: &Config) -> Result<()> {
     println!("{}", "Stopping development server...".bold().yellow());
 
@@ -741,121 +748,6 @@ fn get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
     )
 }
 
-fn setup_bitcoin_rpc_client(config: &Config) -> Result<Client> {
-    let rpc_host = config
-        .get_string("bitcoin.rpc_host")
-        .unwrap_or_else(|_| "localhost".to_string());
-    let rpc_port = config.get_string("bitcoin.rpc_port").context("Failed to get Bitcoin RPC port")?;
-    let rpc_user = config
-        .get_string("bitcoin.rpc_user")
-        .context("Failed to get Bitcoin RPC username")?;
-    let rpc_password = config
-        .get_string("bitcoin.rpc_password")
-        .context("Failed to get Bitcoin RPC password")?;
-    let wallet_name = config
-        .get_string("bitcoin.rpc_wallet")
-        .unwrap_or_else(|_| "devwallet".to_string());
-
-    let endpoint = format!("http://{}:{}", rpc_host, rpc_port);
-
-    let client = Client::new(
-        &endpoint,
-        Auth::UserPass(rpc_user.clone(), rpc_password.clone())
-    ).context("Failed to create RPC client")?;
-
-    // Function to attempt loading or creating the wallet
-    fn load_or_create_wallet(client: &Client, wallet_name: &str, retry_count: u8) -> Result<()> {
-        if retry_count >= 5 {
-            return Err(
-                anyhow!(
-                    "Max retry attempts reached. Please check if another Bitcoin Core instance is running."
-                )
-            );
-        }
-
-        match client.load_wallet(wallet_name) {
-            Ok(_) => {
-                println!(
-                    "  {} Wallet '{}' loaded successfully.",
-                    "✓".bold().green(),
-                    wallet_name.yellow()
-                );
-                Ok(())
-            }
-            Err(e) => {
-                if
-                    e.to_string().contains("Wallet file verification failed") ||
-                    e.to_string().contains("Requested wallet does not exist") ||
-                    e.to_string().contains("Unable to obtain an exclusive lock")
-                {
-                    println!(
-                        "  {} Failed to load wallet '{}'. Error: {}",
-                        "ℹ".bold().blue(),
-                        wallet_name.yellow(),
-                        e.to_string().red()
-                    );
-
-                    println!("Attempting to resolve the issue...");
-
-                    // Try to unload the wallet first
-                    let _ = client.unload_wallet(Some(wallet_name));
-                    thread::sleep(Duration::from_secs(2));
-
-                    // Now try to create the wallet
-                    match client.create_wallet(wallet_name, None, None, None, None) {
-                        Ok(_) => {
-                            println!(
-                                "  {} Wallet '{}' created successfully.",
-                                "✓".bold().green(),
-                                wallet_name.yellow()
-                            );
-                            Ok(())
-                        }
-                        Err(create_err) => {
-                            println!(
-                                "  {} Failed to create wallet. Error: {}",
-                                "⚠".bold().yellow(),
-                                create_err.to_string().red()
-                            );
-
-                            println!("Waiting for 10 seconds before retrying...");
-                            thread::sleep(Duration::from_secs(10));
-
-                            load_or_create_wallet(client, wallet_name, retry_count + 1)
-                        }
-                    }
-                } else {
-                    Err(anyhow!("Unexpected error while loading wallet: {}", e))
-                }
-            }
-        }
-    }
-
-    // Attempt to load or create the wallet
-    match load_or_create_wallet(&client, &wallet_name, 0) {
-        Ok(_) => (),
-        Err(e) => {
-            println!("{}", "Failed to load or create wallet after multiple attempts.".red());
-            println!("Error: {}", e);
-            println!("Please ensure no other Bitcoin Core instances are running.");
-            println!("You may need to manually delete the wallet files and try again.");
-
-            print!("Do you want to continue anyway? This may lead to errors. (y/n): ");
-            io::stdout().flush().unwrap();
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
-
-            if input.trim().to_lowercase() != "y" {
-                return Err(anyhow!("User chose to abort due to wallet loading issues"));
-            }
-        }
-    }
-
-    // Return the client with the wallet loaded
-    setup_bitcoin_rpc_client_with_wallet(&endpoint, &rpc_user, &rpc_password, &wallet_name)
-}
-
 fn setup_bitcoin_rpc_client_with_wallet(
     endpoint: &str,
     username: &str,
@@ -981,11 +873,11 @@ async fn deploy_program(
     println!("  {} Deploying program...", "→".bold().blue());
 
     // Check if the program account already exists
-    let account_info = read_account_info_async(NODE1_ADDRESS.to_string(), *program_pubkey).await;
-    if account_info.is_ok() {
-        println!("  {} Program account already exists", "ℹ".bold().blue());
-        return Ok(());
-    }
+    // let account_info = read_account_info_async(NODE1_ADDRESS.to_string(), *program_pubkey).await;
+    // if account_info.is_ok() {
+    //     println!("  {} Program account already exists", "ℹ".bold().blue());
+    //     return Ok(());
+    // }
 
     // 1. Create a new account for the program
     let (txid, _instruction_hash) = sign_and_send_instruction_async(
@@ -1017,6 +909,7 @@ async fn deploy_program(
     // assert!(read_account_info(NODE1_ADDRESS, *program_pubkey).unwrap().data == elf);
 
     // 4. Make program executable
+    println!("Making program executable");
     let (txid, _instruction_hash) = sign_and_send_instruction_async(
         Instruction {
             program_id: Pubkey::system_program(),
@@ -1034,55 +927,16 @@ async fn deploy_program(
         NODE1_ADDRESS.to_string(),
         txid.clone()
     ).await.expect("get processed transaction should not fail");
-    println!("processed_tx {:?}", processed_tx);
-
-    // assert!(read_account_info(NODE1_ADDRESS, *program_pubkey).unwrap().is_executable);
-
-    // Create pubkey for contract caller account
-    // Send a UTXO to the caller's Bitcoin address
-    // Create a new Arch account with the caller's pubkey
-    // Check the tx went through
-    //
-
-    // let (txid, vout) = send_utxo(caller_pubkey);
-    // println!("{}:{} {:?}", txid, vout, hex::encode(caller_pubkey.serialize()));
-
-    // let (txid, instruction_hash) = sign_and_send_instruction(
-    //     SystemInstruction::new_create_account_instruction(
-    //         hex::decode(txid).unwrap().try_into().unwrap(),
-    //         vout,
-    //         caller_pubkey
-    //     ),
-    //     vec![caller_keypair]
-    // ).expect("signing and sending a transaction should not fail");
-
-    // let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone()).expect(
-    //     "get processed transaction should not fail"
-    // );
     // println!("processed_tx {:?}", processed_tx);
+    println!("Program made executable successfully");
 
-    // let mut instruction_data = vec![3];
-    // instruction_data.extend(program_pubkey.serialize());
+    assert!(
+        read_account_info_async(
+            NODE1_ADDRESS.to_string(),
+            *program_pubkey
+        ).await.unwrap().is_executable
+    );
 
-    // let (txid, instruction_hash) = sign_and_send_instruction(
-    //     Instruction {
-    //         program_id: Pubkey::system_program(),
-    //         accounts: vec![AccountMeta {
-    //             pubkey: caller_pubkey,
-    //             is_signer: true,
-    //             is_writable: true,
-    //         }],
-    //         data: instruction_data,
-    //     },
-    //     vec![caller_keypair]
-    // ).expect("signing and sending a transaction should not fail");
-
-    // let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone()).expect(
-    //     "get processed transaction should not fail"
-    // );
-    // println!("processed_tx {:?}", processed_tx);
-
-    // assert_eq!(read_account_info(NODE1_ADDRESS, caller_pubkey).unwrap().owner, program_pubkey);
     println!(
         "  {} Program deployed with transaction ID: {} and vout: {}",
         "✓".bold().green(),

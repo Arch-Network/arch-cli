@@ -1,6 +1,6 @@
 use anyhow::Result;
-use borsh::{ BorshDeserialize, BorshSerialize };
-use serde::{ Deserialize, Serialize };
+use borsh::{BorshDeserialize, BorshSerialize};
+use serde::{Deserialize, Serialize};
 
 use crate::runtime_transaction::RuntimeTransaction;
 
@@ -44,14 +44,12 @@ impl ProcessedTransaction {
         };
         let runtime_transaction_len = u64::from_le_bytes(data[1..9].try_into().unwrap()) as usize;
         let mut size = 9;
-        let runtime_transaction = RuntimeTransaction::from_slice(
-            &data[9..9 + runtime_transaction_len]
-        )?;
+        let runtime_transaction =
+            RuntimeTransaction::from_slice(&data[9..9 + runtime_transaction_len])?;
         size += runtime_transaction_len;
 
-        let bitcoin_txids_len = u64::from_le_bytes(
-            data[size..size + 8].try_into().unwrap()
-        ) as usize;
+        let bitcoin_txids_len =
+            u64::from_le_bytes(data[size..size + 8].try_into().unwrap()) as usize;
         size += 8;
         let mut bitcoin_txids = vec![];
         for _ in 0..bitcoin_txids_len {
