@@ -1,0 +1,11 @@
+[package]
+name = "arch-network-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arch_program = { path = "../../../program" }
+borsh = "0.9"
+
+[lib]
+crate-type = ["cdylib"]
