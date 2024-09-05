@@ -38,7 +38,12 @@ struct ServiceConfig {
 }
 
 #[derive(Parser)]
-#[clap(author, version, about, long_about = None)]
+#[clap(
+    name = "arch-cli",
+    about = "Arch Network CLI - A tool for managing Arch Network applications",
+    long_about = None,
+    version
+)]
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -46,20 +51,39 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize a new Arch Network app
+    #[clap(long_about = "Creates the project structure and boilerplate files for a new Arch Network application.")]
     Init,
+
+    /// Start the development server
+    #[clap(long_about = "Starts the development environment, including Bitcoin regtest network and Arch Network nodes.")]
     StartServer,
+
+    /// Deploy your Arch Network app
+    #[clap(long_about = "Builds and deploys your Arch Network application to the specified network.")]
     Deploy(DeployArgs),
+
+    /// Stop the development server
+    #[clap(long_about = "Stops all related Docker containers and services for the development environment.")]
     StopServer,
+
+    /// Clean the project
+    #[clap(long_about = "Removes the src/app directory, cleaning the project structure.")]
     Clean,
+
+    /// Start the Distributed Key Generation (DKG) process
+    #[clap(long_about = "Initiates the Distributed Key Generation process on the Arch Network.")]
     StartDkg,
 }
 
 #[derive(Args)]
 struct DeployArgs {
-    #[clap(long, help = "Directory of your program")]
+    /// Directory of your program
+    #[clap(long, help = "Specifies the directory containing your Arch Network program")]
     directory: Option<String>,
 
-    #[clap(long, help = "Path to the program key file")]
+    /// Path to the program key file
+    #[clap(long, help = "Specifies the path to the program's key file for deployment")]
     program_key: Option<String>,
 }
 
