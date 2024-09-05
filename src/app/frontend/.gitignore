@@ -1,9 +1,3 @@
-/target
-**/target
-**/src/app/keys
-**/src/app/program-keypair.json
-/arch-data
-
 # Logs
 logs
 *.log
