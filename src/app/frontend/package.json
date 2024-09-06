@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@bitcoin-design/bitcoin-icons-react": "^0.1.10",
-    "arch-typescript-sdk": "^0.0.8",
+    "arch-typescript-sdk": "^0.0.9",
     "axios": "^1.7.7",
     "bs58": "^6.0.0",
     "buffer": "^6.0.3",

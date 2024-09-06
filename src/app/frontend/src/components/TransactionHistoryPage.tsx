@@ -36,13 +36,14 @@ const TransactionHistoryPage: React.FC = () => {
 
       for (let i = endBlock; i >= startBlock; i--) {
         try {
-          const hexBlockHash = await client.getBlockHash(i);
-          const asciiBlockHash = Buffer.from(hexBlockHash, 'hex').toString('utf8');
-          const block = await client.getBlock(asciiBlockHash);
+          const blockHash = await client.getBlockHash(i);
+          console.log(blockHash);
+          const block = await client.getBlock(blockHash);
+          console.log(block);
 
           newBlocks.push({
             height: i,
-            hash: asciiBlockHash,
+            hash: blockHash,
             transactions: block.transactions || [],
             timestamp: block.timestamp || 0,
           });

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ArchRpcClient, ProcessedTransaction } from 'arch-typescript-sdk';
 import { Buffer } from 'buffer';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Clock, Hash, Database, ChevronDown, ChevronUp, CheckCircle, AlertCircle, FileText, Layers, Bitcoin } from 'lucide-react';
+import { ArrowLeft, Clock, Hash, Database, ChevronDown, ChevronUp, CheckCircle, AlertCircle, FileText, Layers, Bitcoin, User, Code } from 'lucide-react';
 import bs58 from 'bs58';
 
 const client = new ArchRpcClient('http://localhost:9002');
@@ -18,11 +18,18 @@ interface BlockDetails {
 
 const BlockDetailsPage: React.FC = () => {
   const { blockHashOrHeight } = useParams<{ blockHashOrHeight: string }>();
+  const navigate = useNavigate();
   const [blockDetails, setBlockDetails] = useState<BlockDetails | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedTx, setExpandedTx] = useState<string | null>(null);
   const [transactionDetails, setTransactionDetails] = useState<ProcessedTransaction | null>(null);
+
+  const handlePreviousBlockClick = () => {
+    if (blockDetails && blockDetails.previous_block_hash) {
+      navigate(`/block/${blockDetails.previous_block_hash}`);
+    }
+  };
 
   useEffect(() => {
     const fetchBlockDetails = async () => {
@@ -31,15 +38,16 @@ const BlockDetailsPage: React.FC = () => {
         let block;
         if (blockHashOrHeight!.length === 64) {
           block = await client.getBlock(blockHashOrHeight!);
+          console.log(block);
           block.height = 0;
           block.hash = blockHashOrHeight!;
         } else {
           const height = parseInt(blockHashOrHeight!);
           const blockHash = await client.getBlockHash(height);
-          block = await client.getBlock(Buffer.from(blockHash, 'hex').toString('utf8'));
+          console.log(blockHash);
+          block = await client.getBlock(blockHash);
           block.height = height;
-          block.hash = Buffer.from(blockHash, 'hex').toString('utf8');
-          console.log(block);
+          block.hash = blockHash;
         }
         setBlockDetails({
           height: block.height,
@@ -71,6 +79,11 @@ const BlockDetailsPage: React.FC = () => {
     }
   };
 
+  const wrapData = (data: string, chunkSize: number = 64): string => {
+    const regex = new RegExp(`.{1,${chunkSize}}`, 'g');
+    return data.match(regex)?.join('\n') || data;
+  };
+
   const toggleTxExpansion = async (txId: string) => {
     if (expandedTx === txId) {
       setExpandedTx(null);
@@ -86,10 +99,10 @@ const BlockDetailsPage: React.FC = () => {
   };
 
   const renderTransactionDetails = (txDetails: ProcessedTransaction) => (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+    <div className="grid grid-cols-1 gap-4 mt-4">
       <div className="bg-arch-gray rounded-lg p-4 flex items-start">
         <div className="mr-3 mt-1">
-          {txDetails.status === 1 ? (
+          {txDetails.status === 'Processed' ? (
             <CheckCircle className="text-green-500" size={20} />
           ) : (
             <AlertCircle className="text-yellow-500" size={20} />
@@ -97,7 +110,7 @@ const BlockDetailsPage: React.FC = () => {
         </div>
         <div>
           <h3 className="text-arch-orange font-semibold mb-2">Status</h3>
-          <p>{getStatusString(txDetails.status)}</p>
+          <p>{txDetails.status}</p>
         </div>
       </div>
       <div className="bg-arch-gray rounded-lg p-4 flex items-start">
@@ -107,13 +120,13 @@ const BlockDetailsPage: React.FC = () => {
           <p>{txDetails.runtime_transaction.version}</p>
         </div>
       </div>
-      <div className="bg-arch-gray rounded-lg p-4 flex items-start col-span-2">
+      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
         <Hash className="text-arch-orange mr-3 mt-1" size={20} />
         <div>
           <h3 className="text-arch-orange font-semibold mb-2">Signatures</h3>
           <ul className="space-y-2">
             {txDetails.runtime_transaction.signatures.map((sig, index) => {
-              const base58Sig = bs58.encode(Buffer.from(sig, 'hex'));
+              const base58Sig = bs58.encode(Buffer.from(sig));
               return (
                 <li key={index} className="text-sm">
                   {base58Sig}
@@ -130,10 +143,51 @@ const BlockDetailsPage: React.FC = () => {
         </div>
       </div>
       <div className="bg-arch-gray rounded-lg p-4 flex items-start">
-        <Layers className="text-arch-orange mr-3 mt-1" size={20} />
+        <User className="text-arch-orange mr-3 mt-1" size={20} />
+        <div>
+          <h3 className="text-arch-orange font-semibold mb-2">Signers</h3>
+          <ul className="space-y-2">
+            {txDetails.runtime_transaction.message.signers.map((signer, index) => {
+              const base58Signer = bs58.encode(Buffer.from(signer));
+              return (
+                <li key={index} className="text-sm">
+                  {base58Signer}
+                  <button
+                    className="ml-2 text-arch-orange hover:underline"
+                    onClick={() => navigator.clipboard.writeText(base58Signer)}
+                  >
+                    Copy
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </div>
+      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
+        <Code className="text-arch-orange mr-3 mt-1" size={20} />
         <div>
           <h3 className="text-arch-orange font-semibold mb-2">Instructions</h3>
-          <p>{txDetails.runtime_transaction.message.instructions.length}</p>
+          {txDetails.runtime_transaction.message.instructions.map((instruction, index) => (
+            <div key={index} className="mb-4">
+              <h4 className="text-arch-orange font-semibold">Instruction {index + 1}</h4>
+              <p><strong>Program ID:</strong> {bs58.encode(Buffer.from(instruction.program_id))}</p>
+              <p><strong>Accounts:</strong></p>
+              <ul className="list-disc list-inside">
+                {instruction.accounts.map((account, accIndex) => (
+                  <li key={accIndex}>
+                    {bs58.encode(Buffer.from(account.pubkey))}
+                    {account.is_signer && ' (Signer)'}
+                    {account.is_writable && ' (Writable)'}
+                  </li>
+                ))}
+              </ul>
+              <p><strong>Data:</strong></p>
+              <pre className="whitespace-pre-wrap break-all bg-arch-black p-2 rounded mt-1 text-xs">
+                {wrapData(bs58.encode(Buffer.from(instruction.data)))}
+              </pre>
+            </div>
+          ))}
         </div>
       </div>
       <div className="bg-arch-gray rounded-lg p-4 flex items-start">
@@ -178,7 +232,15 @@ const BlockDetailsPage: React.FC = () => {
           </div>
           <div className="flex items-center col-span-2">
             <Hash className="text-arch-orange mr-2" size={20} />
-            <p className="truncate"><strong className="text-arch-orange">Previous Block Hash:</strong> {blockDetails.previous_block_hash}</p>
+            <p className="truncate">
+              <strong className="text-arch-orange">Previous Block Hash:</strong>
+              <button
+                onClick={handlePreviousBlockClick}
+                className="ml-2 text-arch-white hover:text-arch-orange transition-colors duration-300"
+              >
+                {blockDetails.previous_block_hash}
+              </button>
+            </p>
           </div>
         </div>
       </div>
