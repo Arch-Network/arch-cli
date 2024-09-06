@@ -31,14 +31,19 @@ const BlockDetailsPage: React.FC = () => {
         let block;
         if (blockHashOrHeight!.length === 64) {
           block = await client.getBlock(blockHashOrHeight!);
+          block.height = 0;
+          block.hash = blockHashOrHeight!;
         } else {
           const height = parseInt(blockHashOrHeight!);
           const blockHash = await client.getBlockHash(height);
           block = await client.getBlock(Buffer.from(blockHash, 'hex').toString('utf8'));
+          block.height = height;
+          block.hash = Buffer.from(blockHash, 'hex').toString('utf8');
+          console.log(block);
         }
         setBlockDetails({
           height: block.height,
-          hash: blockHashOrHeight!,
+          hash: block.hash,
           previous_block_hash: block.previous_block_hash,
           transactions: block.transactions || [],
           timestamp: block.timestamp || 0,
