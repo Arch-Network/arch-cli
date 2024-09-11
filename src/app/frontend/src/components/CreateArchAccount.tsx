@@ -3,26 +3,23 @@ import { ArchRpcClient, Pubkey } from 'arch-typescript-sdk';
 import { request } from 'sats-connect';
 import { QRCodeSVG } from 'qrcode.react';
 import { Buffer } from 'buffer';
-import axios from 'axios';
+import { AlertCircle, Check, Cpu, Send, UserPlus } from 'lucide-react';
 
 const SYSTEM_PROGRAM_PUBKEY = (import.meta as any).env.VITE_SYSTEM_PROGRAM_PUBKEY;
 const NETWORK = (import.meta as any).env.VITE_NETWORK;
 const client = new ArchRpcClient((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
 
-// btc-rpc-explorer configuration
-const BTC_RPC_EXPLORER_URL = 'http://localhost:3000';
-
 const CreateArchAccount: React.FC = () => {
   const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
-  const [txid, setTxid] = useState<string | null>(null);
+  const [txid, setTxid] = useState<string>('');
   const [bitcoinAddress, setBitcoinAddress] = useState<string | null>(null);
 
   const steps = [
-    'Get system program address',
-    'Send Bitcoin transaction',
-    'Create Arch account'
+    { text: 'Get system program address', icon: Cpu },
+    { text: 'Send Bitcoin transaction', icon: Send },
+    { text: 'Create Arch account', icon: UserPlus }
   ];
 
   const handleCreateAccount = async () => {
@@ -34,22 +31,34 @@ const CreateArchAccount: React.FC = () => {
       const address = await client.getAccountAddress(systemPubkey);
       setBitcoinAddress(address);
       
-      // Step 2: Send Bitcoin transaction
+      // Step 2: Handle transaction
       setStep(2);
       const qrData = `bitcoin:${address}?amount=0.00003`; // 3000 satoshis
       setQrCodeData(qrData);
+
+      if (NETWORK !== 'regtest') {
+        // Wait for the transaction
+        const receivedTxid = await waitForTransaction(address);
+        setTxid(receivedTxid);
+        proceedToCreateAccount(receivedTxid);
+      }
+      // For regtest, we'll wait for the user to input the txid
       
-      // Wait for the transaction
-      const txid = await waitForTransaction(address);
-      setTxid(txid);
-      
+    } catch (error) {
+      console.error('Error in account creation process:', error);
+      setError(`Error in account creation process: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const proceedToCreateAccount = async (transactionId: string) => {
+    try {
       // Step 3: Create Arch account
       setStep(3);
       const privateKey = localStorage.getItem('archPrivateKey');
       if (!privateKey) throw new Error('Private key not found');
       
       const privateKeyBytes = new Uint8Array(privateKey.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16)));
-      const archTxId = await client.createArchAccount(privateKeyBytes, txid, 0);
+      const archTxId = await client.createArchAccount(privateKeyBytes, transactionId, 0);
       
       console.log('Arch account created, txId:', archTxId);
       setStep(4); // Complete
@@ -59,51 +68,7 @@ const CreateArchAccount: React.FC = () => {
     }
   };
 
-  const waitForTransaction = async (address: string): Promise<string> => {
-    if (NETWORK === 'regtest') {
-      return waitForTransactionRegtest(address);
-    } else {
-      return waitForTransactionMainnet(address);
-    }
-  };
-
-  const waitForTransactionRegtest = async (address: string): Promise<string> => {
-    const requiredBalance = 3000; // 3000 satoshis
-    const maxAttempts = 30; // Adjust as needed
-    const delayBetweenAttempts = 2000; // 2 seconds
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const response = await axios.get(`${BTC_RPC_EXPLORER_URL}/api/address/${address}`);
-        
-        if (response.data.error) {
-          throw new Error(`Bitcoin RPC error: ${response.data.error}`);
-        }
-
-        const balance = response.data.txHistory.balanceSat;
-        
-        if (balance >= requiredBalance) {
-          // Get the most recent transaction
-          const txids = response.data.txHistory.txids;
-          if (txids.length > 0) {
-            return txids[0]; // The txids are already sorted in descending order
-          } else {
-            throw new Error('No transactions found');
-          }
-        }
-
-        // Wait before next attempt
-        await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts));
-      } catch (error) {
-        console.error('Error checking balance:', error);
-        // Continue to next attempt
-      }
-    }
-
-    throw new Error('Timeout waiting for transaction');
-  };
-
-  const waitForTransactionMainnet = (address: string): Promise<string> => {
+  const waitForTransaction = (address: string): Promise<string> => {
     return new Promise((resolve, reject) => {
       const checkInterval = setInterval(async () => {
         try {
@@ -120,40 +85,78 @@ const CreateArchAccount: React.FC = () => {
     });
   };
 
+  const handleTxidSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (txid.trim()) {
+      proceedToCreateAccount(txid);
+    }
+  };
+
   return (
-    <div className="bg-arch-gray p-8 rounded-lg shadow-md max-w-md mx-auto">
-      <h2 className="text-2xl font-bold mb-4 text-center">Create Arch Account</h2>
-      <div className="mb-4">
-        {steps.map((stepText, index) => (
-          <div key={index} className={`flex items-center ${index <= step ? 'text-arch-orange' : 'text-arch-white'}`}>
-            <div className={`w-6 h-6 rounded-full ${index < step ? 'bg-arch-orange' : 'bg-arch-gray border border-arch-white'} flex items-center justify-center mr-2`}>
-              {index < step && '✓'}
+    <div className="bg-gradient-to-br from-arch-gray to-gray-900 p-8 rounded-lg shadow-lg max-w-md mx-auto">
+      <h2 className="text-3xl font-bold mb-6 text-center text-arch-white">Create Arch Account</h2>
+      <div className="mb-8">
+        {steps.map((stepItem, index) => (
+          <div key={index} className={`flex items-center mb-4 ${index <= step ? 'text-arch-orange' : 'text-arch-white'}`}>
+            <div className={`w-10 h-10 rounded-full ${index < step ? 'bg-arch-orange' : 'bg-arch-gray border-2 border-arch-white'} flex items-center justify-center mr-4 transition-all duration-300`}>
+              {index < step ? <Check className="w-6 h-6" /> : <stepItem.icon className="w-6 h-6" />}
             </div>
-            <span>{stepText}</span>
+            <span className="text-lg">{stepItem.text}</span>
           </div>
         ))}
       </div>
       {bitcoinAddress && step >= 2 && (
-        <div className="mb-4 p-2 bg-arch-black rounded">
-          <p className="text-sm text-arch-white">Bitcoin Address:</p>
+        <div className="mb-6 p-4 bg-arch-black rounded-lg shadow-inner">
+          <p className="text-sm text-arch-white mb-1">Bitcoin Address:</p>
           <p className="font-mono text-xs break-all text-arch-orange">{bitcoinAddress}</p>
         </div>
       )}
-      {qrCodeData && step === 2 && NETWORK !== 'regtest' && (
-        <div className="mb-4 flex flex-col items-center">
+      {qrCodeData && step === 2 && (
+        <div className="mb-6 flex flex-col items-center">
           <p className="text-sm text-arch-white mb-2">Scan to send 3000 satoshis:</p>
-          <QRCodeSVG value={qrCodeData} size={200} />
+          <div className="bg-white p-4 rounded-lg">
+            <QRCodeSVG value={qrCodeData} size={200} />
+          </div>
         </div>
       )}
-      <button 
-        onClick={handleCreateAccount}
-        disabled={step > 0 && step < 4}
-        className={`w-full bg-arch-white text-arch-black font-bold py-2 px-4 rounded transition duration-300 ${step > 0 && step < 4 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-arch-orange'}`}
-      >
-        {step === 0 ? 'Create Arch Account' : step === 4 ? 'Account Created!' : 'Creating...'}
-      </button>
+      {NETWORK === 'regtest' && step === 2 && (
+        <form onSubmit={handleTxidSubmit} className="mb-6">
+          <label htmlFor="txid" className="block text-sm font-medium text-arch-white mb-2">
+            Enter Transaction ID:
+          </label>
+          <input
+            type="text"
+            id="txid"
+            value={txid}
+            onChange={(e) => setTxid(e.target.value)}
+            className="w-full px-3 py-2 bg-arch-black text-arch-white rounded-md focus:outline-none focus:ring-2 focus:ring-arch-orange"
+            placeholder="Enter transaction ID"
+            required
+          />
+          <button
+            type="submit"
+            className="mt-3 w-full bg-arch-orange text-arch-black font-bold py-2 px-4 rounded-lg transition duration-300 hover:bg-arch-white hover:text-arch-orange"
+          >
+            Submit Transaction ID
+          </button>
+        </form>
+      )}
+      {step === 0 && (
+        <button 
+          onClick={handleCreateAccount}
+          className="w-full bg-arch-orange text-arch-black font-bold py-3 px-6 rounded-lg transition duration-300 hover:bg-arch-white hover:text-arch-orange"
+        >
+          Create Arch Account
+        </button>
+      )}
+      {step === 4 && (
+        <div className="text-center text-arch-white font-bold text-xl">
+          Account Created!
+        </div>
+      )}
       {error && (
-        <div className="mt-4 p-4 bg-red-500 text-white rounded">
+        <div className="mt-6 p-4 bg-red-500 text-white rounded-lg flex items-center">
+          <AlertCircle className="w-6 h-6 mr-2" />
           <p>{error}</p>
         </div>
       )}
