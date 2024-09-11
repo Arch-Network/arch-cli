@@ -1,7 +1,7 @@
 // src/utils/cryptoHelpers.ts
 
 import * as secp256k1 from 'noble-secp256k1';
-import { Pubkey, Instruction, Message, AccountMeta, RuntimeTransaction, encodeMessage } from 'arch-typescript-sdk';
+import { Pubkey, Instruction, Message, AccountMeta, RuntimeTransaction } from 'arch-typescript-sdk';
 import { Buffer } from 'buffer';
 
 export interface Transaction {
@@ -69,14 +69,15 @@ export function generatePubkeyFromPrivateKey(privateKeyHex: string): Pubkey {
       instructions: [instruction]
     };
     
-    // Implement proper signature generation
-    const messageBytes = encodeMessage(message);
-    const messageHash = await secp256k1.utils.sha256(messageBytes);
-    const signature = await secp256k1.schnorr.sign(messageHash, hexToUint8Array(privateKey));
+    // // Implement proper signature generation
+    // const messageBytes = encodeMessage(message);
+    // const messageHash = await secp256k1.utils.sha256(messageBytes);
+    // const signature = await secp256k1.schnorr.sign(messageHash, hexToUint8Array(privateKey));
     
     const transaction: RuntimeTransaction = {
       version: 0,
-      signatures: [Buffer.from(signature).toString('hex')],
+      signatures: [],
+      // signatures: [Buffer.from(signature).toString('hex')],
       message: message
     };
     return transaction;
