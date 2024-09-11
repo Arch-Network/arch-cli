@@ -293,20 +293,19 @@ async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
 
     // Build the program
-    build_program(args)?;
+    build_program(args).context("Failed to build program")?;
     println!("{}", "Program built successfully".bold().green());
 
     // Get program key and public key
     let program_key_path = get_program_key_path(args, config)?;
-    let (program_keypair, program_pubkey) = with_secret_key_file(&program_key_path).context(
-        "Failed to get program key pair"
-    )?;
+    let (program_keypair, program_pubkey) = with_secret_key_file(&program_key_path)
+        .context("Failed to get program key pair")?;
     println!("  {} Program keypair: {:?}", "ℹ".bold().blue(), program_keypair);
 
     // Get program account address from network
-    let account_address = get_account_address_async(program_pubkey).await.context(
-        "Failed to get account address"
-    )?;
+    let account_address = get_account_address_async(program_pubkey)
+        .await
+        .context("Failed to get account address")?;
     println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
 
     // Set up Bitcoin RPC client
@@ -324,10 +323,7 @@ async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         let new_address = wallet_manager.client.get_new_address(None, None)?;
         let checked_address = new_address.require_network(Network::Regtest)?;
         wallet_manager.client.generate_to_address(101, &checked_address)?;
-        println!(
-            "  {} Initial blocks generated. Waiting for balance to be available...",
-            "✓".bold().green()
-        );
+        println!("  {} Initial blocks generated. Waiting for balance to be available...", "✓".bold().green());
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
@@ -739,24 +735,41 @@ fn remove_orphaned_containers(bitcoin_compose_file: &str, arch_compose_file: &st
 }
 
 fn build_program(args: &DeployArgs) -> Result<()> {
-    if let Some(path) = &args.directory {
-        if !std::path::Path::new(path).exists() {
-            return Err(anyhow::anyhow!("Specified directory does not exist: {}", path));
-        }
-        println!("  {} Building program...", "→".bold().blue());
-        std::process::Command
-            ::new("cargo")
-            .args(&["build-sbf", "--manifest-path", &format!("{}/Cargo.toml", path)])
-            .status()
-            .context("Failed to build program")?;
-    } else {
-        println!("  {} Building program...", "→".bold().blue());
-        std::process::Command
-            ::new("cargo")
-            .args(&["build-sbf", "--manifest-path", "src/app/program/Cargo.toml"])
-            .status()
-            .context("Failed to build program")?;
+    let path = args.directory.as_ref().map_or_else(
+        || "src/app/program/Cargo.toml".to_string(),
+        |dir| format!("{}/Cargo.toml", dir)
+    );
+
+    if !std::path::Path::new(&path).exists() {
+        println!("{}", "Oops! We couldn't find your Cargo.toml file.".bold().red());
+        println!("{}", "Here's what you can do:".bold().yellow());
+        println!("  1. Make sure you're in the correct directory");
+        println!("  2. Check if the file exists at: {}", path.bold());
+        println!("  3. If you've moved your project, update the path in your configuration");
+        return Err(anyhow::anyhow!("Cargo.toml not found at: {}", path));
     }
+
+    println!("  {} Building program...", "→".bold().blue());
+    let output = std::process::Command::new("cargo")
+        .args(&["build-sbf", "--manifest-path", &path])
+        .output()
+        .context("Failed to execute cargo build-sbf")?;
+
+    if !output.status.success() {
+        let error_message = String::from_utf8_lossy(&output.stderr);
+        println!("{}", "Uh-oh! The build process for your Arch program encountered an error.".bold().red());
+        println!("{}", "Don't worry, here are some steps to troubleshoot:".bold().yellow());
+        println!("  1. Check your code for any syntax errors");
+        println!("  2. Ensure all dependencies are correctly specified in Cargo.toml");
+        println!("  3. Make sure you have the latest version of the Solana Build Tools installed");
+        println!("  4. Try running 'cargo clean' and then deploy again");
+        println!("\nError details:");
+        println!("{}", error_message);
+        return Err(anyhow::anyhow!("Build failed: {}", error_message));
+    }
+
+    println!("  {} Program built successfully", "✓".bold().green());
+    println!("{}", "Great job! Your program is ready to deploy.".bold().green());
     Ok(())
 }
 
@@ -912,8 +925,6 @@ async fn deploy_program(
         ),
         vec![*program_keypair]
     ).await.expect("signing and sending a transaction should not fail");
-
-    println!("txid: {}", txid);
 
     get_processed_transaction_async(NODE1_ADDRESS.to_string(), txid.clone()).await.expect(
         "get processed transaction should not fail"
