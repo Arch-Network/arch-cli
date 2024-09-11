@@ -74,6 +74,10 @@ enum Commands {
     /// Start the Distributed Key Generation (DKG) process
     #[clap(long_about = "Initiates the Distributed Key Generation process on the Arch Network.")]
     StartDkg,
+
+    /// Send coins to an address on Regtest
+    #[clap(long_about = "Sends coins to a specified address on the Bitcoin Regtest network.")]
+    SendCoins(SendCoinsArgs),
 }
 
 #[derive(Args)]
@@ -85,6 +89,16 @@ struct DeployArgs {
     /// Path to the program key file
     #[clap(long, help = "Specifies the path to the program's key file for deployment")]
     program_key: Option<String>,
+}
+
+#[derive(Args)]
+struct SendCoinsArgs {
+    /// Address to send coins to
+    #[clap(long, help = "Specifies the address to send coins to")]
+    address: String,
+    /// Amount to send
+    #[clap(long, help = "Specifies the amount of coins to send")]
+    amount: u64,
 }
 
 #[tokio::main]
@@ -109,6 +123,7 @@ async fn main() -> Result<()> {
         Commands::StopServer => stop_server(&config).await,
         Commands::Clean => clean().await,
         Commands::StartDkg => start_dkg(&config).await,
+        Commands::SendCoins(args) => send_coins(args, &config).await,
     }
 }
 
@@ -346,6 +361,55 @@ async fn stop_server(config: &Config) -> Result<()> {
 
     println!("{}", "Development server stopped successfully!".bold().green());
     println!("{}", "You can restart the server later using the 'start-server' command.".italic());
+    Ok(())
+}
+
+async fn send_coins(args: &SendCoinsArgs, config: &Config) -> Result<()> {
+    // Initialize the WalletManager
+    let wallet_manager = WalletManager::new(config)?;
+
+    // Check wallet balance before sending
+    let balance = wallet_manager.client.get_balance(None, None)?;
+
+    if balance < Amount::from_sat(args.amount) {
+        return Err(anyhow!(
+            "Insufficient balance. Available: {}, Required: {}",
+            balance.to_string().yellow(),
+            Amount::from_sat(args.amount).to_string().yellow()
+        ));
+    }
+
+    // Parse the destination address
+    let address = Address::from_str(&args.address)?;
+    println!(
+        "  {} Sending {} satoshis to address: {}",
+        "ℹ".bold().blue(),
+        args.amount.to_string().yellow(),
+        args.address.yellow()
+    );
+
+    // Send the coins
+    let txid = wallet_manager.client.send_to_address(
+        &address.require_network(Network::Regtest)?,
+        Amount::from_sat(args.amount),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+
+    // Print success message
+    println!(
+        "{} Coins sent successfully! Transaction ID: {}",
+        "✓".bold().green(),
+        txid.to_string().yellow()
+    );
+
+    // Close the wallet if needed
+    wallet_manager.close_wallet()?;
+
     Ok(())
 }
 
