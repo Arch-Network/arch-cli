@@ -60,7 +60,7 @@ const App: React.FC = () => {
 
         <div className="container mx-auto p-4">
           <Routes>
-            <Route path="/" element={<CreateArchAccount />} />
+          <Route path="/" element={<CreateArchAccount accountPubkey={accountPubkey} />} />
             <Route path="/transactions" element={<TransactionHistoryPage />} />
             <Route path="/block/:blockHashOrHeight" element={<BlockDetailsPage />} />
           </Routes>

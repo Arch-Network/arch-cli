@@ -5,11 +5,14 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Buffer } from 'buffer';
 import { AlertCircle, Check, Cpu, Send, UserPlus } from 'lucide-react';
 
-const SYSTEM_PROGRAM_PUBKEY = (import.meta as any).env.VITE_SYSTEM_PROGRAM_PUBKEY;
 const NETWORK = (import.meta as any).env.VITE_NETWORK;
 const client = new ArchRpcClient((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
 
-const CreateArchAccount: React.FC = () => {
+interface CreateArchAccountProps {
+  accountPubkey: string;
+}
+
+const CreateArchAccount: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
   const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
@@ -17,18 +20,18 @@ const CreateArchAccount: React.FC = () => {
   const [bitcoinAddress, setBitcoinAddress] = useState<string | null>(null);
 
   const steps = [
-    { text: 'Get system program address', icon: Cpu },
+    { text: 'Get account address', icon: Cpu },
     { text: 'Send Bitcoin transaction', icon: Send },
     { text: 'Create Arch account', icon: UserPlus }
   ];
 
   const handleCreateAccount = async () => {
     try {
-      // Step 1: Get system program address
+      // Step 1: Get account address
       setStep(1);
-      const pubkeyBytes = Buffer.from(SYSTEM_PROGRAM_PUBKEY, 'hex');
-      const systemPubkey = new Pubkey(pubkeyBytes);
-      const address = await client.getAccountAddress(systemPubkey);
+      const pubkeyBytes = Buffer.from(accountPubkey, 'hex');
+      const userPubkey = new Pubkey(pubkeyBytes);
+      const address = await client.getAccountAddress(userPubkey);
       setBitcoinAddress(address);
       
       // Step 2: Handle transaction
