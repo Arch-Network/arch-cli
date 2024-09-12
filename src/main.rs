@@ -317,6 +317,8 @@ async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         .context("Failed to get program key pair")?;
     println!("  {} Program keypair: {:?}", "ℹ".bold().blue(), program_keypair);
 
+    println!("  {} Program public key: {}", "ℹ".bold().blue(), program_pubkey);
+
     // Get program account address from network
     let account_address = get_account_address_async(program_pubkey)
         .await
@@ -388,9 +390,11 @@ async fn send_coins(args: &SendCoinsArgs, config: &Config) -> Result<()> {
         args.address.yellow()
     );
 
+    let address_networked = address.require_network(Network::Regtest)?;
+
     // Send the coins
     let txid = wallet_manager.client.send_to_address(
-        &address.require_network(Network::Regtest)?,
+        &address_networked,
         Amount::from_sat(args.amount),
         None,
         None,
@@ -399,6 +403,9 @@ async fn send_coins(args: &SendCoinsArgs, config: &Config) -> Result<()> {
         None,
         None,
     )?;
+
+    // Generate 1 block to confirm the transaction
+    wallet_manager.client.generate_to_address(1, &address_networked)?;
 
     // Print success message
     println!(
@@ -412,7 +419,6 @@ async fn send_coins(args: &SendCoinsArgs, config: &Config) -> Result<()> {
 
     Ok(())
 }
-
 fn stop_all_related_containers() -> Result<()> {
     let container_prefixes = vec!["arch-cli", "bitcoin", "electrs", "btc-rpc-explorer"];
 
