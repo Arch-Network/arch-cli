@@ -183,14 +183,19 @@ const BlockDetailsPage: React.FC = () => {
                 ))}
               </ul>
               <p><strong>Data:</strong></p>
-              <pre className="whitespace-pre-wrap break-all bg-arch-black p-2 rounded mt-1 text-xs">
-                {wrapData(bs58.encode(Buffer.from(instruction.data)))}
-              </pre>
+              {instruction.data.length === 37 && instruction.data[0] === 0 ? (
+                <div>
+                  <p><strong>Create Account Instruction</strong></p>
+                  <p><strong>Bitcoin TxID:</strong> {Buffer.from(instruction.data.slice(1, 33)).toString('hex')}</p>
+                  <p><strong>Output:</strong> {Buffer.from(instruction.data.slice(33)).readUInt32LE(0).toString()}</p>
+                </div>
+              ) : (
+                <pre className="whitespace-pre-wrap break-all bg-arch-black p-2 rounded mt-1 text-xs">
+                  {`[${Array.from(Buffer.from(instruction.data)).join(', ')}]`}
+                </pre>
+              )}
             </div>
-          ))}
-        </div>
-      </div>
-      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
+          ))}        </div>      </div>      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
         <Bitcoin className="text-arch-orange mr-3 mt-1" size={20} />
         <div>
           <h3 className="text-arch-orange font-semibold mb-2">Bitcoin TxIDs</h3>
