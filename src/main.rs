@@ -259,7 +259,9 @@ fn check_dependencies() -> Result<()> {
 
     println!("{}", "All required dependencies are installed.".bold().green());
     Ok(())
-}fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
+}
+
+fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
     println!("  {} Starting {}...", "→".bold().blue(), service_name.yellow());
 
     let mut all_containers_exist = true;
@@ -363,10 +365,7 @@ fn check_dependencies() -> Result<()> {
 async fn start_server(config: &Config) -> Result<()> {
     println!("{}", "Starting development server...".bold().green());
 
-    set_env_vars(config)?;https://github.com/Arch-Network/arch-cli?tab=readme-ov-file#installation
-    let network_type = config
-        .get_string("network.type")
-        .context("Failed to get network type from configuration")?;
+    set_env_vars(config)?;
 
     // Print environment variables to verify they're set correctly
     println!("Environment variables:");
@@ -377,6 +376,10 @@ async fn start_server(config: &Config) -> Result<()> {
     println!("ELECTRS_ELECTRUM_PORT: {}", env::var("ELECTRS_ELECTRUM_PORT").unwrap_or_else(|_| "Not set".to_string()));
     println!("BTC_RPC_EXPLORER_PORT: {}", env::var("BTC_RPC_EXPLORER_PORT").unwrap_or_else(|_| "Not set".to_string()));
 
+    let network_type = config
+        .get_string("network.type")
+        .context("Failed to get network type from configuration")?;
+    
     if network_type == "development" {
         set_env_vars(config)?;
         create_docker_network("arch-network")?;
