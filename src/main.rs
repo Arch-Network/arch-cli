@@ -363,11 +363,19 @@ fn check_dependencies() -> Result<()> {
 async fn start_server(config: &Config) -> Result<()> {
     println!("{}", "Starting development server...".bold().green());
 
-    set_env_vars(config)?;
-
+    set_env_vars(config)?;https://github.com/Arch-Network/arch-cli?tab=readme-ov-file#installation
     let network_type = config
         .get_string("network.type")
         .context("Failed to get network type from configuration")?;
+
+    // Print environment variables to verify they're set correctly
+    println!("Environment variables:");
+    println!("BITCOIN_RPC_USER: {}", env::var("BITCOIN_RPC_USER").unwrap_or_else(|_| "Not set".to_string()));
+    println!("BITCOIN_RPC_PORT: {}", env::var("BITCOIN_RPC_PORT").unwrap_or_else(|_| "Not set".to_string()));
+    println!("ORD_PORT: {}", env::var("ORD_PORT").unwrap_or_else(|_| "Not set".to_string()));
+    println!("ELECTRS_REST_API_PORT: {}", env::var("ELECTRS_REST_API_PORT").unwrap_or_else(|_| "Not set".to_string()));
+    println!("ELECTRS_ELECTRUM_PORT: {}", env::var("ELECTRS_ELECTRUM_PORT").unwrap_or_else(|_| "Not set".to_string()));
+    println!("BTC_RPC_EXPLORER_PORT: {}", env::var("BTC_RPC_EXPLORER_PORT").unwrap_or_else(|_| "Not set".to_string()));
 
     if network_type == "development" {
         set_env_vars(config)?;
