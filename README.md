@@ -8,7 +8,7 @@ Before using Arch-CLI, ensure you have the following installed on your system:
 
 - Docker (latest stable version)
 - Docker Compose (latest stable version)
-- Node.js (version 20 or higher)
+- Node.js (version 19 or higher)
 - Solana CLI (latest stable version)
 - Rust and Cargo (latest stable version)
 
@@ -23,6 +23,7 @@ These tools are essential for running the development environment and building A
 - Bitcoin regtest network setup for local development
 - Distributed Key Generation (DKG) process initiation
 - Send coins functionality for testing
+- Frontend application management and launching
 
 ## Installation
 
@@ -150,6 +151,20 @@ arch-cli send-coins --address <address> --amount <amount>
 
 Sends the specified amount of coins to the given address on the Bitcoin Regtest network.
 
+### Start the frontend application
+
+```sh
+arch-cli start-app
+```
+
+This command prepares and starts the frontend application:
+1. Copies the `.env.example` file to `.env` in the frontend directory
+2. Installs all npm packages in the frontend directory
+3. Builds and starts the Vite development server
+4. Opens the application in the user's default web browser
+
+The server will continue running until stopped with Ctrl+C.
+
 ## Project Structure
 
 After initialization, your project will have the following structure:
@@ -167,7 +182,8 @@ my-arch-project/
 │       ├── frontend/
 │       │   ├── index.html
 │       │   ├── index.js
-│       │   └── package.json
+│       │   ├── package.json
+│       │   └── .env.example
 │       └── keys/
 ├── Cargo.toml
 ├── config.toml
@@ -199,6 +215,7 @@ To set up the development environment:
 - Ensure your Docker daemon is running before using `arch-cli start-server`.
 - Check the `config.toml` file for correct configuration of RPC endpoints and credentials.
 - If you encounter issues with the DKG process, ensure that all nodes are properly configured and connected.
+- For frontend issues, make sure all npm dependencies are correctly installed and that the `.env` file is properly set up.
 
 ## Support
 
