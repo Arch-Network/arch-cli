@@ -130,6 +130,9 @@ async fn main() -> Result<()> {
 async fn init() -> Result<()> {
     println!("{}", "Initializing new Arch Network app...".bold().green());
 
+    // Check dependencies
+    check_dependencies()?;
+
     // Navigate to the program folder and run `cargo build-sbf`
     println!("{}", "Building Arch Network program...".bold().blue());
     ShellCommand::new("cargo")
@@ -204,7 +207,50 @@ async fn init() -> Result<()> {
     Ok(())
 }
 
-fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
+fn check_dependencies() -> Result<()> {
+    println!("{}", "Checking required dependencies...".bold().blue());
+
+    static DEPENDENCIES: &[(&str, &str, &str)] = &[
+        ("docker", "docker --version", "Docker is not installed. Please install Docker."),
+        ("docker-compose", "docker-compose --version", "Docker Compose is not installed. Please install Docker Compose."),
+        ("node", "node --version", "Node.js is not installed or version is below 19. Please install Node.js version 19 or higher."),
+        ("solana", "solana --version", "Solana CLI is not installed. Please install Solana CLI."),
+        ("cargo", "cargo --version", "Rust and Cargo are not installed. Please install Rust and Cargo."),
+    ];
+
+    for (name, command, error_message) in DEPENDENCIES.iter() {
+        print!("  {} Checking {}...", "→".bold().blue(), name);
+        io::stdout().flush()?;
+
+        match Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout);
+                println!(" {}", "✓".bold().green());
+                println!("    Detected version: {}", version.trim());
+
+                // Additional check for Node.js version
+                if *name == "node" {
+                    let version_str = version.split('v').nth(1).unwrap_or("").trim();
+                    let major_version = version_str.split('.').next().unwrap_or("0").parse::<u32>().unwrap_or(0);
+                    if major_version < 19 {
+                        return Err(anyhow!(error_message));
+                    }
+                }
+            },
+            _ => {
+                println!(" {}", "✗".bold().red());
+                return Err(anyhow!(error_message));
+            }
+        }
+    }
+
+    println!("{}", "All required dependencies are installed.".bold().green());
+    Ok(())
+}fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
     println!("  {} Starting {}...", "→".bold().blue(), service_name.yellow());
 
     let mut all_containers_exist = true;
