@@ -30,6 +30,10 @@ mod docker_manager;
 use anyhow::anyhow;
 use dotenv::dotenv;
 use common::wallet_manager::*;
+use std::process::Stdio;
+use tokio::process::Command as TokioCommand;
+use tokio::io::AsyncBufReadExt;
+use webbrowser;
 
 #[derive(Deserialize)]
 struct ServiceConfig {
@@ -78,6 +82,10 @@ enum Commands {
     /// Send coins to an address on Regtest
     #[clap(long_about = "Sends coins to a specified address on the Bitcoin Regtest network.")]
     SendCoins(SendCoinsArgs),
+
+    /// Start the frontend application
+    #[clap(long_about = "Prepares and starts the frontend application, opening it in the default browser.")]
+    StartApp,
 }
 
 #[derive(Args)]
@@ -124,6 +132,7 @@ async fn main() -> Result<()> {
         Commands::Clean => clean().await,
         Commands::StartDkg => start_dkg(&config).await,
         Commands::SendCoins(args) => send_coins(args, &config).await,
+        Commands::StartApp => start_app().await,
     }
 }
 
@@ -1131,5 +1140,79 @@ async fn deploy_program(
         txid.yellow(),
         vout
     );
+    Ok(())
+}
+
+// Add this new async function to handle the StartApp command
+async fn start_app() -> Result<()> {
+    println!("{}", "Starting the frontend application...".bold().green());
+
+    // Copy .env.example to .env
+    println!("  {} Copying .env.example to .env...", "→".bold().blue());
+    fs::copy(
+        "src/app/frontend/.env.example",
+        "src/app/frontend/.env",
+    ).context("Failed to copy .env.example to .env")?;
+    println!("  {} .env file created", "✓".bold().green());
+
+    // Install npm packages
+    println!("  {} Installing npm packages...", "→".bold().blue());
+    let npm_install = TokioCommand::new("npm")
+        .current_dir("src/app/frontend")
+        .arg("install")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .await
+        .context("Failed to run npm install")?;
+
+    if !npm_install.success() {
+        return Err(anyhow!("npm install failed"));
+    }
+    println!("  {} npm packages installed", "✓".bold().green());
+
+    // Build and start the Vite server
+    println!("  {} Building and starting the Vite server...", "→".bold().blue());
+    let mut vite_dev = TokioCommand::new("npm")
+        .current_dir("src/app/frontend")
+        .arg("run")
+        .arg("dev")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to start Vite server")?;
+
+    // Read the output to get the local URL
+    let stdout = vite_dev.stdout.take().expect("Failed to capture stdout");
+    let mut reader = tokio::io::BufReader::new(stdout).lines();
+
+    let mut local_url = String::new();
+    while let Some(line) = reader.next_line().await? {
+        if line.contains("Local:") {
+            local_url = line.split("Local:").nth(1).unwrap_or("").trim().to_string();
+            break;
+        }
+    }
+
+    if local_url.is_empty() {
+        return Err(anyhow!("Failed to get local URL from Vite server output"));
+    }
+
+    println!("  {} Vite server started", "✓".bold().green());
+
+    // Open the browser
+    println!("  {} Opening application in default browser...", "→".bold().blue());
+    if webbrowser::open(&local_url).is_ok() {
+        println!("  {} Application opened in default browser", "✓".bold().green());
+    } else {
+        println!("  {} Failed to open browser. Please navigate to {} manually", "⚠".bold().yellow(), local_url);
+    }
+
+    println!("{}", "Frontend application started successfully!".bold().green());
+    println!("Press Ctrl+C to stop the server and exit.");
+
+    // Wait for the Vite process to finish (i.e., until the user interrupts it)
+    vite_dev.wait().await?;
+
     Ok(())
 }

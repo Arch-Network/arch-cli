@@ -8,7 +8,7 @@ edition = "2021"
 clap = { version = "3.2", features = ["derive"] }
 anyhow = "1.0.78"
 bitcoin = "0.31.0"
-tokio = { version = "1.x", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.x", features = ["rt-multi-thread", "macros", "process"] }
 hex = { version = "0.4.3", default-features = false }
 memoffset = "0.9.1"
 rustversion = "1.0.17"
@@ -23,6 +23,7 @@ config = "0.13"
 arch_program = { path = "./program" }
 dotenv = "0.15.0"
 reqwest = "0.12.5"
+webbrowser = "1.0.1"
 
 [lib]
 path = "src/main.rs"
