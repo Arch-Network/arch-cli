@@ -140,30 +140,64 @@ async fn init() -> Result<()> {
 
     // Create project structure
     println!("{}", "Creating project structure...".bold().blue());
-    let dirs = ["src/app/program/src", "src/app/backend", "src/app/frontend", "src/app/keys"];
-
+    let dirs = ["src/app/backend", "src/app/keys"];
     for dir in dirs.iter() {
-        fs
-            ::create_dir_all(dir)
+        fs::create_dir_all(dir)
             .with_context(|| format!("Failed to create directory: {}", dir.yellow()))?;
     }
 
     // Create boilerplate files
     println!("{}", "Creating boilerplate files...".bold().blue());
     let files = [
-        ("src/app/program/src/lib.rs", include_str!("templates/program_lib.rs")),
-        ("src/app/program/Cargo.toml", include_str!("templates/program_cargo.toml")),
         ("src/app/backend/index.ts", include_str!("templates/backend_index.ts")),
         ("src/app/backend/package.json", include_str!("templates/backend_package.json")),
-        ("src/app/frontend/index.html", include_str!("templates/frontend_index.html")),
-        ("src/app/frontend/index.js", include_str!("templates/frontend_index.js")),
-        ("src/app/frontend/package.json", include_str!("templates/frontend_package.json")),
     ];
 
     for (file_path, content) in files.iter() {
-        fs
-            ::write(file_path, content)
-            .with_context(|| format!("Failed to write file: {}", file_path))?;
+        if !Path::new(file_path).exists() {
+            fs::write(file_path, content)
+                .with_context(|| format!("Failed to write file: {}", file_path))?;
+        } else {
+            println!("  {} File already exists, skipping: {}", "ℹ".bold().blue(), file_path);
+        }
+    }
+
+    // Check if program and frontend directories exist
+    let program_dir = Path::new("src/app/program");
+    let frontend_dir = Path::new("src/app/frontend");
+
+    if !program_dir.exists() {
+        println!("  {} Creating default program directory", "→".bold().blue());
+        fs::create_dir_all(program_dir)?;
+        fs::write(
+            program_dir.join("src/lib.rs"),
+            include_str!("templates/program_lib.rs")
+        )?;
+        fs::write(
+            program_dir.join("Cargo.toml"),
+            include_str!("templates/program_cargo.toml")
+        )?;
+    } else {
+        println!("  {} Existing program directory found, preserving it", "ℹ".bold().blue());
+    }
+
+    if !frontend_dir.exists() {
+        println!("  {} Creating default frontend directory", "→".bold().blue());
+        fs::create_dir_all(frontend_dir)?;
+        fs::write(
+            frontend_dir.join("index.html"),
+            include_str!("templates/frontend_index.html")
+        )?;
+        fs::write(
+            frontend_dir.join("index.js"),
+            include_str!("templates/frontend_index.js")
+        )?;
+        fs::write(
+            frontend_dir.join("package.json"),
+            include_str!("templates/frontend_package.json")
+        )?;
+    } else {
+        println!("  {} Existing frontend directory found, preserving it", "ℹ".bold().blue());
     }
 
     println!("  {} New Arch Network app initialized successfully!", "✓".bold().green());
