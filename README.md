@@ -2,6 +2,18 @@
 
 Arch-CLI is a command-line interface tool designed to streamline the development process for Arch Network applications. It provides a set of commands to initialize, manage, and deploy Arch Network programs efficiently.
 
+## Prerequisites
+
+Before using Arch-CLI, ensure you have the following installed on your system:
+
+- Docker (latest stable version)
+- Docker Compose (latest stable version)
+- Node.js (version 20 or higher)
+- Solana CLI (latest stable version)
+- Rust and Cargo (latest stable version)
+
+These tools are essential for running the development environment and building Arch Network applications.
+
 ## Features
 
 - Easy project initialization
@@ -14,7 +26,7 @@ Arch-CLI is a command-line interface tool designed to streamline the development
 
 ## Installation
 
-To install Arch-CLI, make sure you have Rust, Solana-CLI, Docker, and Cargo installed on your system. Then, run:
+To install Arch-CLI, make sure you have met all the prerequisites mentioned above. Then, run:
 
 ```sh
 git clone https://github.com/hoffmabc/arch-cli.git
