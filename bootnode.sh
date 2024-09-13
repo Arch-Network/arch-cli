@@ -1,5 +1,7 @@
 #!/bin/bash
 
+sleep 5;
+
 while [ ! -f /arch_data/init_complete ]; do
   echo 'Waiting for init to complete...';
   sleep 5;
