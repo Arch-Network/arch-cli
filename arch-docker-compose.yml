@@ -1,7 +1,7 @@
-version: '3'
 services:
   init:
     image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
+    platform: linux/amd64
     volumes:
       - ./arch-data:/arch_data
       - ./arch-data/bootnode:/bootnode_data
@@ -13,6 +13,7 @@ services:
 
   bootnode:
     image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/bootnode:latest}
+    platform: linux/amd64
     command: /usr/local/bin/bootnode.sh
     ports:
       - "${BOOTNODE_P2P_PORT}:${BOOTNODE_P2P_PORT}"
@@ -33,6 +34,7 @@ services:
 
   leader:
     image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
+    platform: linux/amd64
     ports:
       - "${LEADER_P2P_PORT}:${LEADER_P2P_PORT}"
       - "${LEADER_RPC_PORT}:${LEADER_RPC_PORT}"
@@ -65,6 +67,7 @@ services:
 
   validator-1:
     image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
+    platform: linux/amd64
     command: /usr/local/bin/validator.sh
     environment:
       VALIDATOR_NUMBER: "1"
@@ -98,6 +101,7 @@ services:
 
   validator-2:
     image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
+    platform: linux/amd64
     command: /usr/local/bin/validator.sh
     environment:
       VALIDATOR_NUMBER: "2"

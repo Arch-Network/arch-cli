@@ -274,6 +274,8 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
 async fn start_server(config: &Config) -> Result<()> {
     println!("{}", "Starting development server...".bold().green());
 
+    set_env_vars(config)?;
+
     let network_type = config
         .get_string("network.type")
         .context("Failed to get network type from configuration")?;
@@ -678,6 +680,7 @@ fn set_env_vars(config: &Config) -> Result<()> {
         ("BITCOIN_RPC_PORT", "bitcoin.rpc_port"),
         ("BITCOIN_RPC_USER", "bitcoin.rpc_user"),
         ("BITCOIN_RPC_PASSWORD", "bitcoin.rpc_password"),
+        ("BITCOIN_RPC_WALLET", "bitcoin.rpc_wallet"),
         ("ELECTRS_REST_API_PORT", "electrs.rest_api_port"),
         ("ELECTRS_ELECTRUM_PORT", "electrs.electrum_port"),
         ("BTC_RPC_EXPLORER_PORT", "btc_rpc_explorer.port"),
