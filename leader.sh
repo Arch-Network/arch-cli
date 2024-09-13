@@ -9,7 +9,7 @@ if [ -f ./validator ]; then
     mv ./validator /usr/local/bin/validator
 fi
 # Set the bootnode peer ID
-BOOTNODE_PEERID=$(cat /bootnode_data/peer_id)
+BOOTNODE_PEERID=$(cat /bootnode_data/bootnode_peer_id)
 MONITOR_PORT=8080
 echo 'Contents of validator_whitelist:';
 cat /bootnode_data/validator_whitelist;
