@@ -165,6 +165,44 @@ This command prepares and starts the frontend application:
 
 The server will continue running until stopped with Ctrl+C.
 
+## Getting Started with the Demo App
+
+To quickly set up and run the demo application, follow these steps:
+
+1. Initialize the project:
+   ```
+   arch-cli init
+   ```
+   This command sets up the basic project structure, creating necessary directories and files for your Arch Network application.
+
+2. Start the development server:
+   ```
+   arch-cli start-server
+   ```
+   This starts the local development environment, including a Bitcoin regtest network and Arch Network nodes. It sets up the necessary blockchain infrastructure for your application.
+
+3. Start the Distributed Key Generation (DKG) process:
+   ```
+   arch-cli start-dkg
+   ```
+   This initiates the DKG process on the Arch Network, which is crucial for setting up the decentralized key management system used by your application.
+
+4. Deploy your application:
+   ```
+   arch-cli deploy
+   ```
+   This command compiles your Arch Network program and deploys it to the local Arch Network. It handles the necessary transactions and confirmations on the regtest network.
+
+5. Start the frontend application:
+   ```
+   arch-cli start-app
+   ```
+   This prepares and launches the frontend of your application. It copies the environment file, installs dependencies, starts the development server, and opens the application in your default web browser.
+
+By following these steps in order, you'll have a fully functional demo Arch Network application running locally. This setup allows you to interact with your application, test its functionality, and make changes as needed during development.
+
+Remember to keep the terminal windows for steps 2 and 5 open, as they run ongoing processes (the blockchain environment and the frontend server, respectively). You can stop these processes using Ctrl+C when you're done working on your application.
+
 ## Project Structure
 
 After initialization, your project will have the following structure:
