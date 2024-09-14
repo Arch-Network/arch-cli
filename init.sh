@@ -63,7 +63,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 echo "Bootnode peer ID: ${BOOTNODE_PEER_ID}"
-echo "$BOOTNODE_PEER_ID" | tee /bootnode_data/bootnode_peer_id
+echo "$BOOTNODE_PEER_ID" | tee /bootnode_data/peer_id
 
 # Print contents of important files for verification
 echo "Contents of /bootnode_data/validator_whitelist:"
@@ -73,7 +73,7 @@ echo "Contents of /bootnode_data/leader_peer_id:"
 cat /bootnode_data/leader_peer_id
 
 echo "Contents of /bootnode_data/bootnode_peer_id:"
-cat /bootnode_data/bootnode_peer_id
+cat /bootnode_data/peer_id
 
 echo 'Init complete' >/bootnode_data/init_complete
 echo "Initialization completed successfully"
