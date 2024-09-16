@@ -216,44 +216,68 @@ async fn init() -> Result<()> {
     Ok(())
 }
 
+fn get_docker_compose_command() -> (&'static str, &'static [&'static str]) {
+    if Command::new("docker-compose").arg("--version").output().is_ok() {
+        ("docker-compose", &[])
+    } else {
+        ("docker", &["compose"])
+    }
+}
+
 fn check_dependencies() -> Result<()> {
     println!("{}", "Checking required dependencies...".bold().blue());
 
-    static DEPENDENCIES: &[(&str, &str, &str)] = &[
-        ("docker", "docker --version", "Docker is not installed. Please install Docker."),
-        ("docker-compose", "docker-compose --version", "Docker Compose is not installed. Please install Docker Compose."),
-        ("node", "node --version", "Node.js is not installed or version is below 19. Please install Node.js version 19 or higher."),
-        ("solana", "solana --version", "Solana CLI is not installed. Please install Solana CLI."),
-        ("cargo", "cargo --version", "Rust and Cargo are not installed. Please install Rust and Cargo."),
+    static DEPENDENCIES: &[(&str, &[&[&str]], &str)] = &[
+        ("docker", &[&["docker", "--version"]], "Docker is not installed. Please install Docker."),
+        (
+            "docker-compose",
+            &[
+                &["docker-compose", "--version"],
+                &["docker", "compose", "--version"],
+            ],
+            "Neither docker-compose nor docker compose is available. Please install Docker Compose."
+        ),
+        ("node", &[&["node", "--version"]], "Node.js is not installed or version is below 19. Please install Node.js version 19 or higher."),
+        ("solana", &[&["solana", "--version"]], "Solana CLI is not installed. Please install Solana CLI."),
+        ("cargo", &[&["cargo", "--version"]], "Rust and Cargo are not installed. Please install Rust and Cargo."),
     ];
 
-    for (name, command, error_message) in DEPENDENCIES.iter() {
+    for (name, commands, error_message) in DEPENDENCIES.iter() {
         print!("  {} Checking {}...", "→".bold().blue(), name);
         io::stdout().flush()?;
 
-        match Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                let version = String::from_utf8_lossy(&output.stdout);
-                println!(" {}", "✓".bold().green());
-                println!("    Detected version: {}", version.trim());
+        let mut success = false;
+        let mut version = String::new();
 
-                // Additional check for Node.js version
-                if *name == "node" {
-                    let version_str = version.split('v').nth(1).unwrap_or("").trim();
-                    let major_version = version_str.split('.').next().unwrap_or("0").parse::<u32>().unwrap_or(0);
-                    if major_version < 19 {
-                        return Err(anyhow!(error_message));
-                    }
-                }
-            },
-            _ => {
-                println!(" {}", "✗".bold().red());
-                return Err(anyhow!(error_message));
+        for command in *commands {
+            match Command::new(command[0])
+                .args(&command[1..])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    version = String::from_utf8_lossy(&output.stdout).to_string();
+                    success = true;
+                    break;
+                },
+                _ => continue,
             }
+        }
+
+        if success {
+            println!(" {}", "✓".bold().green());
+            println!("    Detected version: {}", version.trim());
+
+            // Additional check for Node.js version
+            if *name == "node" {
+                let version_str = version.split('v').nth(1).unwrap_or("").trim();
+                let major_version = version_str.split('.').next().unwrap_or("0").parse::<u32>().unwrap_or(0);
+                if major_version < 19 {
+                    return Err(anyhow!(error_message));
+                }
+            }
+        } else {
+            println!(" {}", "✗".bold().red());
+            return Err(anyhow!(error_message));
         }
     }
 
@@ -638,10 +662,12 @@ fn remove_docker_networks() -> Result<()> {
 
 fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()> {
     println!("  {} Stopping {} services...", "→".bold().blue(), service_name.yellow());
-    let output = Command::new("docker-compose")
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+    
+    let output = Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
         .args(&["-f", compose_file, "down"])
-        .output()
-        .context(format!("Failed to stop {} services", service_name))?;
+        .output()?;
 
     if !output.status.success() {
         let error_message = String::from_utf8_lossy(&output.stderr);
@@ -674,12 +700,27 @@ async fn clean() -> Result<()> {
 
 fn start_bitcoin_regtest() -> Result<()> {
     println!("  {} Starting Bitcoin regtest network...", "→".bold().blue());
-    Command::new("docker-compose")
-        .arg("-f")
-        .arg("path/to/bitcoin-docker-compose.yml")
-        .arg("up")
-        .arg("-d")
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+    
+    Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(&["-f", "path/to/bitcoin-docker-compose.yml", "up", "-d"])
         .status()?;
+    
+    println!("  {} Bitcoin regtest network started successfully.", "✓".bold().green());
+    Ok(())
+}
+
+fn stop_bitcoin_regtest() -> Result<()> {
+    println!("  {} Stopping Bitcoin regtest network...", "→".bold().blue());
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+    
+    Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(&["-f", "path/to/bitcoin-docker-compose.yml", "down"])
+        .status()?;
+    
+    println!("  {} Bitcoin regtest network stopped successfully.", "✓".bold().green());
     Ok(())
 }
 
@@ -731,12 +772,27 @@ async fn start_dkg(config: &Config) -> Result<()> {
 
 fn start_arch_nodes() -> Result<()> {
     println!("  {} Starting Arch Network nodes...", "→".bold().blue());
-    Command::new("docker-compose")
-        .arg("-f")
-        .arg("path/to/arch-docker-compose.yml")
-        .arg("up")
-        .arg("-d")
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+    
+    Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(&["-f", "path/to/arch-docker-compose.yml", "up", "-d"])
         .status()?;
+    
+    println!("  {} Arch Network nodes started successfully.", "✓".bold().green());
+    Ok(())
+}
+
+fn stop_arch_nodes() -> Result<()> {
+    println!("  {} Stopping Arch Network nodes...", "→".bold().blue());
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+    
+    Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(&["-f", "path/to/arch-docker-compose.yml", "down"])
+        .status()?;
+    
+    println!("  {} Arch Network nodes stopped successfully.", "✓".bold().green());
     Ok(())
 }
 
@@ -810,19 +866,21 @@ fn set_env_vars(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn start_docker_service(
-    service_name: &str,
-    container_name: &str,
-    compose_file: &str
-) -> Result<()> {
-    let is_running = check_docker_status(container_name).with_context(||
-        format!("Failed to check status of {}", service_name)
-    )?;
+fn start_docker_service(service_name: &str, container_name: &str, compose_file: &str) -> Result<()> {
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+    
+    let is_running = check_docker_status(container_name)?;
 
     if !is_running {
-        docker_manager
-            ::start_docker_compose(compose_file)
-            .with_context(|| format!("Failed to start {}", service_name))?;
+        let output = Command::new(docker_compose_cmd)
+            .args(docker_compose_args)
+            .args(&["-f", compose_file, "up", "-d"])
+            .output()?;
+
+        if !output.status.success() {
+            let error_message = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to start {}: {}", service_name, error_message));
+        }
         println!("  {} {} started.", "✓".bold().green(), service_name.yellow());
     } else {
         println!("  {} {} already running.", "ℹ".bold().blue(), service_name.yellow());
@@ -872,12 +930,13 @@ fn create_docker_network(network_name: &str) -> Result<()> {
 
 fn remove_orphaned_containers(bitcoin_compose_file: &str, arch_compose_file: &str) -> Result<()> {
     println!("{}", "Removing orphaned containers...".bold().blue());
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
 
     // Remove orphaned containers for Bitcoin setup
-    let output = Command::new("docker-compose")
+    let output = Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
         .args(&["-f", bitcoin_compose_file, "down", "--remove-orphans"])
-        .output()
-        .context("Failed to remove orphaned containers for Bitcoin setup")?;
+        .output()?;
 
     if !output.status.success() {
         let error_message = String::from_utf8_lossy(&output.stderr);
@@ -889,10 +948,10 @@ fn remove_orphaned_containers(bitcoin_compose_file: &str, arch_compose_file: &st
     }
 
     // Remove orphaned containers for Arch Network setup
-    let output = Command::new("docker-compose")
+    let output = Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
         .args(&["-f", arch_compose_file, "down", "--remove-orphans"])
-        .output()
-        .context("Failed to remove orphaned containers for Arch Network setup")?;
+        .output()?;
 
     if !output.status.success() {
         let error_message = String::from_utf8_lossy(&output.stderr);
