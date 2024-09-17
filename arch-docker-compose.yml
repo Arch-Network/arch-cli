@@ -12,7 +12,7 @@ services:
       - REPLICA_COUNT=2
 
   bootnode:
-    image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/bootnode:latest}
+    image: ${CUSTOM_BOOTNODE_IMAGE:-ghcr.io/arch-network/bootnode:latest}
     platform: linux/amd64
     command: /usr/local/bin/bootnode.sh
     ports:
