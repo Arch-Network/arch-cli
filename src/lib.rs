@@ -4,7 +4,6 @@ use arch_program::pubkey::Pubkey;
 use arch_program::system_instruction::SystemInstruction;
 use bitcoin::Amount;
 use bitcoin::Network;
-use bitcoincore_rpc::json::GetTransactionResult;
 use bitcoincore_rpc::jsonrpc::serde_json;
 use clap::{ Parser, Subcommand, Args };
 use serde::Deserialize;
@@ -12,21 +11,19 @@ use std::fs;
 use std::io;
 use std::io::Write;
 use std::path::Path;
-use std::thread;
 use tokio;
 use anyhow::{ Context, Result };
 use std::process::Command as ShellCommand;
 use common::helper::*;
 use common::constants::*;
-use bitcoin::{ Address, PublicKey };
-use bitcoincore_rpc::{ Auth, Client, RawTx, RpcApi };
+use bitcoin::Address;
+use bitcoincore_rpc::{ Client, RpcApi };
 use std::time::Duration;
 use std::str::FromStr;
 use colored::*;
 use std::process::Command;
 use config::{ Config, File, Environment };
 use std::env;
-mod docker_manager;
 use anyhow::anyhow;
 
 use common::wallet_manager::*;
@@ -447,7 +444,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
-    deploy_program_with_tx_info(config, &program_keypair, &program_pubkey, tx_info).await?;
+    deploy_program_with_tx_info(&program_keypair, &program_pubkey, tx_info).await?;
 
     wallet_manager.close_wallet()?;
 
@@ -455,7 +452,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub async fn stop_server(config: &Config) -> Result<()> {
+pub async fn stop_server() -> Result<()> {
     println!("{}", "Stopping development server...".bold().yellow());
 
     // Stop all containers related to our development environment
@@ -569,7 +566,7 @@ fn stop_all_related_containers() -> Result<()> {
     Ok(())
 }
 
-fn start_existing_containers(compose_file: &str) -> Result<()> {
+pub fn start_existing_containers(compose_file: &str) -> Result<()> {
     let output = Command::new("docker-compose")
         .args(&["-f", compose_file, "ps", "-q"])
         .output()
@@ -600,7 +597,7 @@ fn start_existing_containers(compose_file: &str) -> Result<()> {
     Ok(())
 }
 
-fn remove_docker_networks() -> Result<()> {
+pub fn remove_docker_networks() -> Result<()> {
     let networks = vec!["arch-network", "internal"];
 
     for network in networks {
@@ -635,7 +632,7 @@ fn remove_docker_networks() -> Result<()> {
     Ok(())
 }
 
-fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()> {
+pub fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()> {
     println!("  {} Stopping {} services...", "→".bold().blue(), service_name.yellow());
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
     
@@ -673,7 +670,7 @@ pub async fn clean() -> Result<()> {
     Ok(())
 }
 
-fn start_bitcoin_regtest() -> Result<()> {
+pub fn start_bitcoin_regtest() -> Result<()> {
     println!("  {} Starting Bitcoin regtest network...", "→".bold().blue());
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
     
@@ -686,7 +683,7 @@ fn start_bitcoin_regtest() -> Result<()> {
     Ok(())
 }
 
-fn stop_bitcoin_regtest() -> Result<()> {
+pub fn stop_bitcoin_regtest() -> Result<()> {
     println!("  {} Stopping Bitcoin regtest network...", "→".bold().blue());
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
     
@@ -745,7 +742,7 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn start_arch_nodes() -> Result<()> {
+pub fn start_arch_nodes() -> Result<()> {
     println!("  {} Starting Arch Network nodes...", "→".bold().blue());
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
     
@@ -758,7 +755,7 @@ fn start_arch_nodes() -> Result<()> {
     Ok(())
 }
 
-fn stop_arch_nodes() -> Result<()> {
+pub fn stop_arch_nodes() -> Result<()> {
     println!("  {} Stopping Arch Network nodes...", "→".bold().blue());
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
     
@@ -771,7 +768,7 @@ fn stop_arch_nodes() -> Result<()> {
     Ok(())
 }
 
-fn load_config() -> Result<Config> {
+pub fn load_config() -> Result<Config> {
     let config_path = "config.toml";
 
     let mut builder = Config::builder();
@@ -798,7 +795,7 @@ fn load_config() -> Result<Config> {
     Ok(config)
 }
 
-fn check_file_exists(file_path: &str) -> Result<()> {
+pub fn check_file_exists(file_path: &str) -> Result<()> {
     if !Path::new(file_path).exists() {
         Err(anyhow!("File not found: {}", file_path))
     } else {
@@ -841,7 +838,7 @@ fn set_env_vars(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn start_docker_service(service_name: &str, container_name: &str, compose_file: &str) -> Result<()> {
+pub fn start_docker_service(service_name: &str, container_name: &str, compose_file: &str) -> Result<()> {
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
     
     let is_running = check_docker_status(container_name)?;
@@ -864,7 +861,7 @@ fn start_docker_service(service_name: &str, container_name: &str, compose_file: 
     Ok(())
 }
 
-fn check_docker_status(container_name: &str) -> Result<bool> {
+pub fn check_docker_status(container_name: &str) -> Result<bool> {
     let output = Command::new("docker")
         .arg("ps")
         .arg("--format")
@@ -900,44 +897,6 @@ fn create_docker_network(network_name: &str) -> Result<()> {
         println!("  {} Created Docker network: {}", "✓".bold().green(), network_name.yellow());
     }
 
-    Ok(())
-}
-
-fn remove_orphaned_containers(bitcoin_compose_file: &str, arch_compose_file: &str) -> Result<()> {
-    println!("{}", "Removing orphaned containers...".bold().blue());
-    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
-
-    // Remove orphaned containers for Bitcoin setup
-    let output = Command::new(docker_compose_cmd)
-        .args(docker_compose_args)
-        .args(&["-f", bitcoin_compose_file, "down", "--remove-orphans"])
-        .output()?;
-
-    if !output.status.success() {
-        let error_message = String::from_utf8_lossy(&output.stderr);
-        println!(
-            "  {} Warning: Failed to remove orphaned containers for Bitcoin setup: {}",
-            "⚠".bold().yellow(),
-            error_message.red()
-        );
-    }
-
-    // Remove orphaned containers for Arch Network setup
-    let output = Command::new(docker_compose_cmd)
-        .args(docker_compose_args)
-        .args(&["-f", arch_compose_file, "down", "--remove-orphans"])
-        .output()?;
-
-    if !output.status.success() {
-        let error_message = String::from_utf8_lossy(&output.stderr);
-        println!(
-            "  {} Warning: Failed to remove orphaned containers for Arch Network setup: {}",
-            "⚠".bold().yellow(),
-            error_message.red()
-        );
-    }
-
-    println!("  {} Orphaned containers removed", "✓".bold().green());
     Ok(())
 }
 
@@ -990,19 +949,6 @@ fn get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
                     .unwrap_or_else(|_| PROGRAM_FILE_PATH.to_string())
             })
     )
-}
-
-fn setup_bitcoin_rpc_client_with_wallet(
-    endpoint: &str,
-    username: &str,
-    password: &str,
-    wallet_name: &str
-) -> Result<Client> {
-    let wallet_endpoint = format!("{}/wallet/{}", endpoint, wallet_name);
-    Client::new(
-        &wallet_endpoint,
-        Auth::UserPass(username.to_string(), password.to_string())
-    ).context("Failed to create RPC client with wallet")
 }
 
 async fn fund_address(
@@ -1086,8 +1032,7 @@ async fn fund_address(
     }
 }
 
-async fn deploy_program_with_tx_info(
-    config: &Config,
+async fn deploy_program_with_tx_info(    
     program_keypair: &bitcoin::secp256k1::Keypair,
     program_pubkey: &arch_program::pubkey::Pubkey,
     tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>
@@ -1148,7 +1093,7 @@ async fn deploy_program(
     let elf = fs
         ::read("src/app/program/target/sbf-solana-solana/release/arch_network_app.so")
         .expect("elf path should be available");
-    // assert!(read_account_info(NODE1_ADDRESS, *program_pubkey).unwrap().data == elf);
+    assert!(read_account_info(NODE1_ADDRESS, *program_pubkey).unwrap().data == elf);
 
     // 4. Make program executable
     println!("Making program executable");
@@ -1169,7 +1114,7 @@ async fn deploy_program(
         NODE1_ADDRESS.to_string(),
         txid.clone()
     ).await.expect("get processed transaction should not fail");
-    // println!("processed_tx {:?}", processed_tx);
+    println!("processed_tx {:?}", processed_tx);
     println!("Program made executable successfully");
 
     assert!(

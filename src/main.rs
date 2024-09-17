@@ -3,8 +3,8 @@ use anyhow::Result;
 use config::{ Config, File, Environment };
 use colored::*;
 use dotenv::dotenv;
-use clap::{ Parser, Subcommand, Args };
-use anyhow::{ Context };
+use clap::Parser;
+use anyhow::Context;
 
 
 #[tokio::main]
@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
         Commands::Init => init().await?,
         Commands::StartServer => start_server(&config).await?,
         Commands::Deploy(args) => deploy(&args, &config).await?,
-        Commands::StopServer => stop_server(&config).await?,
+        Commands::StopServer => stop_server().await?,
         Commands::Clean => clean().await?,
         Commands::StartDkg => start_dkg(&config).await?,
         Commands::SendCoins(args) => send_coins(&args, &config).await?,

@@ -11,7 +11,6 @@ use bitcoin::{
 };
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use colored::*;
-use env_logger;
 use futures::future::join_all;
 use log::{debug, error, info, warn};
 use reqwest::blocking::Client as HttpClient;
@@ -24,7 +23,7 @@ use std::process::Child;
 use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
-use tokio::{self, task};
+use tokio::{self};
 
 use crate::processed_transaction::ProcessedTransaction;
 
@@ -125,7 +124,7 @@ fn post_data<T: Serialize + std::fmt::Debug>(url: &str, method: &str, params: T)
 }
 
 /// Returns a caller information using the secret key file specified
-fn get_trader(trader_id: u64) -> Result<CallerInfo> {
+pub fn get_trader(trader_id: u64) -> Result<CallerInfo> {
     let file_path = &format!("../../.arch/trader{}.json", trader_id);
     Ok(CallerInfo::with_secret_key_file(file_path)?)
 }
@@ -602,7 +601,7 @@ pub fn get_program(url: &str, program_id: String) -> String {
 }
 
 /// Returns the best block
-fn get_best_block() -> String {
+pub fn get_best_block() -> String {
     let best_block_hash = process_result(post(NODE1_ADDRESS, GET_BEST_BLOCK_HASH))
         .expect("best_block_hash should not fail")
         .as_str()
@@ -772,9 +771,9 @@ pub fn prepare_fees() -> String {
     tx.raw_hex()
 }
 
-pub async fn send_utxo(rpc: &Client, pubkey: Pubkey) -> Result<(String, u32), anyhow::Error> {
+pub async fn send_utxo(_rpc: &Client, pubkey: Pubkey) -> Result<(String, u32), anyhow::Error> {
     let address = get_account_address_async(pubkey).await?;
-    let account_address = Address::from_str(&address)
+    let _account_address = Address::from_str(&address)
         .context("Failed to parse address")?
         .require_network(bitcoin::Network::Regtest)
         .context("Invalid network for address")?;
@@ -953,7 +952,7 @@ pub fn get_account_address(pubkey: Pubkey) -> String {
         .to_string()
 }
 
-fn get_address_utxos(rpc: &Client, address: String) -> Vec<Value> {
+pub fn get_address_utxos(rpc: &Client, address: String) -> Vec<Value> {
     let client = reqwest::blocking::Client::new();
 
     let res = client
@@ -1037,7 +1036,7 @@ pub fn start_node(port: u16, bitcoin_rpc_info: &BitcoinRpcInfo) -> Child {
     command.spawn().expect("Failed to start node process")
 }
 
-async fn stop_node(mut child: Child) {
+pub async fn stop_node(mut child: Child) {
     match child.kill() {
         Ok(_) => info!("Node stopped successfully"),
         Err(e) => error!("Failed to stop node: {}", e),
