@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use bitcoin::Amount;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use colored::*;
 use config::Config;
@@ -12,12 +11,6 @@ pub struct WalletManager {
 
 impl WalletManager {
     pub fn new(config: &Config) -> Result<Self> {
-        let rpc_host = config
-            .get_string("bitcoin.rpc_host")
-            .unwrap_or_else(|_| "localhost".to_string());
-        let rpc_port = config
-            .get_string("bitcoin.rpc_port")
-            .context("Failed to get Bitcoin RPC port")?;
         let rpc_user = config
             .get_string("bitcoin.rpc_user")
             .context("Failed to get Bitcoin RPC username")?;

@@ -24,6 +24,3 @@ arch_program = { path = "./program" }
 dotenv = "0.15.0"
 reqwest = "0.12.5"
 webbrowser = "1.0.1"
-
-[lib]
-path = "src/main.rs"
