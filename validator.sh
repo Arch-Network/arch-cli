@@ -4,6 +4,9 @@ while [ ! -f /bootnode_data/init_complete ]; do
   echo 'Waiting for bootnode initialization to complete...'
   sleep 5
 done
+
+sleep 10
+
 # If validator binary exists move it to bin
 if [ -f ./validator ]; then
     mv ./validator /usr/local/bin/validator
