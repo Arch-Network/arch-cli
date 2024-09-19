@@ -36,11 +36,7 @@ pub enum ProgramError {
     InvalidSeeds,
     #[error("IO Error: {0}")]
     BorshIoError(String),
-    #[error("An account does not have enough lamports to be rent-exempt")]
-    AccountNotRentExempt,
     #[error("Unsupported sysvar")]
-    UnsupportedSysvar,
-    #[error("Provided owner is not allowed")]
     IllegalOwner,
     #[error("Accounts data allocations exceeded the maximum allowed per transaction")]
     MaxAccountsDataAllocationsExceeded,
@@ -171,8 +167,6 @@ impl From<ProgramError> for u64 {
             ProgramError::MaxSeedLengthExceeded => MAX_SEED_LENGTH_EXCEEDED,
             ProgramError::InvalidSeeds => INVALID_SEEDS,
             ProgramError::BorshIoError(_) => BORSH_IO_ERROR,
-            ProgramError::AccountNotRentExempt => ACCOUNT_NOT_RENT_EXEMPT,
-            ProgramError::UnsupportedSysvar => UNSUPPORTED_SYSVAR,
             ProgramError::IllegalOwner => ILLEGAL_OWNER,
             ProgramError::MaxAccountsDataAllocationsExceeded => {
                 MAX_ACCOUNTS_DATA_ALLOCATIONS_EXCEEDED
@@ -217,8 +211,6 @@ impl From<u64> for ProgramError {
             MAX_SEED_LENGTH_EXCEEDED => Self::MaxSeedLengthExceeded,
             INVALID_SEEDS => Self::InvalidSeeds,
             BORSH_IO_ERROR => Self::BorshIoError("Unknown".to_string()),
-            ACCOUNT_NOT_RENT_EXEMPT => Self::AccountNotRentExempt,
-            UNSUPPORTED_SYSVAR => Self::UnsupportedSysvar,
             ILLEGAL_OWNER => Self::IllegalOwner,
             MAX_ACCOUNTS_DATA_ALLOCATIONS_EXCEEDED => Self::MaxAccountsDataAllocationsExceeded,
             INVALID_ACCOUNT_DATA_REALLOC => Self::InvalidRealloc,

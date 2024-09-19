@@ -13,18 +13,18 @@ pub struct Message {
 
 impl Message {
     pub fn serialize(&self) -> Vec<u8> {
-        let mut serilized = vec![];
+        let mut serialized = vec![];
 
-        serilized.push(self.signers.len() as u8);
+        serialized.push(self.signers.len() as u8);
         for signer in self.signers.iter() {
-            serilized.extend(&signer.serialize());
+            serialized.extend(&signer.serialize());
         }
-        serilized.push(self.instructions.len() as u8);
+        serialized.push(self.instructions.len() as u8);
         for instruction in self.instructions.iter() {
-            serilized.extend(&instruction.serialize());
+            serialized.extend(&instruction.serialize());
         }
 
-        serilized
+        serialized
     }
 
     pub fn from_slice(data: &[u8]) -> Self {
@@ -53,7 +53,9 @@ impl Message {
     }
 
     pub fn hash(&self) -> String {
-        digest(digest(self.serialize()))
+        let serialized_message = self.serialize();
+        let first_hash = digest(serialized_message);
+        digest(first_hash.as_bytes())
     }
 }
 

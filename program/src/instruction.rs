@@ -2,8 +2,8 @@ use std::mem::size_of;
 
 use thiserror::Error;
 
-use crate::account::AccountMeta;
 use crate::pubkey::Pubkey;
+use crate::{account::AccountMeta, program_error::ProgramError};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
@@ -152,10 +152,6 @@ pub enum InstructionError {
     #[error("instruction modified data of an account it does not own")]
     ExternalAccountDataModified,
 
-    /// Read-only account's lamports modified
-    #[error("instruction changed the balance of a read-only account")]
-    ReadonlyLamportChange,
-
     /// Read-only account's data was modified
     #[error("instruction modified data of a read-only account")]
     ReadonlyDataModified,
@@ -168,10 +164,6 @@ pub enum InstructionError {
     /// Executable bit on account changed, but shouldn't have
     #[error("instruction changed executable bit of an account")]
     ExecutableModified,
-
-    /// Rent_epoch account changed, but shouldn't have
-    #[error("instruction modified rent epoch of an account")]
-    RentEpochModified,
 
     /// The instruction expected additional account keys
     #[error("insufficient account keys for instruction")]
@@ -205,6 +197,10 @@ pub enum InstructionError {
     #[error("custom program error: {0:#x}")]
     Custom(u32),
 
+    /// Error caused during a processing of a program
+    #[error("program error: {0}")]
+    ProgramError(ProgramError),
+
     /// The return value from the program was invalid.  Valid errors are either a defined builtin
     /// error value or a user-defined error in the lower 32 bits.
     #[error("program returned invalid error code")]
@@ -213,14 +209,6 @@ pub enum InstructionError {
     /// Executable account's data was modified
     #[error("instruction changed executable accounts data")]
     ExecutableDataModified,
-
-    /// Executable account's lamports modified
-    #[error("instruction changed the balance of an executable account")]
-    ExecutableLamportChange,
-
-    /// Executable accounts must be rent exempt
-    #[error("executable accounts must be rent exempt")]
-    ExecutableAccountNotRentExempt,
 
     /// Unsupported program id
     #[error("Unsupported program id")]
@@ -294,10 +282,6 @@ pub enum InstructionError {
     #[error("Failed to serialize or deserialize account data: {0}")]
     BorshIoError(String),
 
-    /// An account does not have enough lamports to be rent-exempt
-    #[error("An account does not have enough lamports to be rent-exempt")]
-    AccountNotRentExempt,
-
     /// Invalid account owner
     #[error("Invalid account owner")]
     InvalidAccountOwner,
@@ -326,9 +310,17 @@ pub enum InstructionError {
     #[error("Max instruction trace length exceeded")]
     MaxInstructionTraceLengthExceeded,
 
+    /// Error Initilising BTC RPC
+    #[error("unable to connect to bitcoin rpc")]
+    RPCError,
+
     /// Builtin programs must consume compute units
     #[error("Builtin programs must consume compute units")]
     BuiltinProgramsMustConsumeComputeUnits,
+
+    /// Vm execution failed
+    #[error("Vm failed while executing ebpf ncode {0}")]
+    EbpfError(String),
 
     /// Builtin programs must consume compute units
     #[error("Builtin programs must consume compute units")]

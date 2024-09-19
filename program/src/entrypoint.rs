@@ -14,9 +14,9 @@ pub const HEAP_START_ADDRESS: u64 = 0x300000000;
 /// Length of the heap memory region used for program heap.
 pub const HEAP_LENGTH: usize = 32 * 1024;
 /// Maximum permitted size of account data (10 MiB).
-pub const MAX_PERMITTED_DATA_LENGTH: u64 = 10 * 1024 * 1024;
+pub const MAX_PERMITTED_DATA_LENGTH: usize = 10 * 1024 * 1024;
 /// Maximum number of bytes a program may add to an account during a single realloc
-pub const MAX_PERMITTED_DATA_INCREASE: usize = 1_024 * 10;
+pub const MAX_PERMITTED_DATA_INCREASE: usize = 10 * 1_024;
 
 pub const BPF_ALIGN_OF_U128: usize = 8;
 
@@ -24,10 +24,18 @@ pub const BPF_ALIGN_OF_U128: usize = 8;
 /// SBF VM.
 pub const NON_DUP_MARKER: u8 = u8::MAX;
 
+/// type returned by a on-chain program
 pub type ProgramResult = Result<(), ProgramError>;
 
 /// Programs indicate success with a return value of 0
 pub const SUCCESS: u64 = 0;
+
+/// User implemented function to process an instruction
+///
+/// program_id: Program ID of the currently executing program accounts: Accounts
+/// passed as part of the instruction instruction_data: Instruction data
+pub type ProcessInstruction =
+    fn(program_id: &Pubkey, accounts: &[AccountInfo], instruction_data: &[u8]) -> ProgramResult;
 
 /// The bump allocator used as the default rust heap when running programs.
 pub struct BumpAllocator {

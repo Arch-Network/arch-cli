@@ -1,6 +1,6 @@
 #![allow(improper_ctypes)]
 
-use crate::{pubkey::Pubkey, utxo::UtxoMeta};
+use crate::{clock::Clock, pubkey::Pubkey, utxo::UtxoMeta};
 
 macro_rules! define_syscall {
 	(fn $name:ident($($arg:ident: $typ:ty),*) -> $ret:ty) => {
@@ -22,6 +22,8 @@ define_syscall!(fn arch_get_bitcoin_tx(data: *mut u8, length: u64, txid: &[u8; 3
 define_syscall!(fn arch_get_network_xonly_pubkey(data: *mut u8) -> u64);
 define_syscall!(fn arch_validate_utxo_ownership(utxo: *const UtxoMeta, owner: *const Pubkey) -> u64);
 define_syscall!(fn arch_get_account_script_pubkey(script: *mut u8, pubkey: *const Pubkey) -> u64);
+define_syscall!(fn arch_get_bitcoin_block_height() -> u64);
+define_syscall!(fn arch_get_clock() -> Clock);
 // logs
 define_syscall!(fn sol_log_(message: *const u8, len: u64));
 define_syscall!(fn sol_log_64_(arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64));

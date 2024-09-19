@@ -1,40 +1,49 @@
 use bitcoin::Transaction;
 
 use crate::instruction::Instruction;
-use crate::msg;
 use crate::program_error::ProgramError;
+#[cfg(target_os = "solana")]
 use crate::stable_layout::stable_ins::StableInstruction;
+use crate::{msg, MAX_BTC_TX_SIZE};
 
 use crate::transaction_to_sign::TransactionToSign;
 use crate::utxo::UtxoMeta;
 use crate::{account::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
 
+use crate::clock::Clock;
+
 pub fn invoke(instruction: &Instruction, account_infos: &[AccountInfo]) -> ProgramResult {
-    for account_meta in instruction.accounts.iter() {
-        for account_info in account_infos.iter() {
-            if account_meta.pubkey == *account_info.key {
-                if account_meta.is_writable {
-                    let _ = account_info.try_borrow_mut_data()?;
-                } else {
-                    let _ = account_info.try_borrow_data()?;
+    #[cfg(target_os = "solana")]
+    {
+        for account_meta in instruction.accounts.iter() {
+            for account_info in account_infos.iter() {
+                if account_meta.pubkey == *account_info.key {
+                    if account_meta.is_writable {
+                        let _ = account_info.try_borrow_mut_data()?;
+                    } else {
+                        let _ = account_info.try_borrow_data()?;
+                    }
+                    break;
                 }
-                break;
             }
+        }
+
+        let instruction = StableInstruction::from(instruction.clone());
+        let result = unsafe {
+            crate::syscalls::sol_invoke_signed_rust(
+                &instruction as *const _ as *const u8,
+                account_infos as *const _ as *const u8,
+                account_infos.len() as u64,
+            )
+        };
+        match result {
+            crate::entrypoint::SUCCESS => Ok(()),
+            _ => Err(result.into()),
         }
     }
 
-    let instruction = StableInstruction::from(instruction.clone());
-    let result = unsafe {
-        crate::syscalls::sol_invoke_signed_rust(
-            &instruction as *const _ as *const u8,
-            account_infos as *const _ as *const u8,
-            account_infos.len() as u64,
-        )
-    };
-    match result {
-        crate::entrypoint::SUCCESS => Ok(()),
-        _ => Err(result.into()),
-    }
+    #[cfg(not(target_os = "solana"))]
+    crate::program_stubs::sol_invoke_signed_rust(instruction, account_infos)
 }
 
 pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a AccountInfo<'b>>>(
@@ -43,19 +52,26 @@ pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a AccountInfo<'b>>>(
     iter.next().ok_or(ProgramError::NotEnoughAccountKeys)
 }
 
-pub const MAX_TRANSACTION_TO_SIGN: usize = 1024;
+pub const MAX_TRANSACTION_TO_SIGN: usize = 4 * 1024;
 
 pub fn set_transaction_to_sign(
     accounts: &[AccountInfo],
     transaction_to_sign: TransactionToSign,
 ) -> ProgramResult {
     let serialized_transaction_to_sign = &transaction_to_sign.serialise();
+    #[cfg(target_os = "solana")]
     let result = unsafe {
         crate::syscalls::arch_set_transaction_to_sign(
             serialized_transaction_to_sign.as_ptr(),
             serialized_transaction_to_sign.len() as u64,
         )
     };
+    #[cfg(not(target_os = "solana"))]
+    let result = crate::program_stubs::arch_set_transaction_to_sign(
+        serialized_transaction_to_sign.as_ptr(),
+        serialized_transaction_to_sign.len(),
+    );
+
     match result {
         crate::entrypoint::SUCCESS => {
             let tx: Transaction = bitcoin::consensus::deserialize(transaction_to_sign.tx_bytes)
@@ -147,15 +163,17 @@ pub fn get_return_data() -> Option<(Pubkey, Vec<u8>)> {
     }
 }
 
-const MAX_BTC_TX_SIZE: usize = 1024;
-
 pub fn get_bitcoin_tx(txid: [u8; 32]) -> Option<Vec<u8>> {
     use std::cmp::min;
 
     let mut buf = [0u8; MAX_BTC_TX_SIZE];
 
+    #[cfg(target_os = "solana")]
     let size =
         unsafe { crate::syscalls::arch_get_bitcoin_tx(buf.as_mut_ptr(), buf.len() as u64, &txid) };
+
+    #[cfg(not(target_os = "solana"))]
+    let size = crate::program_stubs::arch_get_bitcoin_tx(buf.as_mut_ptr(), buf.len(), &txid);
 
     if size == 0 {
         None
@@ -172,11 +190,31 @@ pub fn get_network_xonly_pubkey() -> [u8; 32] {
 }
 
 pub fn validate_utxo_ownership(utxo: &UtxoMeta, owner: &Pubkey) -> bool {
-    unsafe { crate::syscalls::arch_validate_utxo_ownership(utxo, owner) != 0 }
-}
+    #[cfg(target_os = "solana")]
+    unsafe {
+        crate::syscalls::arch_validate_utxo_ownership(utxo, owner) != 0
+    }
 
+    #[cfg(not(target_os = "solana"))]
+    {
+        crate::program_stubs::arch_validate_utxo_ownership(utxo, owner) != 0
+    }
+}
 pub fn get_account_script_pubkey(pubkey: &Pubkey) -> [u8; 34] {
     let mut buf = [0u8; 34];
+
+    #[cfg(target_os = "solana")]
     let _ = unsafe { crate::syscalls::arch_get_account_script_pubkey(buf.as_mut_ptr(), pubkey) };
+
+    #[cfg(not(target_os = "solana"))]
+    crate::program_stubs::arch_get_account_script_pubkey(&mut buf, pubkey);
     buf
+}
+
+pub fn get_bitcoin_block_height() -> u64 {
+    unsafe { crate::syscalls::arch_get_bitcoin_block_height() }
+}
+
+pub fn get_clock() -> Clock {
+    unsafe { crate::syscalls::arch_get_clock() }
 }

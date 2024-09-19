@@ -91,9 +91,12 @@ macro_rules! msg {
 /// Print a string to the log.
 #[inline]
 pub fn sol_log(message: &str) {
+    #[cfg(target_os = "solana")]
     unsafe {
         crate::syscalls::sol_log_(message.as_ptr(), message.len() as u64);
     }
+    #[cfg(not(target_os = "solana"))]
+    crate::program_stubs::sol_log(message);
 }
 
 /// Print 64-bit values represented as hexadecimal to the log.
