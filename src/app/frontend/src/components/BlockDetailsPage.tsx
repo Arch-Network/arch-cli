@@ -171,12 +171,12 @@ const BlockDetailsPage: React.FC = () => {
           {txDetails.runtime_transaction.message.instructions.map((instruction, index) => (
             <div key={index} className="mb-4">
               <h4 className="text-arch-orange font-semibold">Instruction {index + 1}</h4>
-              <p><strong>Program ID:</strong> {bs58.encode(Buffer.from(instruction.program_id))}</p>
+              <p><strong>Program ID:</strong> {Buffer.from(instruction.program_id).toString('hex')}</p>
               <p><strong>Accounts:</strong></p>
               <ul className="list-disc list-inside">
                 {instruction.accounts.map((account, accIndex) => (
                   <li key={accIndex}>
-                    {bs58.encode(Buffer.from(account.pubkey))}
+                    {Buffer.from(account.pubkey).toString('hex')}
                     {account.is_signer && ' (Signer)'}
                     {account.is_writable && ' (Writable)'}
                   </li>
@@ -229,7 +229,7 @@ const BlockDetailsPage: React.FC = () => {
           </div>
           <div className="flex items-center">
             <Clock className="text-arch-orange mr-2" size={20} />
-            <p><strong className="text-arch-orange">Timestamp:</strong> {new Date(blockDetails.timestamp * 1000).toLocaleString()}</p>
+            <p><strong className="text-arch-orange">Timestamp:</strong> {new Date(blockDetails.timestamp).toLocaleString()}</p>
           </div>
           <div className="flex items-center col-span-2">
             <Hash className="text-arch-orange mr-2" size={20} />

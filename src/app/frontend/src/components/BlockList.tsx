@@ -45,7 +45,7 @@ const BlockList: React.FC<BlockListProps> = ({ blocks }) => {
                 </Link>
               </td>
               <td className="px-4 py-2 text-arch-white">
-                {new Date(block.timestamp * 1000).toLocaleString()}
+                {new Date(block.timestamp).toLocaleString()}
               </td>
               <td className="px-4 py-2 text-arch-white">{block.transactions.length}</td>
             </motion.tr>
