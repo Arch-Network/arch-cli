@@ -5,8 +5,9 @@ import { Buffer } from 'buffer';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Clock, Hash, Database, ChevronDown, ChevronUp, CheckCircle, AlertCircle, FileText, Layers, Bitcoin, User, Code } from 'lucide-react';
 import bs58 from 'bs58';
+const RPC_URL = (import.meta as any).env.VITE_RPC_URL;
 
-const client = new ArchRpcClient('http://localhost:9002');
+const client = new ArchRpcClient(RPC_URL);
 
 interface BlockDetails {
   height: number;
