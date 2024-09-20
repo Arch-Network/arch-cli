@@ -1,68 +1,89 @@
 use arch_program::{
     account::AccountInfo,
     entrypoint,
-    helper::get_state_transition_tx,
-    input_to_sign::InputToSign,
-    instruction::Instruction,
     msg,
-    program::{
-        get_account_script_pubkey, get_bitcoin_tx, get_network_xonly_pubkey, invoke,
-        next_account_info, set_return_data, set_transaction_to_sign, validate_utxo_ownership,
-    },
+    program::next_account_info,
     program_error::ProgramError,
     pubkey::Pubkey,
-    system_instruction::SystemInstruction,
-    transaction_to_sign::TransactionToSign,
-    utxo::UtxoMeta,
 };
-use bitcoin::{self, Transaction};
-use borsh::{BorshDeserialize, BorshSerialize};
+use arch_program::program::get_clock;
+
+use borsh::{BorshSerialize, BorshDeserialize};
 
 entrypoint!(process_instruction);
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+pub struct GraffitiMessage {
+    pub timestamp: i64,
+    pub name: [u8; 16],
+    pub message: [u8; 64],
+}
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+pub struct GraffitiWall {
+    pub messages: Vec<GraffitiMessage>,
+}
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+pub struct GraffitiWallParams {
+    pub name: [u8; 16],
+    pub message: [u8; 64],
+}
+
 pub fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> Result<(), ProgramError> {
+    msg!("Graffiti Wall: Processing instruction");
 
-    msg!("Hello World!");
-
-    // Get mutable reference to account data
     let account_iter = &mut accounts.iter();
     let account = next_account_info(account_iter)?;
 
-    // Deserialize the instruction data
-    let params = GraffitiWallParams::try_from_slice(instruction_data).unwrap();
-
-    // Prepare the new entry
-    let new_entry = format!("{}|{}|", params.name, params.message);
+    // Print out account owner and program id
+    msg!("Graffiti Wall: Account owner: {:?}", account.owner);
+    msg!("Graffiti Wall: Program id: {:?}", program_id);
     
-    // Extend the account data to fit the new entry
-    let data_len = account.data.try_borrow().unwrap().len();
-    if new_entry.as_bytes().len() + data_len > data_len {
-        account.realloc(data_len + new_entry.as_bytes().len(), true)?;
+    if account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
     }
 
-    // Get mutable reference to account data after realloc
-    let mut account_data = account.data.borrow_mut();
-    let current_length = account_data.iter().position(|&x| x == 0).unwrap_or(account_data.len());
+    let params = GraffitiWallParams::try_from_slice(instruction_data)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
 
-    // Check if the new entry fits within the 10MB limit
-    let new_entry_length = new_entry.len(); // Updated to use new_entry length
-    if current_length + new_entry_length > 10 * 1024 * 1024 { // 10MB limit
-        msg!("Graffiti wall is full. Cannot add more entries.");
-        return Err(ProgramError::InvalidArgument);
+    let clock = get_clock();
+    let timestamp = clock.unix_timestamp;
+
+    let new_message = GraffitiMessage {
+        timestamp,
+        name: params.name,
+        message: params.message,
+    };
+
+    let mut wall = if account.data_len() > 0 {
+        GraffitiWall::try_from_slice(&account.data.borrow())
+            .map_err(|_| ProgramError::InvalidAccountData)?
+    } else {
+        GraffitiWall { messages: vec![] }
+    };
+
+    wall.messages.push(new_message);
+
+    let serialized_data = borsh::to_vec(&wall)
+        .map_err(|_| ProgramError::AccountDataTooSmall)?;
+
+    // Ensure data fits within 10MB limit
+    if serialized_data.len() > 10 * 1024 * 1024 {
+        return Err(ProgramError::AccountDataTooSmall);
     }
 
-    // Append the new entry to the existing data
-    account_data[current_length..current_length + new_entry_length]
-        .copy_from_slice(new_entry.as_bytes());
+    let required_len = serialized_data.len();
+    if account.data_len() < required_len {
+        account.realloc(required_len, false)?;
+    }
 
+    account.data.borrow_mut()[..required_len].copy_from_slice(&serialized_data);
+
+    msg!("Graffiti Wall: Message added successfully");
     Ok(())
-}
-
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
-pub struct GraffitiWallParams {
-    pub name: String,
-    pub message: String,
 }
