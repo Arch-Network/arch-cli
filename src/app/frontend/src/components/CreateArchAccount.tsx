@@ -24,6 +24,7 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
   const [message, setMessage] = useState('');
   const [wallData, setWallData] = useState<GraffitiMessage[]>([]);
   const [isFormValid, setIsFormValid] = useState(false);
+  const [name, setName] = useState('');
 
   const checkAccountCreated = useCallback(async () => {
     if (!accountPubkey) {
@@ -92,8 +93,8 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
   }, [accountPubkey, isAccountCreated, checkAccountCreated, fetchWallData]);
 
   const handleAddToWall = async () => {
-    if (!message.trim() || !isAccountCreated) {
-      setError("Message is required and account must be created.");
+    if (!message.trim() || !name.trim() || !isAccountCreated) {
+      setError("Name and message are required, and account must be created.");
       return;
     }
 
@@ -103,7 +104,6 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
       const privateKeyBytes = new Uint8Array(privateKey.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16)));
 
       const encoder = new TextEncoder();
-      const name = 'User';
       const nameBytes = encoder.encode(name.slice(0, 16).padEnd(16, '\0')).slice(0, 16);
       const messageBytes = encoder.encode(message).slice(0, 64);
 
@@ -118,6 +118,17 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
     } catch (error) {
       console.error('Error adding to wall:', error);
       setError(`Failed to add to wall: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newName = e.target.value;
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(newName);
+
+    if (bytes.length <= 16) {
+      setName(newName);
+      setIsFormValid(newName.trim() !== '' && message.trim() !== '');
     }
   };
 
@@ -146,6 +157,14 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
           ) : (
             <div className="bg-arch-black p-6 rounded-lg">
               <h3 className="text-2xl font-bold mb-4 text-arch-white">Add to Wall</h3>
+              <input
+                type="text"
+                value={name}
+                onChange={handleNameChange}
+                placeholder="Your Name (required, max 16 bytes)"
+                className="w-full px-3 py-2 bg-arch-gray text-arch-white rounded-md focus:outline-none focus:ring-2 focus:ring-arch-orange mb-2"
+                required
+              />
               <textarea
                 value={message}
                 onChange={handleMessageChange}
@@ -175,7 +194,7 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
               {wallData.map((item, index) => (
                 <div key={index} className="bg-arch-gray p-3 rounded-lg">
                   <p className="font-bold text-arch-orange">{new Date(item.timestamp * 1000).toLocaleString()}</p>
-                  <p className="text-arch-white">{item.message}</p>
+                  <p className="text-arch-white"><span className="font-semibold">{item.name}:</span> {item.message}</p>
                 </div>
               ))}
             </div>
