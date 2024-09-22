@@ -33,6 +33,7 @@ async fn main() -> Result<()> {
         Commands::StartDkg => start_dkg(&config).await?,
         Commands::SendCoins(args) => send_coins(&args, &config).await?,
         Commands::StartApp => start_app().await?,
+        Commands::CreateAccount(args) => create_account(&args, &config).await?,
     }
 
     Ok(())

@@ -4,8 +4,11 @@ use arch_program::pubkey::Pubkey;
 use arch_program::system_instruction::SystemInstruction;
 use bitcoin::Amount;
 use bitcoin::Network;
+use bitcoincore_rpc::jsonrpc::client;
 use bitcoincore_rpc::jsonrpc::serde_json;
 use clap::{ Parser, Subcommand, Args };
+use common::wallet_manager;
+use secp256k1::Keypair;
 use serde::Deserialize;
 use std::fs;
 use std::io;
@@ -83,6 +86,17 @@ pub enum Commands {
     /// Start the frontend application
     #[clap(long_about = "Prepares and starts the frontend application, opening it in the default browser.")]
     StartApp,
+
+    /// Create an account for the dApp
+    #[clap(long_about = "Creates an account for the dApp, prompts for funding, and transfers ownership to the program")]
+    CreateAccount(CreateAccountArgs),
+}
+
+#[derive(Args)]
+pub struct CreateAccountArgs {
+    /// Program ID to transfer ownership to
+    #[clap(long, help = "Specifies the program ID to transfer ownership to")]
+    program_id: Option<String>,
 }
 
 #[derive(Args)]
@@ -374,30 +388,41 @@ pub async fn start_server(config: &Config) -> Result<()> {
         .get_string("network.type")
         .context("Failed to get network type from configuration")?;
     
-    if network_type == "development" {
-        set_env_vars(config)?;
-        create_docker_network("arch-network")?;
+        let mut server_started_successfully = true; // Track server start success
+        if network_type == "development" {
+            set_env_vars(config)?;
+            create_docker_network("arch-network")?;
 
-        let bitcoin_config: ServiceConfig = config
-            .get("bitcoin")
-            .context("Failed to get Bitcoin configuration")?;
-        start_or_create_services("Bitcoin regtest network", &bitcoin_config)?;
+            let bitcoin_config: ServiceConfig = config
+                .get("bitcoin")
+                .context("Failed to get Bitcoin configuration")?;
+            if let Err(e) = start_or_create_services("Bitcoin regtest network", &bitcoin_config) {
+                println!("  ⚠ Warning: {}", e);
+                server_started_successfully = false; // Mark as failed
+            }
 
-        let arch_config: ServiceConfig = config
-            .get("arch")
-            .context("Failed to get Arch Network configuration")?;
-        start_or_create_services("Arch Network nodes", &arch_config)?;
-    } else {
-        println!(
-            "  {} Using existing network configuration for: {}",
-            "ℹ".bold().blue(),
-            network_type.yellow()
-        );
-    }
+            let arch_config: ServiceConfig = config
+                .get("arch")
+                .context("Failed to get Arch Network configuration")?;
+            if let Err(e) = start_or_create_services("Arch Network nodes", &arch_config) {
+                println!("  ⚠ Warning: {}", e);
+                server_started_successfully = false; // Mark as failed
+            }
+        } else {
+            println!(
+                "  {} Using existing network configuration for: {}",
+                "ℹ".bold().blue(),
+                network_type.yellow()
+            );
+        }
 
-    println!("  {} Development server started successfully!", "✓".bold().green());
+        if server_started_successfully {
+            println!("  {} Development server started successfully!", "✓".bold().green());
+        } else {
+            println!("  ⚠ Development server encountered issues during startup.",);
+        }
 
-    Ok(())
+        Ok(())
 }
 
 pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
@@ -426,7 +451,6 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
 
     // Check if wallet_manager.client is connected
     let connected = wallet_manager.client.get_blockchain_info()?;
-    println!("  {} Connected: {:?}", "ℹ".bold().blue(), connected);
 
     let balance = wallet_manager.client.get_balance(None, None)?;
 
@@ -665,6 +689,9 @@ pub async fn clean() -> Result<()> {
 
     // Remove src/app directory
     fs::remove_dir_all("src/app")?;
+
+    // Remove arch-data directory
+    fs::remove_dir_all("arch-data")?;
 
     println!("  {} Project cleaned successfully!", "✓".bold().green());
     Ok(())
@@ -1038,12 +1065,12 @@ async fn deploy_program_with_tx_info(
     tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>
 ) -> Result<()> {
     if let Some(info) = tx_info {
-        let _ = deploy_program(
+        deploy_program(
             program_keypair,
             program_pubkey,
             &info.info.txid.to_string(),
             0
-        ).await;
+        ).await?;
         println!("  {} Program deployed successfully", "✓".bold().green());
         Ok(())
     } else {
@@ -1060,6 +1087,7 @@ async fn deploy_program(
     vout: u32
 ) -> Result<(), anyhow::Error> {
     println!("  {} Deploying program...", "→".bold().blue());
+    // println!("  {} Program ID: {}", "ℹ".bold().blue(), program_pubkey.to_string().yellow());
 
     // Check if the program account already exists
     // let account_info = read_account_info_async(NODE1_ADDRESS.to_string(), *program_pubkey).await;
@@ -1093,7 +1121,8 @@ async fn deploy_program(
     let elf = fs
         ::read("src/app/program/target/sbf-solana-solana/release/arch_network_app.so")
         .expect("elf path should be available");
-    assert!(read_account_info(NODE1_ADDRESS, *program_pubkey).unwrap().data == elf);
+    assert!(read_account_info_async(NODE1_ADDRESS.to_string(), *program_pubkey).await.unwrap().data == elf);
+    println!("Program account created successfully");
 
     // 4. Make program executable
     println!("Making program executable");
@@ -1114,7 +1143,7 @@ async fn deploy_program(
         NODE1_ADDRESS.to_string(),
         txid.clone()
     ).await.expect("get processed transaction should not fail");
-    println!("processed_tx {:?}", processed_tx);
+    // println!("processed_tx {:?}", processed_tx);
     println!("Program made executable successfully");
 
     assert!(
@@ -1123,6 +1152,18 @@ async fn deploy_program(
             *program_pubkey
         ).await.unwrap().is_executable
     );
+
+    let program_id_hex = hex::encode(program_pubkey.serialize());
+    println!(
+        "  {} Program deployed successfully with ID: {}",
+        "✓".bold().green(),
+        program_id_hex.yellow()
+    );
+    println!(
+        "  {} Use this program ID in your frontend application:",
+        "ℹ".bold().blue()
+    );
+    println!("    {}", program_id_hex.bold());
 
     println!(
         "  {} Program deployed with transaction ID: {} and vout: {}",
@@ -1203,6 +1244,148 @@ pub async fn start_app() -> Result<()> {
 
     // Wait for the Vite process to finish (i.e., until the user interrupts it)
     vite_dev.wait().await?;
+
+    Ok(())
+}
+
+pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result<()> {
+    println!("{}", "Creating account for dApp...".bold().green());
+
+    // Get caller key
+    let caller_key_path = CALLER_FILE_PATH.to_string();
+    let (caller_keypair, caller_pubkey) = with_secret_key_file(&caller_key_path)
+        .context("Failed to get caller key pair")?;
+
+    // Check if the account already exists
+    let account_info = read_account_info_async(NODE1_ADDRESS.to_string(), caller_pubkey).await;
+    if account_info.is_ok() {
+        println!("  {} Account already exists", "ℹ".bold().blue());
+        println!("  {} Account public key: {:?}", "ℹ".bold().blue(), hex::encode(caller_pubkey.serialize()));
+        // Print account info
+        println!("  {} Account info: {:?}", "ℹ".bold().blue(), account_info);
+
+        return Ok(());
+    }
+
+    // Get account address
+    let account_address = generate_account_address(caller_pubkey).await?;
+
+    // Set up Bitcoin RPC client
+    let wallet_manager = WalletManager::new(config)?;
+
+    // Prompt user to send funds
+    println!("{}", "Please send funds to the following address:".bold());
+    println!("  {} Bitcoin address: {}", "→".bold().blue(), account_address.yellow());
+    println!("  {} Minimum required: {} satoshis", "ℹ".bold().blue(), "3000".yellow());
+    println!("  {} Waiting for funds...", "⏳".bold().blue());
+
+    // Wait for funds (you may need to implement this function)
+    // wait_for_funds(&wallet_manager.client, &account_address, config).await?;
+
+    // sleep 5 seconds
+    // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    create_arch_account(&caller_keypair, &caller_pubkey, &account_address, &wallet_manager, config).await?;
+
+    // Determine the program ID to transfer ownership to
+    let program_id = if let Some(hex_program_id) = &args.program_id {
+        if hex_program_id.is_empty() {
+            println!("  {} No program ID provided. Using system program.", "ℹ".bold().blue());
+            Pubkey::system_program()
+        } else {
+            // Convert hex string to bytes
+            let program_id_bytes = hex::decode(hex_program_id)
+                .context("Failed to decode program ID from hex")?;
+
+            // Create Pubkey from bytes
+            Pubkey::from_slice(&program_id_bytes)
+        }
+    } else {
+        println!("  {} No program ID provided. Using system program.", "ℹ".bold().blue());
+        Pubkey::system_program()
+    };
+
+    println!("  {} Program ID: {}", "ℹ".bold().blue(), program_id.to_string().yellow());
+
+    // Transfer ownership to the program
+    transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id).await?;
+
+    println!("{}", "Account created and ownership transferred successfully!".bold().green());
+    Ok(())
+}
+
+async fn generate_account_address(caller_pubkey: Pubkey) -> Result<String> {    // Get program account address from network
+    let account_address = get_account_address_async(caller_pubkey)
+        .await
+        .context("Failed to get account address")?;
+    // println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
+
+    Ok(account_address)
+}
+
+
+async fn wait_for_funds(client: &Client, address: &str, config: &Config) -> Result<()> {
+    // Check if wallet_manager.client is connected
+    let connected = client.get_blockchain_info()?;
+    println!("  {} Connected: {:?}", "ℹ".bold().blue(), connected);
+
+    let tx_info = fund_address(client, address, config).await?;
+
+    if let Some(info) = tx_info {
+        println!("  {} Transaction confirmed with {} confirmations", "✓".bold().green(), info.info.confirmations.to_string().yellow());
+    }
+
+    Ok(())
+}
+
+async fn create_arch_account(caller_keypair: &Keypair, caller_pubkey: &Pubkey, account_address: &str, wallet_manager: &WalletManager, config: &Config) -> Result<()> {
+
+    let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
+
+    // Output the bitcoin transaction info
+    println!("  {} Transaction info: {:?}", "ℹ".bold().blue(), tx_info);
+
+    if let Some(info) = tx_info {
+
+        let (txid, _) = sign_and_send_instruction_async(
+            SystemInstruction::new_create_account_instruction(
+                hex::decode(&info.info.txid.to_string()).unwrap().try_into().unwrap(),
+                0,
+                *caller_pubkey
+            ),
+            vec![*caller_keypair],
+        )
+        .await.expect("signing and sending a transaction should not fail");
+
+        println!("  {} Account created with transaction ID: {}", "✓".bold().green(), txid.yellow());
+        Ok(())
+    } else {
+        println!("  {} Warning: No transaction info available for deployment", "⚠".bold().yellow());
+        // You might want to implement an alternative deployment method for non-REGTEST networks
+        Ok(())
+    }
+}
+
+async fn transfer_account_ownership(caller_keypair: &Keypair, account_pubkey: &Pubkey, program_pubkey: &Pubkey) -> Result<()> {
+
+    let mut instruction_data = vec![3]; // Transfer instruction
+    instruction_data.extend(program_pubkey.serialize());
+
+    println!("  {} Account public key: {:?}", "ℹ".bold().blue(), hex::encode(account_pubkey.serialize()));
+
+    let (_txid, _) = sign_and_send_instruction_async(
+        Instruction {
+            program_id: Pubkey::system_program(),
+            accounts: vec![AccountMeta {
+                pubkey: *account_pubkey,
+                is_signer: true,
+                is_writable: true,
+            }],
+            data: instruction_data,
+        },
+        vec![*caller_keypair],
+    )
+    .await.expect("signing and sending a transaction should not fail");
 
     Ok(())
 }
