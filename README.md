@@ -24,6 +24,8 @@ These tools are essential for running the development environment and building A
 - Distributed Key Generation (DKG) process initiation
 - Send coins functionality for testing
 - Frontend application management and launching
+- Account creation and management
+- Configuration viewing and editing
 
 ## Installation
 
@@ -97,16 +99,16 @@ arch-cli init
 
 This command sets up a new Arch Network project with the necessary folder structure, boilerplate code, and Docker configurations.
 
-### Start the development server
+### Manage the development server
 
 ```sh
-arch-cli start-server
+arch-cli server start
+arch-cli server stop
+arch-cli server status
+arch-cli server logs [<service>]
 ```
 
-This command starts the development environment by:
-1. Setting up a Bitcoin regtest network using Docker
-2. Starting the Arch Network nodes
-3. Creating and loading a Bitcoin wallet for testing
+These commands start, stop, check the status of, and view logs for the development environment, including the Bitcoin regtest network and Arch Network nodes.
 
 ### Deploy a program
 
@@ -114,23 +116,12 @@ This command starts the development environment by:
 arch-cli deploy [--directory <path>] [--program-key <path>]
 ```
 
-Compiles and deploys the specified program to the Arch Network. In regtest mode, it automatically:
-- Ensures the Bitcoin wallet has funds
-- Sends the required transaction
-- Confirms the transaction by generating a new block
-
-### Stop the development server
-
-```sh
-arch-cli stop-server
-```
-
-Gracefully shuts down the development server and Docker containers.
+Compiles and deploys the specified program to the Arch Network.
 
 ### Clean up the environment
 
 ```sh
-arch-cli clean
+arch-cli project clean
 ```
 
 Removes generated files and Docker volumes for a fresh start.
@@ -138,7 +129,7 @@ Removes generated files and Docker volumes for a fresh start.
 ### Start Distributed Key Generation (DKG) process
 
 ```sh
-arch-cli start-dkg
+arch-cli dkg start
 ```
 
 Initiates the Distributed Key Generation process on the Arch Network.
@@ -146,24 +137,36 @@ Initiates the Distributed Key Generation process on the Arch Network.
 ### Send coins (for testing)
 
 ```sh
-arch-cli send-coins --address <address> --amount <amount>
+arch-cli bitcoin send-coins --address <address> --amount <amount>
 ```
 
 Sends the specified amount of coins to the given address on the Bitcoin Regtest network.
 
-### Start the frontend application
+### Manage the frontend application
 
 ```sh
-arch-cli start-app
+arch-cli frontend start
 ```
 
-This command prepares and starts the frontend application:
-1. Copies the `.env.example` file to `.env` in the frontend directory
-2. Installs all npm packages in the frontend directory
-3. Builds and starts the Vite development server
-4. Opens the application in the user's default web browser
+Prepares and starts the frontend application, opening it in the default browser.
 
-The server will continue running until stopped with Ctrl+C.
+### Manage accounts
+
+```sh
+arch-cli account create [--program-id <program_id>]
+```
+
+Creates an account for the dApp, prompts for funding, and transfers ownership to the specified program.
+
+### Manage configuration
+
+```sh
+arch-cli config view
+arch-cli config edit
+arch-cli config reset
+```
+
+These commands allow you to view, edit, and reset the configuration file.
 
 ## Getting Started with the Demo App
 
@@ -173,35 +176,33 @@ To quickly set up and run the demo application, follow these steps:
    ```
    arch-cli init
    ```
-   This command sets up the basic project structure, creating necessary directories and files for your Arch Network application.
 
 2. Start the development server:
    ```
-   arch-cli start-server
+   arch-cli server start
    ```
-   This starts the local development environment, including a Bitcoin regtest network and Arch Network nodes. It sets up the necessary blockchain infrastructure for your application.
 
 3. Start the Distributed Key Generation (DKG) process:
    ```
-   arch-cli start-dkg
+   arch-cli dkg start
    ```
-   This initiates the DKG process on the Arch Network, which is crucial for setting up the decentralized key management system used by your application.
 
 4. Deploy your application:
    ```
    arch-cli deploy
    ```
-   This command compiles your Arch Network program and deploys it to the local Arch Network. It handles the necessary transactions and confirmations on the regtest network.
 
-5. Start the frontend application:
+5. Create an account for your dApp:
    ```
-   arch-cli start-app
+   arch-cli account create
    ```
-   This prepares and launches the frontend of your application. It copies the environment file, installs dependencies, starts the development server, and opens the application in your default web browser.
 
-By following these steps in order, you'll have a fully functional demo Arch Network application running locally. This setup allows you to interact with your application, test its functionality, and make changes as needed during development.
+6. Start the frontend application:
+   ```
+   arch-cli frontend start
+   ```
 
-Remember to keep the terminal windows for steps 2 and 5 open, as they run ongoing processes (the blockchain environment and the frontend server, respectively). You can stop these processes using Ctrl+C when you're done working on your application.
+By following these steps in order, you'll have a fully functional demo Arch Network application running locally.
 
 ## Project Structure
 
@@ -249,8 +250,8 @@ To set up the development environment:
 
 ## Troubleshooting
 
-- If you encounter issues with Docker networks, try running `arch-cli clean` to remove existing volumes and networks.
-- Ensure your Docker daemon is running before using `arch-cli start-server`.
+- If you encounter issues with Docker networks, try running `arch-cli project clean` to remove existing volumes and networks.
+- Ensure your Docker daemon is running before using `arch-cli server start`.
 - Check the `config.toml` file for correct configuration of RPC endpoints and credentials.
 - If you encounter issues with the DKG process, ensure that all nodes are properly configured and connected.
 - For frontend issues, make sure all npm dependencies are correctly installed and that the `.env` file is properly set up.

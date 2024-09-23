@@ -46,11 +46,16 @@ pub struct ServiceConfig {
     name = "arch-cli",
     about = "Arch Network CLI - A tool for managing Arch Network applications",
     long_about = None,
-    version
+    version,
+    after_help = "Tip: Use 'arch-cli help <command>' for more information about a specific command."
 )]
 pub struct Cli {
     #[clap(subcommand)]
     pub command: Commands,
+
+    /// Enable verbose output
+    #[clap(short, long, global = true)]
+    pub verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -59,37 +64,113 @@ pub enum Commands {
     #[clap(long_about = "Creates the project structure and boilerplate files for a new Arch Network application.")]
     Init,
 
-    /// Start the development server
-    #[clap(long_about = "Starts the development environment, including Bitcoin regtest network and Arch Network nodes.")]
-    StartServer,
+    /// Manage the development server
+    #[clap(subcommand)]
+    Server(ServerCommands),
 
     /// Deploy your Arch Network app
     #[clap(long_about = "Builds and deploys your Arch Network application to the specified network.")]
     Deploy(DeployArgs),
 
+    /// Manage the project
+    #[clap(subcommand)]
+    Project(ProjectCommands),
+
+    /// Manage the Distributed Key Generation (DKG) process
+    #[clap(subcommand)]
+    Dkg(DkgCommands),
+
+    /// Manage Bitcoin operations
+    #[clap(subcommand)]
+    Bitcoin(BitcoinCommands),
+
+    /// Manage the frontend application
+    #[clap(subcommand)]
+    Frontend(FrontendCommands),
+
+    /// Manage accounts
+    #[clap(subcommand)]
+    Account(AccountCommands),
+
+    /// Manage configuration
+    #[clap(subcommand)]
+    Config(ConfigCommands),
+
+    /// Alias for 'server start'
+    #[clap(alias = "up", hide = true)]
+    Start,
+
+    /// Alias for 'server stop'
+    #[clap(alias = "down", hide = true)]
+    Stop,
+}
+
+#[derive(Subcommand)]
+pub enum ServerCommands {
+    /// Start the development server
+    #[clap(long_about = "Starts the development environment, including Bitcoin regtest network and Arch Network nodes.")]
+    Start,
+
     /// Stop the development server
     #[clap(long_about = "Stops all related Docker containers and services for the development environment.")]
-    StopServer,
+    Stop,
 
+    /// Check the status of the development server
+    #[clap(long_about = "Displays the current status of all services in the development environment.")]
+    Status,
+
+    /// View logs for development server components
+    #[clap(long_about = "Displays logs for specified services in the development environment.")]
+    Logs {
+        /// Specify which service to show logs for (e.g., 'bitcoin', 'arch')
+        #[clap(default_value = "all")]
+        service: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProjectCommands {
     /// Clean the project
     #[clap(long_about = "Removes the src/app directory, cleaning the project structure.")]
     Clean,
+}
 
+#[derive(Subcommand)]
+pub enum DkgCommands {
     /// Start the Distributed Key Generation (DKG) process
     #[clap(long_about = "Initiates the Distributed Key Generation process on the Arch Network.")]
-    StartDkg,
+    Start,
+}
 
+#[derive(Subcommand)]
+pub enum BitcoinCommands {
     /// Send coins to an address on Regtest
     #[clap(long_about = "Sends coins to a specified address on the Bitcoin Regtest network.")]
     SendCoins(SendCoinsArgs),
+}
 
+#[derive(Subcommand)]
+pub enum FrontendCommands {
     /// Start the frontend application
     #[clap(long_about = "Prepares and starts the frontend application, opening it in the default browser.")]
-    StartApp,
+    Start,
+}
 
+#[derive(Subcommand)]
+pub enum AccountCommands {
     /// Create an account for the dApp
     #[clap(long_about = "Creates an account for the dApp, prompts for funding, and transfers ownership to the program")]
-    CreateAccount(CreateAccountArgs),
+    Create(CreateAccountArgs),
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCommands {
+    /// View current configuration
+    View,
+    /// Edit configuration
+    Edit,
+    /// Reset configuration to default
+    Reset,
 }
 
 #[derive(Args)]
@@ -256,12 +337,15 @@ fn check_dependencies() -> Result<()> {
                 let version_str = version.split('v').nth(1).unwrap_or("").trim();
                 let major_version = version_str.split('.').next().unwrap_or("0").parse::<u32>().unwrap_or(0);
                 if major_version < 19 {
-                    return Err(anyhow!(error_message));
+                    println!(" {}", "✗".bold().red());
+                    println!("{}", error_message);
+                    return Err(anyhow::Error::msg(error_message));
                 }
             }
         } else {
             println!(" {}", "✗".bold().red());
-            return Err(anyhow!(error_message));
+            println!("{}", error_message);
+            return Err(anyhow::Error::msg(error_message));
         }
     }
 
@@ -330,6 +414,7 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
                     service_name.yellow(),
                     error_message.red()
                 );
+                return Err(anyhow!("Failed to start some {} containers", service_name));
             } else {
                 println!(
                     "  {} {} containers started successfully.",
@@ -352,12 +437,26 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
 
         if !up_output.status.success() {
             let error_message = String::from_utf8_lossy(&up_output.stderr);
-            println!(
-                "  {} Warning: Failed to create and start {} containers: {}",
-                "⚠".bold().yellow(),
-                service_name.yellow(),
-                error_message.red()
-            );
+            if error_message.contains("invalid reference format") {
+                println!(
+                    "  {} Error: Invalid reference format in Docker image name. Please check your Docker image names and try again.",
+                    "✗".bold().red()
+                );
+            } else if let Some(variable) = error_message.split("variable is not set: ").nth(1) {
+                println!(
+                    "  {} Error: Environment variable '{}' is not set. Please ensure all required environment variables are set and try again.",
+                    "✗".bold().red(),
+                    variable.trim()
+                );
+            } else {
+                println!(
+                    "  {} Warning: Failed to create and start {} containers: {}",
+                    "⚠".bold().yellow(),
+                    service_name.yellow(),
+                    error_message.red()
+                );
+            }
+            return Err(anyhow!("Failed to create and start {} containers", service_name));
         } else {
             println!(
                 "  {} {} containers created and started successfully.",
@@ -370,59 +469,50 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
     Ok(())
 }
 
-pub async fn start_server(config: &Config) -> Result<()> {
+pub async fn server_start(config: &Config) -> Result<()> {
     println!("{}", "Starting development server...".bold().green());
 
     set_env_vars(config)?;
-
-    // Print environment variables to verify they're set correctly
-    println!("Environment variables:");
-    println!("BITCOIN_RPC_USER: {}", env::var("BITCOIN_RPC_USER").unwrap_or_else(|_| "Not set".to_string()));
-    println!("BITCOIN_RPC_PORT: {}", env::var("BITCOIN_RPC_PORT").unwrap_or_else(|_| "Not set".to_string()));
-    println!("ORD_PORT: {}", env::var("ORD_PORT").unwrap_or_else(|_| "Not set".to_string()));
-    println!("ELECTRS_REST_API_PORT: {}", env::var("ELECTRS_REST_API_PORT").unwrap_or_else(|_| "Not set".to_string()));
-    println!("ELECTRS_ELECTRUM_PORT: {}", env::var("ELECTRS_ELECTRUM_PORT").unwrap_or_else(|_| "Not set".to_string()));
-    println!("BTC_RPC_EXPLORER_PORT: {}", env::var("BTC_RPC_EXPLORER_PORT").unwrap_or_else(|_| "Not set".to_string()));
 
     let network_type = config
         .get_string("network.type")
         .context("Failed to get network type from configuration")?;
     
-        let mut server_started_successfully = true; // Track server start success
-        if network_type == "development" {
-            set_env_vars(config)?;
-            create_docker_network("arch-network")?;
+    let mut server_started_successfully = true;
+    if network_type == "development" {
+        // set_env_vars(config)?;
+        create_docker_network("arch-network")?;
 
-            let bitcoin_config: ServiceConfig = config
-                .get("bitcoin")
-                .context("Failed to get Bitcoin configuration")?;
-            if let Err(e) = start_or_create_services("Bitcoin regtest network", &bitcoin_config) {
-                println!("  ⚠ Warning: {}", e);
-                server_started_successfully = false; // Mark as failed
-            }
-
-            let arch_config: ServiceConfig = config
-                .get("arch")
-                .context("Failed to get Arch Network configuration")?;
-            if let Err(e) = start_or_create_services("Arch Network nodes", &arch_config) {
-                println!("  ⚠ Warning: {}", e);
-                server_started_successfully = false; // Mark as failed
-            }
-        } else {
-            println!(
-                "  {} Using existing network configuration for: {}",
-                "ℹ".bold().blue(),
-                network_type.yellow()
-            );
+        let bitcoin_config: ServiceConfig = config
+            .get("bitcoin")
+            .context("Failed to get Bitcoin configuration")?;
+        if let Err(e) = start_or_create_services("Bitcoin regtest network", &bitcoin_config) {
+            println!("  ⚠ Warning: {}", e);
+            server_started_successfully = false;
         }
 
-        if server_started_successfully {
-            println!("  {} Development server started successfully!", "✓".bold().green());
-        } else {
-            println!("  ⚠ Development server encountered issues during startup.",);
+        let arch_config: ServiceConfig = config
+            .get("arch")
+            .context("Failed to get Arch Network configuration")?;
+        if let Err(e) = start_or_create_services("Arch Network nodes", &arch_config) {
+            println!("  ⚠ Warning: {}", e);
+            server_started_successfully = false;
         }
+    } else {
+        println!(
+            "  {} Using existing network configuration for: {}",
+            "ℹ".bold().blue(),
+            network_type.yellow()
+        );
+    }
 
-        Ok(())
+    if server_started_successfully {
+        println!("  {} Development server started successfully!", "✓".bold().green());
+    } else {
+        println!("  ⚠ Development server encountered issues during startup.");
+    }
+
+    Ok(())
 }
 
 pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
@@ -476,14 +566,13 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub async fn stop_server() -> Result<()> {
+pub async fn server_stop() -> Result<()> {
     println!("{}", "Stopping development server...".bold().yellow());
 
-    // Stop all containers related to our development environment
     stop_all_related_containers()?;
 
     println!("{}", "Development server stopped successfully!".bold().green());
-    println!("{}", "You can restart the server later using the 'start-server' command.".italic());
+    println!("{}", "You can restart the server later using the 'server start' command.".italic());
     Ok(())
 }
 
@@ -590,6 +679,104 @@ fn stop_all_related_containers() -> Result<()> {
     Ok(())
 }
 
+pub async fn server_status(config: &Config) -> Result<()> {
+    println!("{}", "Checking development server status...".bold().blue());
+
+    let network_type = config
+        .get_string("network.type")
+        .context("Failed to get network type from configuration")?;
+
+    if network_type == "development" {
+        let bitcoin_config: ServiceConfig = config
+            .get("bitcoin")
+            .context("Failed to get Bitcoin configuration")?;
+        check_service_status("Bitcoin regtest network", &bitcoin_config)?;
+
+        let arch_config: ServiceConfig = config
+            .get("arch")
+            .context("Failed to get Arch Network configuration")?;
+        check_service_status("Arch Network nodes", &arch_config)?;
+    } else {
+        println!(
+            "  {} Using existing network configuration for: {}",
+            "ℹ".bold().blue(),
+            network_type.yellow()
+        );
+    }
+
+    Ok(())
+}
+
+fn fetch_service_logs(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
+    println!("  {} Fetching logs for {}...", "→".bold().blue(), service_name.yellow());
+
+    for container in &service_config.services {
+        println!("    Logs for {}:", container.bold());
+        let log_output = Command::new("docker")
+            .args(&["logs", "--tail", "50", container])
+            .output()
+            .context(format!("Failed to fetch logs for container {}", container))?;
+
+        println!("{}", String::from_utf8_lossy(&log_output.stdout));
+    }
+
+    Ok(())
+}
+
+fn check_service_status(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
+    println!("  {} Checking {} status...", "→".bold().blue(), service_name.yellow());
+
+    for container in &service_config.services {
+        let status_output = Command::new("docker")
+            .args(&["ps", "-a", "--filter", &format!("name={}", container), "--format", "{{.Status}}"])
+            .output()
+            .context(format!("Failed to check status of container {}", container))?;
+
+        let status = String::from_utf8_lossy(&status_output.stdout).trim().to_string();
+
+        if status.starts_with("Up") {
+            println!("    {} {} is running", "✓".bold().green(), container);
+        } else if status.is_empty() {
+            println!("    {} {} is not created", "✗".bold().red(), container);
+        } else {
+            println!("    {} {} is not running (status: {})", "✗".bold().red(), container, status);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn server_logs(service: &str, config: &Config) -> Result<()> {
+    println!("{}", format!("Fetching logs for {}...", service).bold().blue());
+
+    let network_type = config
+        .get_string("network.type")
+        .context("Failed to get network type from configuration")?;
+
+    if network_type == "development" {
+        if service == "all" || service == "bitcoin" {
+            let bitcoin_config: ServiceConfig = config
+                .get("bitcoin")
+                .context("Failed to get Bitcoin configuration")?;
+            fetch_service_logs("Bitcoin regtest network", &bitcoin_config)?;
+        }
+
+        if service == "all" || service == "arch" {
+            let arch_config: ServiceConfig = config
+                .get("arch")
+                .context("Failed to get Arch Network configuration")?;
+            fetch_service_logs("Arch Network nodes", &arch_config)?;
+        }
+    } else {
+        println!(
+            "  {} Logs are not available for non-development networks",
+            "ℹ".bold().blue()
+        );
+    }
+
+    Ok(())
+}
+
 pub fn start_existing_containers(compose_file: &str) -> Result<()> {
     let output = Command::new("docker-compose")
         .args(&["-f", compose_file, "ps", "-q"])
@@ -687,11 +874,8 @@ pub fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()
 pub async fn clean() -> Result<()> {
     println!("{}", "Cleaning project...".bold().yellow());
 
-    // Remove src/app directory
-    fs::remove_dir_all("src/app")?;
-
-    // Remove arch-data directory
-    fs::remove_dir_all("arch-data")?;
+    fs::remove_dir_all("src/app").context("Failed to remove src/app directory")?;
+    fs::remove_dir_all("arch-data").context("Failed to remove arch-data directory")?;
 
     println!("  {} Project cleaned successfully!", "✓".bold().green());
     Ok(())
@@ -724,7 +908,7 @@ pub fn stop_bitcoin_regtest() -> Result<()> {
 }
 
 pub async fn start_dkg(config: &Config) -> Result<()> {
-    println!("{}", "Starting DKG process...".bold().green());
+    println!("{}", "Starting Distributed Key Generation (DKG) process...".bold().green());
 
     let leader_rpc = config
         .get_string("arch.leader_rpc_endpoint")
@@ -1175,7 +1359,7 @@ async fn deploy_program(
 }
 
 // Add this new async function to handle the StartApp command
-pub async fn start_app() -> Result<()> {
+pub async fn frontend_start() -> Result<()> {
     println!("{}", "Starting the frontend application...".bold().green());
 
     // Copy .env.example to .env
@@ -1245,6 +1429,39 @@ pub async fn start_app() -> Result<()> {
     // Wait for the Vite process to finish (i.e., until the user interrupts it)
     vite_dev.wait().await?;
 
+    Ok(())
+}
+
+pub async fn config_view(config: &Config) -> Result<()> {
+    println!("{}", "Current configuration:".bold().green());
+    println!("{:#?}", config);
+    Ok(())
+}
+
+pub async fn config_edit(config: &Config) -> Result<()> {
+    println!("{}", "Editing configuration...".bold().yellow());
+    // Implement config editing logic here
+    // For example, you could open the config file in the user's default text editor
+    let editor = env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
+    let status = Command::new(editor)
+        .arg("config.toml")
+        .status()
+        .context("Failed to open editor")?;
+
+    if status.success() {
+        println!("  {} Configuration updated successfully!", "✓".bold().green());
+    } else {
+        println!("  {} Failed to update configuration", "✗".bold().red());
+    }
+    Ok(())
+}
+
+pub async fn config_reset() -> Result<()> {
+    println!("{}", "Resetting configuration to default...".bold().yellow());
+    // Implement config reset logic here
+    // For example, you could copy a default config file over the existing one
+    fs::copy("config.default.toml", "config.toml").context("Failed to reset configuration")?;
+    println!("  {} Configuration reset to default", "✓".bold().green());
     Ok(())
 }
 

@@ -23,17 +23,29 @@ async fn main() -> Result<()> {
         .build()
         .context("Failed to load configuration")?;
 
+    // Set verbose mode if flag is present
+    if cli.verbose {
+        // Set up verbose logging or output here
+    }
+
     // Match on the subcommand
     match &cli.command {
         Commands::Init => init().await?,
-        Commands::StartServer => start_server(&config).await?,
-        Commands::Deploy(args) => deploy(&args, &config).await?,
-        Commands::StopServer => stop_server().await?,
-        Commands::Clean => clean().await?,
-        Commands::StartDkg => start_dkg(&config).await?,
-        Commands::SendCoins(args) => send_coins(&args, &config).await?,
-        Commands::StartApp => start_app().await?,
-        Commands::CreateAccount(args) => create_account(&args, &config).await?,
+        Commands::Server(ServerCommands::Start) => server_start(&config).await?,
+        Commands::Server(ServerCommands::Stop) => server_stop().await?,
+        Commands::Server(ServerCommands::Status) => server_status(&config).await?,
+        Commands::Server(ServerCommands::Logs { service }) => server_logs(service, &config).await?,
+        Commands::Deploy(args) => deploy(args, &config).await?,
+        Commands::Project(ProjectCommands::Clean) => clean().await?,
+        Commands::Dkg(DkgCommands::Start) => start_dkg(&config).await?,
+        Commands::Bitcoin(BitcoinCommands::SendCoins(args)) => send_coins(args, &config).await?,
+        Commands::Frontend(FrontendCommands::Start) => frontend_start().await?,
+        Commands::Account(AccountCommands::Create(args)) => create_account(args, &config).await?,
+        Commands::Config(ConfigCommands::View) => config_view(&config).await?,
+        Commands::Config(ConfigCommands::Edit) => config_edit(&config).await?,
+        Commands::Config(ConfigCommands::Reset) => config_reset().await?,
+        Commands::Start => server_start(&config).await?,
+        Commands::Stop => server_stop().await?,
     }
 
     Ok(())
