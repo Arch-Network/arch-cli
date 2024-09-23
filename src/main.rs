@@ -6,6 +6,7 @@ use dotenv::dotenv;
 use clap::Parser;
 use anyhow::Context;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -26,6 +27,12 @@ async fn main() -> Result<()> {
             default_path.push("config.toml");
             default_path
         });
+
+    // Check if the configuration file exists, if not copy the default template
+    if !config_path.exists() {
+        println!("Configuration file not found at {:?}. Creating a default configuration file.", config_path);
+        copy_default_config(&config_path)?;
+    }
 
     // Load configuration
     let config = Config::builder()
@@ -64,5 +71,21 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+fn copy_default_config(config_path: &PathBuf) -> Result<()> {
+    let default_config_path = PathBuf::from("config.default.toml");
+
+    if !default_config_path.exists() {
+        return Err(anyhow::anyhow!("Default configuration template not found at {:?}", default_config_path));
+    }
+
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    fs::copy(default_config_path, config_path)?;
+    println!("Default configuration file created at {:?}", config_path);
     Ok(())
 }

@@ -45,6 +45,8 @@ Before using Arch-CLI, you need to set up a `config.toml` file. By default, the 
 - **macOS**: `~/Library/Application Support/arch-cli/config.toml`
 - **Windows**: `C:\Users\<User>\AppData\Roaming\arch-cli\config.toml`
 
+If the configuration file is not found, a default configuration file will be created automatically using the `config.default.toml` template.
+
 You can also specify a custom configuration file location by setting the `ARCH_CLI_CONFIG` environment variable:
 
 ```sh
