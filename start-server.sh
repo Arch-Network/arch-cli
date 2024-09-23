@@ -15,7 +15,8 @@ DEBUG_MODE=$2
 # Constants
 PEER_ID_FILENAME="peer_id"
 BOOTNODE_DATA_DIR=".server/.arch-bootnode-data"
-LEADER_DATA_DIR=".server/.arch-data/arch-validator-data-0"
+ARCH_DATA_DIR=${ARCH_DATA_DIR:-".server/.arch-data"}
+LEADER_DATA_DIR="$ARCH_DATA_DIR/arch-validator-data-0"
 INITIAL_RPC_PORT=9001
 INITIAL_P2P_PORT=19001
 INITIAL_MONITOR_PORT=8080
@@ -53,7 +54,7 @@ do
     P2P_PORT=$((INITIAL_P2P_PORT + 10000 + i))
     RPC_PORT=$((INITIAL_RPC_PORT + 1 + i))
     MONITOR_PORT=$((INITIAL_MONITOR_PORT + i))
-    DATA_DIR=".server/.arch-data/arch-validator-data-$i"
+    DATA_DIR="$ARCH_DATA_DIR/arch-validator-data-$i"
 
     tmux new-window -t $SESSION_NAME -n "Validator-$i"
     tmux send-keys -t $SESSION_NAME "cd validator && RUST_LOG=$RUST_LOG_LEVEL cargo run -- --data-dir ../$DATA_DIR --boot-node-endpoint /ip4/127.0.0.1/tcp/$INITIAL_P2P_PORT/p2p/$BOOTNODE_PEERID --network-mode localnet --rpc-bind-ip 127.0.0.1 --rpc-bind-port $RPC_PORT --p2p-bind-port $P2P_PORT --monitor-bind-ip 127.0.0.1 --monitor-bind-port $MONITOR_PORT --bitcoin-rpc-endpoint bitcoin-node.dev.aws.archnetwork.xyz --bitcoin-rpc-port 18443 --bitcoin-rpc-username bitcoin --bitcoin-rpc-password 428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618" C-m
