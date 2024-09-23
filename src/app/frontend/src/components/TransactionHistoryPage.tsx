@@ -4,6 +4,7 @@ import { Buffer } from 'buffer';
 import { motion } from 'framer-motion';
 import SearchBar from './SearchBar';
 import BlockList from './BlockList';
+import ErrorMessage from './ErrorMessage';
 
 const client = new ArchRpcClient(import.meta.env.VITE_RPC_URL as string);
 
@@ -71,7 +72,7 @@ const TransactionHistoryPage: React.FC = () => {
     </div>
   );
   
-  if (error) return <div className="text-center py-4 text-arch-orange">{error}</div>;
+  if (error) return <ErrorMessage />;
 
   return (
     <div className="p-4 max-w-7xl mx-auto text-arch-white">
