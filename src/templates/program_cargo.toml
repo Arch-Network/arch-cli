@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# TODO: use git path of the arch-program in future
+# arch_program = { git = "https://github.com/Arch-Network/arch-network.git"}
 arch_program = { path = "../../../program" }
 borsh = "0.9"
 

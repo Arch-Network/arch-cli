@@ -113,6 +113,7 @@ pub async fn init() -> Result<()> {
     check_dependencies()?;
 
     // Navigate to the program folder and run `cargo build-sbf`
+    // TODO: do we really need this?
     println!("{}", "Building Arch Network program...".bold().blue());
     ShellCommand::new("cargo")
         .current_dir("program")
@@ -145,18 +146,18 @@ pub async fn init() -> Result<()> {
     }
 
     // Check if program and frontend directories exist
-    let program_dir = Path::new("src/app/program");
+    let program_dir = Path::new("src/app/program/src");
     let frontend_dir = Path::new("src/app/frontend");
 
     if !program_dir.exists() {
         println!("  {} Creating default program directory", "→".bold().blue());
         fs::create_dir_all(program_dir)?;
         fs::write(
-            program_dir.join("src/lib.rs"),
+            program_dir.join("lib.rs"),
             include_str!("templates/program_lib.rs")
         )?;
         fs::write(
-            program_dir.join("Cargo.toml"),
+            program_dir.parent().expect("program folder should exist").join("Cargo.toml"),
             include_str!("templates/program_cargo.toml")
         )?;
     } else {
