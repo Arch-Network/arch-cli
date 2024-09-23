@@ -14,6 +14,7 @@ use std::fs;
 use std::io;
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 use tokio;
 use anyhow::{ Context, Result };
 use std::process::Command as ShellCommand;
@@ -207,6 +208,15 @@ pub async fn init() -> Result<()> {
     // Check dependencies
     check_dependencies()?;
 
+    // Get the configuration file path
+    let config_path = get_config_path()?;
+
+    // Create the arch-data directory
+    let config_dir = config_path.parent().unwrap();
+    let arch_data_dir = config_dir.join("arch-data");
+    fs::create_dir_all(&arch_data_dir)?;
+    println!("  {} Created arch-data directory at {:?}", "✓".bold().green(), arch_data_dir);
+
     // Navigate to the program folder and run `cargo build-sbf`
     println!("{}", "Building Arch Network program...".bold().blue());
     ShellCommand::new("cargo")
@@ -226,8 +236,8 @@ pub async fn init() -> Result<()> {
     // Create boilerplate files
     println!("{}", "Creating boilerplate files...".bold().blue());
     let files = [
-        ("src/app/backend/index.ts", include_str!("templates/backend_index.ts")),
-        ("src/app/backend/package.json", include_str!("templates/backend_package.json")),
+        ("src/app/backend/index.ts", include_str!("../templates/backend_index.ts")),
+        ("src/app/backend/package.json", include_str!("../templates/backend_package.json")),
     ];
 
     for (file_path, content) in files.iter() {
@@ -245,15 +255,17 @@ pub async fn init() -> Result<()> {
 
     if !program_dir.exists() {
         println!("  {} Creating default program directory", "→".bold().blue());
-        fs::create_dir_all(program_dir)?;
+        fs::create_dir_all(program_dir.join("src"))?;
         fs::write(
             program_dir.join("src/lib.rs"),
-            include_str!("templates/program_lib.rs")
+            include_str!("../templates/program_lib.rs")
         )?;
         fs::write(
             program_dir.join("Cargo.toml"),
-            include_str!("templates/program_cargo.toml")
+            include_str!("../templates/program_cargo.toml")
         )?;
+
+        println!("  {} Default program files created", "✓".bold().green());
     } else {
         println!("  {} Existing program directory found, preserving it", "ℹ".bold().blue());
     }
@@ -263,15 +275,15 @@ pub async fn init() -> Result<()> {
         fs::create_dir_all(frontend_dir)?;
         fs::write(
             frontend_dir.join("index.html"),
-            include_str!("templates/frontend_index.html")
+            include_str!("../templates/frontend_index.html")
         )?;
         fs::write(
             frontend_dir.join("index.js"),
-            include_str!("templates/frontend_index.js")
+            include_str!("../templates/frontend_index.js")
         )?;
         fs::write(
             frontend_dir.join("package.json"),
-            include_str!("templates/frontend_package.json")
+            include_str!("../templates/frontend_package.json")
         )?;
     } else {
         println!("  {} Existing frontend directory found, preserving it", "ℹ".bold().blue());
@@ -279,6 +291,18 @@ pub async fn init() -> Result<()> {
 
     println!("  {} New Arch Network app initialized successfully!", "✓".bold().green());
     Ok(())
+}
+
+fn get_config_path() -> Result<PathBuf> {
+    let config_path = env::var("ARCH_CLI_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let mut default_path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+            default_path.push("arch-cli");
+            default_path.push("config.toml");
+            default_path
+        });
+    Ok(config_path)
 }
 
 fn get_docker_compose_command() -> (&'static str, &'static [&'static str]) {
@@ -470,47 +494,30 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
 }
 
 pub async fn server_start(config: &Config) -> Result<()> {
-    println!("{}", "Starting development server...".bold().green());
+    println!("{}", "Starting the development server...".bold().green());
 
+    let arch_data_dir = get_arch_data_dir(config)?;
+
+    // Set the ARCH_DATA_DIR environment variable
+    env::set_var("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap());
+
+    // Set other required environment variables
     set_env_vars(config)?;
 
-    let network_type = config
-        .get_string("network.type")
-        .context("Failed to get network type from configuration")?;
-    
-    let mut server_started_successfully = true;
-    if network_type == "development" {
-        // set_env_vars(config)?;
-        create_docker_network("arch-network")?;
+    // Start Bitcoin services
+    start_docker_service("Bitcoin", "bitcoin", &config.get_string("bitcoin.docker_compose_file")?)?;
 
-        let bitcoin_config: ServiceConfig = config
-            .get("bitcoin")
-            .context("Failed to get Bitcoin configuration")?;
-        if let Err(e) = start_or_create_services("Bitcoin regtest network", &bitcoin_config) {
-            println!("  ⚠ Warning: {}", e);
-            server_started_successfully = false;
-        }
+    // Start Arch Network services
+    let arch_compose_file = config.get_string("arch.docker_compose_file")?;
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
 
-        let arch_config: ServiceConfig = config
-            .get("arch")
-            .context("Failed to get Arch Network configuration")?;
-        if let Err(e) = start_or_create_services("Arch Network nodes", &arch_config) {
-            println!("  ⚠ Warning: {}", e);
-            server_started_successfully = false;
-        }
-    } else {
-        println!(
-            "  {} Using existing network configuration for: {}",
-            "ℹ".bold().blue(),
-            network_type.yellow()
-        );
-    }
+    Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(&["-f", &arch_compose_file, "up", "-d"])
+        .env("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap())
+        .status()?;
 
-    if server_started_successfully {
-        println!("  {} Development server started successfully!", "✓".bold().green());
-    } else {
-        println!("  ⚠ Development server encountered issues during startup.");
-    }
+    println!("  {} Development server started successfully.", "✓".bold().green());
 
     Ok(())
 }
@@ -872,12 +879,24 @@ pub fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()
 }
 
 pub async fn clean() -> Result<()> {
-    println!("{}", "Cleaning project...".bold().yellow());
-
-    fs::remove_dir_all("src/app").context("Failed to remove src/app directory")?;
-    fs::remove_dir_all("arch-data").context("Failed to remove arch-data directory")?;
-
-    println!("  {} Project cleaned successfully!", "✓".bold().green());
+    println!("{}", "Cleaning up the project...".bold().yellow());
+    let config = load_config()?;
+    let arch_data_dir = get_arch_data_dir(&config)?;
+    if arch_data_dir.exists() {
+        fs::remove_dir_all(&arch_data_dir)?;
+        println!("  {} Removed arch-data directory", "✓".bold().green());
+    }
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+    // Stop and remove Docker containers
+    Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(&["-f", &config.get_string("bitcoin.docker_compose_file").unwrap_or_default(), "down", "-v"])
+        .status()?;
+    Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(&["-f", &config.get_string("arch.docker_compose_file").unwrap_or_default(), "down", "-v"])
+        .status()?;
+    println!("  {} Project cleaned up successfully", "✓".bold().green());
     Ok(())
 }
 
@@ -980,30 +999,37 @@ pub fn stop_arch_nodes() -> Result<()> {
 }
 
 pub fn load_config() -> Result<Config> {
-    let config_path = "config.toml";
+    let config_path = get_config_path()?;
+    let config_dir = config_path.parent().unwrap().to_str().unwrap().to_string();
 
     let mut builder = Config::builder();
 
     // Check if the config file exists
-    if Path::new(config_path).exists() {
-        builder = builder.add_source(File::with_name(config_path));
-        println!("  {} Loading configuration from {}", "→".bold().blue(), config_path.yellow());
+    if config_path.exists() {
+        builder = builder.add_source(File::with_name(config_path.to_str().unwrap()));
+        println!("  {} Loading configuration from {}", "→".bold().blue(), config_path.display().to_string().yellow());
     } else {
         println!(
             "  {} Warning: {} not found. Using default configuration.",
             "⚠".bold().yellow(),
-            config_path.yellow()
+            config_path.display().to_string().yellow()
         );
         // You might want to create a default config here
     }
 
-    // Add environment variables as a source (this will override file settings)
-    builder = builder.add_source(Environment::default());
+    builder = builder.add_source(Environment::with_prefix("ARCH_CLI"));
 
-    // Build the configuration
+    // Add config_dir to the builder
+    builder = builder.set_override("config_dir", config_dir)?;
+
     let config = builder.build().context("Failed to build configuration")?;
 
     Ok(config)
+}
+
+pub fn get_arch_data_dir(config: &Config) -> Result<PathBuf> {
+    let config_dir = config.get_string("config_dir")?;
+    Ok(PathBuf::from(config_dir).join("arch-data"))
 }
 
 pub fn check_file_exists(file_path: &str) -> Result<()> {

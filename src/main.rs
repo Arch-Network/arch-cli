@@ -18,28 +18,8 @@ async fn main() -> Result<()> {
     // Parse command-line arguments
     let cli = Cli::parse();
 
-    // Determine the configuration file path
-    let config_path = env::var("ARCH_CLI_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let mut default_path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-            default_path.push("arch-cli");
-            default_path.push("config.toml");
-            default_path
-        });
-
-    // Check if the configuration file exists, if not copy the default template
-    if !config_path.exists() {
-        println!("Configuration file not found at {:?}. Creating a default configuration file.", config_path);
-        copy_default_config(&config_path)?;
-    }
-
     // Load configuration
-    let config = Config::builder()
-        .add_source(File::from(config_path))
-        .add_source(Environment::default())
-        .build()
-        .context("Failed to load configuration")?;
+    let config = load_config()?;
 
     // Set verbose mode if flag is present
     if cli.verbose {
@@ -71,21 +51,5 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    Ok(())
-}
-
-fn copy_default_config(config_path: &PathBuf) -> Result<()> {
-    let default_config_path = PathBuf::from("config.default.toml");
-
-    if !default_config_path.exists() {
-        return Err(anyhow::anyhow!("Default configuration template not found at {:?}", default_config_path));
-    }
-
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    fs::copy(default_config_path, config_path)?;
-    println!("Default configuration file created at {:?}", config_path);
     Ok(())
 }
