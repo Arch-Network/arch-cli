@@ -1484,10 +1484,32 @@ pub async fn config_edit(config: &Config) -> Result<()> {
 
 pub async fn config_reset() -> Result<()> {
     println!("{}", "Resetting configuration to default...".bold().yellow());
-    // Implement config reset logic here
-    // For example, you could copy a default config file over the existing one
-    fs::copy("config.default.toml", "config.toml").context("Failed to reset configuration")?;
-    println!("  {} Configuration reset to default", "✓".bold().green());
+
+    let config_path = get_config_path()?;
+    let config_dir = config_path.parent().unwrap();
+
+    // Check if the config file already exists
+    if config_path.exists() {
+        println!("  {} Existing configuration found at {}", "ℹ".bold().blue(), config_path.display());
+        print!("  {} Are you sure you want to overwrite it? (y/N): ", "?".bold().yellow());
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("  {} Configuration reset cancelled", "ℹ".bold().blue());
+            return Ok(());
+        }
+    }
+
+    // Create the config directory if it doesn't exist
+    fs::create_dir_all(config_dir).context("Failed to create config directory")?;
+
+    // Copy the default config to the correct location
+    fs::copy("config.default.toml", &config_path).context("Failed to reset configuration")?;
+
+    println!("  {} Configuration reset to default at {}", "✓".bold().green(), config_path.display());
     Ok(())
 }
 
