@@ -217,6 +217,17 @@ pub async fn init() -> Result<()> {
     fs::create_dir_all(&arch_data_dir)?;
     println!("  {} Created arch-data directory at {:?}", "✓".bold().green(), arch_data_dir);
 
+    // Copy config.default.toml to the arch_data_dir
+    let default_config_path = Path::new("config.default.toml");
+    if default_config_path.exists() {
+        let dest_path = config_dir.join("config.toml");
+        fs::copy(default_config_path, &dest_path)
+            .with_context(|| format!("Failed to copy default config to {:?}", dest_path))?;
+        println!("  {} Copied default configuration to {:?}", "✓".bold().green(), dest_path);
+    } else {
+        println!("  {} Warning: config.default.toml not found", "⚠".bold().yellow());
+    }
+
     // Navigate to the program folder and run `cargo build-sbf`
     println!("{}", "Building Arch Network program...".bold().blue());
     ShellCommand::new("cargo")
@@ -526,50 +537,50 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
 
     // Build the program
-    build_program(args).context("Failed to build program")?;
-    println!("{}", "Program built successfully".bold().green());
+    println!("  {} Compiling program...", "→".bold().blue());
+    build_program(args)?;
+    println!("  {} Program compiled successfully", "✓".bold().green());
 
-    // Get program key and public key
-    let program_key_path = get_program_key_path(args, config)?;
-    let (program_keypair, program_pubkey) = with_secret_key_file(&program_key_path)
-        .context("Failed to get program key pair")?;
-    println!("  {} Program keypair: {:?}", "ℹ".bold().blue(), program_keypair);
+    // Ensure the keys directory exists and load/generate the program keypair
+    let keys_dir = ensure_keys_dir()?;
+    let program_key_path = keys_dir.join("program.json");
+    let (program_keypair, program_pubkey) = with_secret_key_file(program_key_path.to_str().unwrap())?;
 
-    println!("  {} Program public key: {}", "ℹ".bold().blue(), program_pubkey);
+    // Display the program public key in hex ASCII representation
+    let program_pubkey_hex = hex::encode(program_pubkey.serialize());
+    println!("  {} Program ID: {}", "ℹ".bold().blue(), program_pubkey_hex.yellow());
 
     // Get program account address from network
     let account_address = get_account_address_async(program_pubkey)
         .await
         .context("Failed to get account address")?;
-    println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
 
-    // Set up Bitcoin RPC client
+    // Set up Bitcoin RPC client and handle funding
     let wallet_manager = WalletManager::new(config)?;
-
-    // Check if wallet_manager.client is connected
-    let connected = wallet_manager.client.get_blockchain_info()?;
-
     let balance = wallet_manager.client.get_balance(None, None)?;
 
-    println!("  {} Balance: {}", "ℹ".bold().blue(), balance);
     if balance == Amount::ZERO {
-        println!("  {} Generating initial blocks to receive mining rewards...", "→".bold().blue());
+        println!("  {} Generating initial blocks for mining rewards...", "→".bold().blue());
         let new_address = wallet_manager.client.get_new_address(None, None)?;
         let checked_address = new_address.require_network(Network::Regtest)?;
         wallet_manager.client.generate_to_address(101, &checked_address)?;
-        println!("  {} Initial blocks generated. Waiting for balance to be available...", "✓".bold().green());
+        println!("  {} Initial blocks generated", "✓".bold().green());
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    // Handle fund transfer based on network type
+    println!("  {} Funding program account...", "→".bold().blue());
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
+    println!("  {} Deploying program...", "→".bold().blue());
     deploy_program_with_tx_info(&program_keypair, &program_pubkey, tx_info).await?;
 
     wallet_manager.close_wallet()?;
 
     println!("{}", "Your app has been deployed successfully!".bold().green());
+    println!("  {} Use this Program ID in your frontend application:", "ℹ".bold().blue());
+    println!("    {}", program_pubkey_hex.bold());
+    
     Ok(())
 }
 
@@ -1496,53 +1507,53 @@ pub async fn config_edit() -> Result<()> {
     if status.success() {
         println!("  {} Configuration file closed. Verifying changes...", "✓".bold().green());
 
-        // Attempt to reload the configuration to verify it's still valid
-        match Config::builder()
-            .add_source(config::File::with_name(config_path.to_str().unwrap()))
-            .build() {
-            Ok(_) => println!("  {} Configuration updated successfully!", "✓".bold().green()),
-            Err(e) => {
-                println!("  {} Warning: The configuration file may contain errors.", "⚠".bold().yellow());
-                println!("    Error details: {}", e);
-                println!("    Please review and correct the configuration file.");
+                // Attempt to reload the configuration to verify it's still valid
+                match Config::builder()
+                .add_source(config::File::with_name(config_path.to_str().unwrap()))
+                .build() {
+                Ok(_) => println!("  {} Configuration updated successfully!", "✓".bold().green()),
+                Err(e) => {
+                    println!("  {} Warning: The configuration file may contain errors.", "⚠".bold().yellow());
+                    println!("    Error details: {}", e);
+                    println!("    Please review and correct the configuration file.");
+                }
+            }
+        } else {
+            println!("  {} Editor closed without saving changes or encountered an error", "ℹ".bold().blue());
+        }
+    
+        Ok(())
+    }
+    pub async fn config_reset() -> Result<()> {
+        println!("{}", "Resetting configuration to default...".bold().yellow());
+    
+        let config_path = get_config_path()?;
+        let config_dir = config_path.parent().unwrap();
+    
+        // Check if the config file already exists
+        if config_path.exists() {
+            println!("  {} Existing configuration found at {}", "ℹ".bold().blue(), config_path.display());
+            print!("  {} Are you sure you want to overwrite it? (y/N): ", "?".bold().yellow());
+            io::stdout().flush()?;
+    
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+    
+            if !input.trim().eq_ignore_ascii_case("y") {
+                println!("  {} Configuration reset cancelled", "ℹ".bold().blue());
+                return Ok(());
             }
         }
-    } else {
-        println!("  {} Editor closed without saving changes or encountered an error", "ℹ".bold().blue());
+    
+        // Create the config directory if it doesn't exist
+        fs::create_dir_all(config_dir).context("Failed to create config directory")?;
+    
+        // Copy the default config to the correct location
+        fs::copy("config.default.toml", &config_path).context("Failed to reset configuration")?;
+    
+        println!("  {} Configuration reset to default at {}", "✓".bold().green(), config_path.display());
+        Ok(())
     }
-
-    Ok(())
-}
-pub async fn config_reset() -> Result<()> {
-    println!("{}", "Resetting configuration to default...".bold().yellow());
-
-    let config_path = get_config_path()?;
-    let config_dir = config_path.parent().unwrap();
-
-    // Check if the config file already exists
-    if config_path.exists() {
-        println!("  {} Existing configuration found at {}", "ℹ".bold().blue(), config_path.display());
-        print!("  {} Are you sure you want to overwrite it? (y/N): ", "?".bold().yellow());
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-
-        if !input.trim().eq_ignore_ascii_case("y") {
-            println!("  {} Configuration reset cancelled", "ℹ".bold().blue());
-            return Ok(());
-        }
-    }
-
-    // Create the config directory if it doesn't exist
-    fs::create_dir_all(config_dir).context("Failed to create config directory")?;
-
-    // Copy the default config to the correct location
-    fs::copy("config.default.toml", &config_path).context("Failed to reset configuration")?;
-
-    println!("  {} Configuration reset to default at {}", "✓".bold().green(), config_path.display());
-    Ok(())
-}
 
 pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result<()> {
     println!("{}", "Creating account for dApp...".bold().green());
@@ -1608,6 +1619,22 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
 
     println!("{}", "Account created and ownership transferred successfully!".bold().green());
     Ok(())
+}
+
+pub fn get_config_dir() -> Result<PathBuf> {
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| anyhow!("Failed to determine config directory"))?
+        .join("arch-cli");
+    
+    fs::create_dir_all(&config_dir)?;
+    
+    Ok(config_dir)
+}
+
+pub fn ensure_keys_dir() -> Result<PathBuf> {
+    let keys_dir = get_config_dir()?.join("keys");
+    fs::create_dir_all(&keys_dir)?;
+    Ok(keys_dir)
 }
 
 async fn generate_account_address(caller_pubkey: Pubkey) -> Result<String> {    // Get program account address from network

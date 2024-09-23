@@ -12,7 +12,7 @@ rpc_wallet = "devwallet"
 services = ["bitcoin", "electrs", "btc-rpc-explorer"]
 
 [program]
-key_path = "src/app/keys/program.json"
+key_path = "${CONFIG_DIR}/keys/program.json"
 
 [electrs]
 rest_api_port = "3002"
