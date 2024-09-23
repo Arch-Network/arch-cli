@@ -537,49 +537,29 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
 
     // Build the program
-    println!("  {} Compiling program...", "→".bold().blue());
     build_program(args)?;
-    println!("  {} Program compiled successfully", "✓".bold().green());
 
     // Ensure the keys directory exists and load/generate the program keypair
-    let keys_dir = ensure_keys_dir()?;
-    let program_key_path = keys_dir.join("program.json");
-    let (program_keypair, program_pubkey) = with_secret_key_file(program_key_path.to_str().unwrap())?;
+    let (program_keypair, program_pubkey) = prepare_program_keys()?;
 
-    // Display the program public key in hex ASCII representation
-    let program_pubkey_hex = hex::encode(program_pubkey.serialize());
-    println!("  {} Program ID: {}", "ℹ".bold().blue(), program_pubkey_hex.yellow());
-
-    // Get program account address from network
-    let account_address = get_account_address_async(program_pubkey)
-        .await
-        .context("Failed to get account address")?;
+    // Display the program public key
+    display_program_id(&program_pubkey);
 
     // Set up Bitcoin RPC client and handle funding
     let wallet_manager = WalletManager::new(config)?;
-    let balance = wallet_manager.client.get_balance(None, None)?;
+    ensure_wallet_balance(&wallet_manager.client).await?;
 
-    if balance == Amount::ZERO {
-        println!("  {} Generating initial blocks for mining rewards...", "→".bold().blue());
-        let new_address = wallet_manager.client.get_new_address(None, None)?;
-        let checked_address = new_address.require_network(Network::Regtest)?;
-        wallet_manager.client.generate_to_address(101, &checked_address)?;
-        println!("  {} Initial blocks generated", "✓".bold().green());
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-
-    println!("  {} Funding program account...", "→".bold().blue());
+    // Get account address and fund it
+    let account_address = get_account_address_async(program_pubkey).await?;
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
-    println!("  {} Deploying program...", "→".bold().blue());
     deploy_program_with_tx_info(&program_keypair, &program_pubkey, tx_info).await?;
 
     wallet_manager.close_wallet()?;
 
     println!("{}", "Your app has been deployed successfully!".bold().green());
-    println!("  {} Use this Program ID in your frontend application:", "ℹ".bold().blue());
-    println!("    {}", program_pubkey_hex.bold());
+    display_program_id(&program_pubkey);
     
     Ok(())
 }
@@ -1148,46 +1128,35 @@ fn create_docker_network(network_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn build_program(args: &DeployArgs) -> Result<()> {
-    let path = args.directory.as_ref().map_or_else(
-        || "src/app/program/Cargo.toml".to_string(),
-        |dir| format!("{}/Cargo.toml", dir)
-    );
+fn get_program_path(args: &DeployArgs) -> PathBuf {
+    let mut path = PathBuf::from(args.directory.clone().unwrap_or_else(|| "src/app/program".to_string()));
+    path.push("Cargo.toml");
+    path
+}
 
+fn build_program(args: &DeployArgs) -> Result<()> {
+    println!("  {} Building program...", "ℹ");
+    
+    let path = get_program_path(args);
     if !std::path::Path::new(&path).exists() {
-        println!("{}", "Oops! We couldn't find your Cargo.toml file.".bold().red());
-        println!("{}", "Here's what you can do:".bold().yellow());
-        println!("  1. Make sure you're in the correct directory");
-        println!("  2. Check if the file exists at: {}", path.bold());
-        println!("  3. If you've moved your project, update the path in your configuration");
-        return Err(anyhow::anyhow!("Cargo.toml not found at: {}", path));
+        return Err(anyhow!("Cargo.toml not found at: {}", path.display()));
     }
 
-    println!("  {} Building program...", "→".bold().blue());
     let output = std::process::Command::new("cargo")
-        .args(&["build-sbf", "--manifest-path", &path])
+        .args(&["build-sbf", "--manifest-path", path.to_str().unwrap()])
         .output()
         .context("Failed to execute cargo build-sbf")?;
 
     if !output.status.success() {
         let error_message = String::from_utf8_lossy(&output.stderr);
-        println!("{}", "Uh-oh! The build process for your Arch program encountered an error.".bold().red());
-        println!("{}", "Don't worry, here are some steps to troubleshoot:".bold().yellow());
-        println!("  1. Check your code for any syntax errors");
-        println!("  2. Ensure all dependencies are correctly specified in Cargo.toml");
-        println!("  3. Make sure you have the latest version of the Solana Build Tools installed");
-        println!("  4. Try running 'cargo clean' and then deploy again");
-        println!("\nError details:");
+        println!("Build process encountered an error:");
         println!("{}", error_message);
-        return Err(anyhow::anyhow!("Build failed: {}", error_message));
+        return Err(anyhow!("Build failed"));
     }
 
-    println!("  {} Program built successfully", "✓".bold().green());
-    println!("{}", "Great job! Your program is ready to deploy.".bold().green());
+    println!("  {} Program built successfully", "✓");
     Ok(())
-}
-
-fn get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
+}fn get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
     Ok(
         args.program_key
             .clone()
@@ -1199,6 +1168,50 @@ fn get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
     )
 }
 
+async fn deploy_program_with_tx_info(    
+    program_keypair: &bitcoin::secp256k1::Keypair,
+    program_pubkey: &arch_program::pubkey::Pubkey,
+    tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>
+) -> Result<()> {
+    if let Some(info) = tx_info {
+        deploy_program(
+            program_keypair,
+            program_pubkey,
+            &info.info.txid.to_string(),
+            0
+        ).await?;
+        println!("  {} Program deployed successfully", "✓".bold().green());
+        Ok(())
+    } else {
+        println!("  {} Warning: No transaction info available for deployment", "⚠".bold().yellow());
+        // You might want to implement an alternative deployment method for non-REGTEST networks
+        Ok(())
+    }
+}
+
+fn prepare_program_keys() -> Result<(Keypair, Pubkey)> {
+    let keys_dir = ensure_keys_dir()?;
+    let program_key_path = keys_dir.join("program.json");
+    with_secret_key_file(program_key_path.to_str().unwrap())
+}
+
+fn display_program_id(program_pubkey: &Pubkey) {
+    let program_pubkey_hex = hex::encode(program_pubkey.serialize());
+    println!("  {} Program ID: {}", "ℹ".bold().blue(), program_pubkey_hex.yellow());
+}
+
+async fn ensure_wallet_balance(client: &Client) -> Result<()> {
+    let balance = client.get_balance(None, None)?;
+    if balance == Amount::ZERO {
+        println!("  {} Generating initial blocks for mining rewards...", "→".blue());
+        let new_address = client.get_new_address(None, None)?;
+        let checked_address = new_address.require_network(Network::Regtest)?;
+        client.generate_to_address(101, &checked_address)?;
+        println!("  {} Initial blocks generated", "✓".green());
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    Ok(())
+}
 async fn fund_address(
     rpc: &Client,
     account_address: &str,
@@ -1280,74 +1293,29 @@ async fn fund_address(
     }
 }
 
-async fn deploy_program_with_tx_info(    
-    program_keypair: &bitcoin::secp256k1::Keypair,
-    program_pubkey: &arch_program::pubkey::Pubkey,
-    tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>
-) -> Result<()> {
-    if let Some(info) = tx_info {
-        deploy_program(
-            program_keypair,
-            program_pubkey,
-            &info.info.txid.to_string(),
-            0
-        ).await?;
-        println!("  {} Program deployed successfully", "✓".bold().green());
-        Ok(())
-    } else {
-        println!("  {} Warning: No transaction info available for deployment", "⚠".bold().yellow());
-        // You might want to implement an alternative deployment method for non-REGTEST networks
-        Ok(())
-    }
-}
+
 
 async fn deploy_program(
-    program_keypair: &bitcoin::secp256k1::Keypair,
-    program_pubkey: &arch_program::pubkey::Pubkey,
+    program_keypair: &Keypair,
+    program_pubkey: &Pubkey,
     txid: &str,
     vout: u32
-) -> Result<(), anyhow::Error> {
-    println!("  {} Deploying program...", "→".bold().blue());
-    // println!("  {} Program ID: {}", "ℹ".bold().blue(), program_pubkey.to_string().yellow());
+) -> Result<()> {
+    // Create a new account for the program
+    create_program_account(program_keypair, program_pubkey, txid, vout).await?;
 
-    // Check if the program account already exists
-    // let account_info = read_account_info_async(NODE1_ADDRESS.to_string(), *program_pubkey).await;
-    // if account_info.is_ok() {
-    //     println!("  {} Program account already exists", "ℹ".bold().blue());
-    //     return Ok(());
-    // }
+    // Deploy the program transactions
+    deploy_program_txs(program_keypair, program_pubkey).await?;
 
-    // 1. Create a new account for the program
-    let (txid, _instruction_hash) = sign_and_send_instruction_async(
-        SystemInstruction::new_create_account_instruction(
-            hex::decode(txid).unwrap().try_into().unwrap(),
-            vout,
-            *program_pubkey
-        ),
-        vec![*program_keypair]
-    ).await.expect("signing and sending a transaction should not fail");
+    // Make program executable
+    make_program_executable(program_keypair, program_pubkey).await?;
 
-    get_processed_transaction_async(NODE1_ADDRESS.to_string(), txid.clone()).await.expect(
-        "get processed transaction should not fail"
-    );
+    Ok(())
+}
 
-    // 2. Deploy the program transactions
-    deploy_program_txs_async(
-        *program_keypair,
-        "src/app/program/target/sbf-solana-solana/release/arch_network_app.so"
-    ).await.expect("deploy program txs should not fail");
-    println!("Program transactions deployed successfully");
-
-    // 3. Read the account info
-    let elf = fs
-        ::read("src/app/program/target/sbf-solana-solana/release/arch_network_app.so")
-        .expect("elf path should be available");
-    assert!(read_account_info_async(NODE1_ADDRESS.to_string(), *program_pubkey).await.unwrap().data == elf);
-    println!("Program account created successfully");
-
-    // 4. Make program executable
-    println!("Making program executable");
-    let (txid, _instruction_hash) = sign_and_send_instruction_async(
+async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
+    println!("    Making program executable...");
+    let (txid, _) = sign_and_send_instruction_async(
         Instruction {
             program_id: Pubkey::system_program(),
             accounts: vec![AccountMeta {
@@ -1357,44 +1325,35 @@ async fn deploy_program(
             }],
             data: vec![2],
         },
-        vec![*program_keypair]
-    ).await.expect("signing and sending a transaction should not fail");
-
-    let processed_tx = get_processed_transaction_async(
-        NODE1_ADDRESS.to_string(),
-        txid.clone()
-    ).await.expect("get processed transaction should not fail");
-    // println!("processed_tx {:?}", processed_tx);
-    println!("Program made executable successfully");
-
-    assert!(
-        read_account_info_async(
-            NODE1_ADDRESS.to_string(),
-            *program_pubkey
-        ).await.unwrap().is_executable
-    );
-
-    let program_id_hex = hex::encode(program_pubkey.serialize());
-    println!(
-        "  {} Program deployed successfully with ID: {}",
-        "✓".bold().green(),
-        program_id_hex.yellow()
-    );
-    println!(
-        "  {} Use this program ID in your frontend application:",
-        "ℹ".bold().blue()
-    );
-    println!("    {}", program_id_hex.bold());
-
-    println!(
-        "  {} Program deployed with transaction ID: {} and vout: {}",
-        "✓".bold().green(),
-        txid.yellow(),
-        vout
-    );
+        vec![program_keypair.clone()]
+    ).await?;
+    get_processed_transaction_async(NODE1_ADDRESS.to_string(), txid.clone()).await?;
+    println!("    Program made executable successfully");
     Ok(())
 }
-
+async fn deploy_program_txs(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
+    println!("    Deploying program transactions...");
+    deploy_program_txs_async(
+        *program_keypair,
+        "src/app/program/target/sbf-solana-solana/release/arch_network_app.so",
+    ).await?;
+    println!("    Program transactions deployed successfully");
+    Ok(())
+}
+async fn create_program_account(program_keypair: &Keypair, program_pubkey: &Pubkey, txid: &str, vout: u32) -> Result<()> {
+    println!("    Creating program account...");
+    let (txid, _) = sign_and_send_instruction_async(
+        SystemInstruction::new_create_account_instruction(
+            hex::decode(txid).unwrap().try_into().unwrap(),
+            vout,
+            *program_pubkey,
+        ),
+        vec![program_keypair.clone()]
+    ).await?;
+    get_processed_transaction_async(NODE1_ADDRESS.to_string(), txid.clone()).await?;
+    println!("    Program account created successfully");
+    Ok(())
+}
 // Add this new async function to handle the StartApp command
 pub async fn frontend_start() -> Result<()> {
     println!("{}", "Starting the frontend application...".bold().green());

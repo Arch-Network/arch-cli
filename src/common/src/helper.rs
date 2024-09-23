@@ -12,6 +12,7 @@ use bitcoin::{
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use colored::*;
 use futures::future::join_all;
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
 use reqwest::blocking::Client as HttpClient;
 use serde::Deserialize;
@@ -462,6 +463,16 @@ pub async fn deploy_program_txs_async(
         txs.len().to_string().yellow()
     );
 
+    // Create a spinner for the sending process
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+            .template("{spinner:.green} {msg}")?
+    );
+    spinner.set_message("Sending transactions...");
+    spinner.enable_steady_tick(Duration::from_millis(100));
+
     let client = reqwest::Client::new();
     let response = client
         .post(NODE1_ADDRESS)
@@ -473,6 +484,9 @@ pub async fn deploy_program_txs_async(
         }))
         .send()
         .await?;
+
+    // Stop the spinner
+    spinner.finish_with_message("Transactions sent successfully");
 
     let result: serde_json::Value = response.json().await?;
     let txids = result["result"]
@@ -488,28 +502,23 @@ pub async fn deploy_program_txs_async(
         txids.len().to_string().yellow()
     );
 
-    let process_tasks = txids.iter().enumerate().map(|(i, txid)| {
-        let txid = txid.clone();
-        tokio::spawn(async move {
-            match get_processed_transaction_async(NODE1_ADDRESS.to_owned(), txid.clone()).await {
-                Ok(_) => println!(
-                    "    {} Transaction {} (ID: {}) processed successfully",
-                    "✓".bold().green(),
-                    (i + 1).to_string().yellow(),
-                    txid.bright_blue()
-                ),
-                Err(e) => println!(
-                    "    {} Failed to process transaction {} (ID: {}): {:?}",
-                    "✗".bold().red(),
-                    (i + 1).to_string().yellow(),
-                    txid.bright_blue(),
-                    e.to_string().red()
-                ),
-            }
-        })
-    });
+    let pb = ProgressBar::new(txids.len() as u64);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)")?
+        .progress_chars("#>-"));
 
-    join_all(process_tasks).await;
+    let mut confirmed_txs = 0;
+    while confirmed_txs < txids.len() {
+        for txid in &txids {
+            if get_processed_transaction_async(NODE1_ADDRESS.to_owned(), txid.clone()).await.is_ok() {
+                confirmed_txs += 1;
+                pb.inc(1);
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    pb.finish_with_message("All transactions processed successfully");
 
     Ok(txids)
 }
