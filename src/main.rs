@@ -1,11 +1,12 @@
 use arch_cli::*;
 use anyhow::Result;
-use config::{ Config, File, Environment };
+use config::{Config, File, Environment};
 use colored::*;
 use dotenv::dotenv;
 use clap::Parser;
 use anyhow::Context;
-
+use std::env;
+use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -16,9 +17,19 @@ async fn main() -> Result<()> {
     // Parse command-line arguments
     let cli = Cli::parse();
 
+    // Determine the configuration file path
+    let config_path = env::var("ARCH_CLI_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let mut default_path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+            default_path.push("arch-cli");
+            default_path.push("config.toml");
+            default_path
+        });
+
     // Load configuration
     let config = Config::builder()
-        .add_source(File::with_name("config.toml"))
+        .add_source(File::from(config_path))
         .add_source(Environment::default())
         .build()
         .context("Failed to load configuration")?;

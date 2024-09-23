@@ -39,7 +39,19 @@ cargo install --path .
 
 ## Configuration
 
-Before using Arch-CLI, you need to set up a `config.toml` file in your project root. Here's an example configuration:
+Before using Arch-CLI, you need to set up a `config.toml` file. By default, the CLI will look for this file in the following locations:
+
+- **Linux**: `~/.config/arch-cli/config.toml`
+- **macOS**: `~/Library/Application Support/arch-cli/config.toml`
+- **Windows**: `C:\Users\<User>\AppData\Roaming\arch-cli\config.toml`
+
+You can also specify a custom configuration file location by setting the `ARCH_CLI_CONFIG` environment variable:
+
+```sh
+export ARCH_CLI_CONFIG=/path/to/your/config.toml
+```
+
+Here's an example configuration:
 
 ```toml
 [network]
@@ -73,19 +85,9 @@ replica_count = "3"
 
 [program]
 key_path = "src/app/keys/program.json"
-
-[electrs]
-rest_api_port = "3000"
-electrum_port = "50001"
-
-[btc_rpc_explorer]
-port = "3002"
-
-[ord]
-port = "3003"
 ```
 
-Adjust these values according to your setup.
+By following these steps, you ensure that your CLI can be run from any location and still correctly locate and load its configuration files on Windows, macOS, and Linux.
 
 ## Usage
 
@@ -98,6 +100,7 @@ arch-cli init
 ```
 
 This command sets up a new Arch Network project with the necessary folder structure, boilerplate code, and Docker configurations.
+
 
 ### Manage the development server
 
