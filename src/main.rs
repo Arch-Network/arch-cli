@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
         Commands::Frontend(FrontendCommands::Start) => frontend_start().await,
         Commands::Account(AccountCommands::Create(args)) => create_account(args, &config).await,
         Commands::Config(ConfigCommands::View) => config_view(&config).await,
-        Commands::Config(ConfigCommands::Edit) => config_edit(&config).await,
+        Commands::Config(ConfigCommands::Edit) => config_edit().await,
         Commands::Config(ConfigCommands::Reset) => config_reset().await,
         Commands::Start => server_start(&config).await,
         Commands::Stop => server_stop().await,

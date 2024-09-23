@@ -1464,24 +1464,55 @@ pub async fn config_view(config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub async fn config_edit(config: &Config) -> Result<()> {
+pub async fn config_edit() -> Result<()> {
     println!("{}", "Editing configuration...".bold().yellow());
-    // Implement config editing logic here
-    // For example, you could open the config file in the user's default text editor
-    let editor = env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
-    let status = Command::new(editor)
-        .arg("config.toml")
+
+    // Get the path to the configuration file
+    let config_path = get_config_path()?;
+
+    // Check if the config file exists
+    if !config_path.exists() {
+        println!("  {} Configuration file not found. Creating a default one...", "ℹ".bold().blue());
+        config_reset().await?;
+    }
+
+    // Get the user's preferred editor
+    let editor = env::var("EDITOR").or_else(|_| env::var("VISUAL")).unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "notepad".to_string()
+        } else {
+            "nano".to_string()
+        }
+    });
+
+    println!("  {} Opening configuration file with {}...", "→".bold().blue(), editor);
+
+    // Open the editor
+    let status = Command::new(&editor)
+        .arg(&config_path)
         .status()
-        .context("Failed to open editor")?;
+        .context(format!("Failed to open editor: {}", editor))?;
 
     if status.success() {
-        println!("  {} Configuration updated successfully!", "✓".bold().green());
+        println!("  {} Configuration file closed. Verifying changes...", "✓".bold().green());
+
+        // Attempt to reload the configuration to verify it's still valid
+        match Config::builder()
+            .add_source(config::File::with_name(config_path.to_str().unwrap()))
+            .build() {
+            Ok(_) => println!("  {} Configuration updated successfully!", "✓".bold().green()),
+            Err(e) => {
+                println!("  {} Warning: The configuration file may contain errors.", "⚠".bold().yellow());
+                println!("    Error details: {}", e);
+                println!("    Please review and correct the configuration file.");
+            }
+        }
     } else {
-        println!("  {} Failed to update configuration", "✗".bold().red());
+        println!("  {} Editor closed without saving changes or encountered an error", "ℹ".bold().blue());
     }
+
     Ok(())
 }
-
 pub async fn config_reset() -> Result<()> {
     println!("{}", "Resetting configuration to default...".bold().yellow());
 
