@@ -171,6 +171,10 @@ pub enum AccountCommands {
     /// List all accounts
     #[clap(long_about = "Lists all accounts stored in the accounts.json file")]
     List,
+
+    /// Delete an account
+    #[clap(long_about = "Deletes an account from the accounts.json file")]
+    Delete(DeleteAccountArgs),
 }
 
 #[derive(Subcommand)]
@@ -188,6 +192,16 @@ pub struct CreateAccountArgs {
     /// Program ID to transfer ownership to
     #[clap(long, help = "Specifies the program ID to transfer ownership to")]
     program_id: Option<String>,
+    /// Custom name for the account
+    #[clap(long, help = "Specifies a custom name for the account")]
+    name: String,
+}
+
+#[derive(Args)]
+pub struct DeleteAccountArgs {
+    /// Account ID or name to delete
+    #[clap(help = "Specifies the account ID or name to delete")]
+    identifier: String,
 }
 
 #[derive(Args)]
@@ -1577,13 +1591,13 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id).await?;
 
     // Save the account information to accounts.json
-    save_account_to_file(&accounts_file, &secret_key, &public_key)?;
+    save_account_to_file(&accounts_file, &secret_key, &public_key, &args.name)?;
 
     println!("{}", "Account created and ownership transferred successfully!".bold().green());
     Ok(())
 }
 
-fn save_account_to_file(file_path: &Path, secret_key: &SecretKey, public_key: &secp256k1::PublicKey) -> Result<()> {
+fn save_account_to_file(file_path: &Path, secret_key: &SecretKey, public_key: &secp256k1::PublicKey, name: &str) -> Result<()> {
     let mut accounts = if file_path.exists() {
         let file = OpenOptions::new().read(true).open(file_path)?;
         let reader = BufReader::new(file);
@@ -1595,7 +1609,8 @@ fn save_account_to_file(file_path: &Path, secret_key: &SecretKey, public_key: &s
     let account_id = hex::encode(public_key.serialize());
     let private_key = hex::encode(secret_key.secret_bytes());
 
-    accounts[account_id] = json!({
+    accounts[&account_id] = json!({
+        "name": name,
         "private_key": private_key,
         "public_key": hex::encode(public_key.serialize()),
     });
@@ -1607,7 +1622,7 @@ fn save_account_to_file(file_path: &Path, secret_key: &SecretKey, public_key: &s
         .open(file_path)?;
     serde_json::to_writer_pretty(file, &accounts)?;
 
-    println!("  {} Account information saved to {}", "✓".bold().green(), file_path.display());
+    println!("  {} Account '{}' saved to {}", "✓".bold().green(), name, file_path.display());
     Ok(())
 }
 
@@ -1627,8 +1642,54 @@ pub async fn list_accounts() -> Result<()> {
 
     println!("{}", "Stored accounts:".bold().green());
     for (account_id, account_info) in accounts.as_object().unwrap() {
-        println!("  {} Account ID: {}", "→".bold().blue(), account_id.yellow());
+        println!("  {} Account: {}", "→".bold().blue(), account_info["name"].as_str().unwrap().yellow());
+        println!("    ID: {}", account_id);
         println!("    Public Key: {}", account_info["public_key"].as_str().unwrap());
+    }
+
+    Ok(())
+}
+
+pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
+    let keys_dir = ensure_keys_dir()?;
+    let accounts_file = keys_dir.join("accounts.json");
+
+    if !accounts_file.exists() {
+        println!("  {} No accounts found", "ℹ".bold().blue());
+        return Ok(());
+    }
+
+    let file = OpenOptions::new().read(true).open(&accounts_file)?;
+    let reader = BufReader::new(file);
+    let mut accounts: Value = serde_json::from_reader(reader)?;
+
+    let accounts_obj = accounts.as_object_mut().unwrap();
+    let mut account_to_remove = None;
+
+    for (account_id, account_info) in accounts_obj.iter() {
+        if account_id == &args.identifier || account_info["name"].as_str().unwrap() == args.identifier {
+            account_to_remove = Some(account_id.clone());
+            break;
+        }
+    }
+
+    if let Some(account_id) = account_to_remove {
+        println!("  {} Account '{}' found. Are you sure you want to delete it? (yes/no)", "ℹ".bold().blue(), args.identifier);
+        let mut response = String::new();
+        std::io::stdin().read_line(&mut response)?;
+        if response.trim().to_lowercase() == "yes" {
+            accounts_obj.remove(&account_id);
+            let file = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&accounts_file)?;
+            serde_json::to_writer_pretty(file, &accounts)?;
+            println!("  {} Account '{}' deleted successfully", "✓".bold().green(), args.identifier);
+        } else {
+            println!("  {} Deletion of account '{}' cancelled", "✗".bold().red(), args.identifier);
+        }
+    } else {
+        println!("  {} Account '{}' not found", "✗".bold().red(), args.identifier);
     }
 
     Ok(())
