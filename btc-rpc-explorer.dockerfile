@@ -2,15 +2,15 @@ FROM node:16 as builder
 
 WORKDIR /workspace
 
+RUN apt-get update && \
+    apt-get install -y git && \
+    git clone --branch v3.4.0 https://github.com/joundy/janoside-btc-rpc-explorer.git .
+
 # Create a user and group
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 # Switch to the new user
 USER appuser
-
-RUN apt-get update && \
-    apt-get install -y git && \
-    git clone --branch v3.4.0 https://github.com/joundy/janoside-btc-rpc-explorer.git .
 
 RUN npm install
 
