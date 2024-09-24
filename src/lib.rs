@@ -924,8 +924,10 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
         .get_string("arch.leader_rpc_endpoint")
         .expect("Failed to get leader RPC endpoint from config");
 
-    // Create an HTTP client
-    let client = reqwest::Client::new();
+    // Create an HTTP client with a timeout
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
 
     // Prepare the RPC request
     let rpc_request =
@@ -938,11 +940,11 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
 
     // Send the RPC request
     let response = client
-    .post(&leader_rpc)
-    .json(&rpc_request)
-    .send()
-    .await
-    .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
+        .post(&leader_rpc)
+        .json(&rpc_request)
+        .send()
+        .await
+        .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
 
     // Check the response
     if response.status().is_success() {
@@ -963,7 +965,6 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
 
     Ok(())
 }
-
 pub fn start_arch_nodes() -> Result<()> {
     println!("  {} Starting Arch Network nodes...", "→".bold().blue());
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
