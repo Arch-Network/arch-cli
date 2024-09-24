@@ -60,6 +60,8 @@ pub fn process_instruction(
         message: params.message,
     };
 
+    msg!("Graffiti Wall: New message: {:?}", new_message);
+
     let mut wall = if account.data_len() > 0 {
         GraffitiWall::try_from_slice(&account.data.borrow())
             .map_err(|_| ProgramError::InvalidAccountData)?

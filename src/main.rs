@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
         Commands::Bitcoin(BitcoinCommands::SendCoins(args)) => send_coins(args, &config).await,
         Commands::Frontend(FrontendCommands::Start) => frontend_start().await,
         Commands::Account(AccountCommands::Create(args)) => create_account(args, &config).await,
+        Commands::Account(AccountCommands::List) => list_accounts().await,
         Commands::Config(ConfigCommands::View) => config_view(&config).await,
         Commands::Config(ConfigCommands::Edit) => config_edit().await,
         Commands::Config(ConfigCommands::Reset) => config_reset().await,

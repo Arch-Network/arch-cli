@@ -29,6 +29,11 @@ use std::process::Command;
 use config::{ Config, File, Environment };
 use std::env;
 use anyhow::anyhow;
+use serde_json::{json, Value};
+use std::fs::OpenOptions;
+use std::io::BufReader;
+use rand::rngs::OsRng;
+use secp256k1::{Secp256k1, SecretKey};
 
 use common::wallet_manager::*;
 use std::process::Stdio;
@@ -162,6 +167,10 @@ pub enum AccountCommands {
     /// Create an account for the dApp
     #[clap(long_about = "Creates an account for the dApp, prompts for funding, and transfers ownership to the program")]
     Create(CreateAccountArgs),
+
+    /// List all accounts
+    #[clap(long_about = "Lists all accounts stored in the accounts.json file")]
+    List,
 }
 
 #[derive(Subcommand)]
@@ -1516,24 +1525,22 @@ pub async fn config_edit() -> Result<()> {
         Ok(())
     }
 
+// Update the create_account function
 pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result<()> {
     println!("{}", "Creating account for dApp...".bold().green());
 
-    // Get caller key
-    let caller_key_path = CALLER_FILE_PATH.to_string();
-    let (caller_keypair, caller_pubkey) = with_secret_key_file(&caller_key_path)
-        .context("Failed to get caller key pair")?;
+    // Get the keys directory
+    let keys_dir = ensure_keys_dir()?;
+    let accounts_file = keys_dir.join("accounts.json");
 
-    // Check if the account already exists
-    let account_info = read_account_info_async(NODE1_ADDRESS.to_string(), caller_pubkey).await;
-    if account_info.is_ok() {
-        println!("  {} Account already exists", "ℹ".bold().blue());
-        println!("  {} Account public key: {:?}", "ℹ".bold().blue(), hex::encode(caller_pubkey.serialize()));
-        // Print account info
-        println!("  {} Account info: {:?}", "ℹ".bold().blue(), account_info);
-
-        return Ok(());
-    }
+    // Create a new keypair
+    let secp = Secp256k1::new();
+    let (secret_key, public_key) = secp.generate_keypair(&mut OsRng);
+    let caller_keypair = Keypair::from_secret_key(&secp, &secret_key);
+    
+    // Convert secp256k1::PublicKey to Pubkey
+    let public_key_bytes = public_key.serialize_uncompressed();
+    let caller_pubkey = Pubkey::from_slice(&public_key_bytes[1..33]); // Skip the first byte and take the next 32
 
     // Get account address
     let account_address = generate_account_address(caller_pubkey).await?;
@@ -1547,12 +1554,6 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     println!("  {} Minimum required: {} satoshis", "ℹ".bold().blue(), "3000".yellow());
     println!("  {} Waiting for funds...", "⏳".bold().blue());
 
-    // Wait for funds (you may need to implement this function)
-    // wait_for_funds(&wallet_manager.client, &account_address, config).await?;
-
-    // sleep 5 seconds
-    // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
     create_arch_account(&caller_keypair, &caller_pubkey, &account_address, &wallet_manager, config).await?;
 
     // Determine the program ID to transfer ownership to
@@ -1561,11 +1562,8 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
             println!("  {} No program ID provided. Using system program.", "ℹ".bold().blue());
             Pubkey::system_program()
         } else {
-            // Convert hex string to bytes
             let program_id_bytes = hex::decode(hex_program_id)
                 .context("Failed to decode program ID from hex")?;
-
-            // Create Pubkey from bytes
             Pubkey::from_slice(&program_id_bytes)
         }
     } else {
@@ -1578,7 +1576,61 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     // Transfer ownership to the program
     transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id).await?;
 
+    // Save the account information to accounts.json
+    save_account_to_file(&accounts_file, &secret_key, &public_key)?;
+
     println!("{}", "Account created and ownership transferred successfully!".bold().green());
+    Ok(())
+}
+
+fn save_account_to_file(file_path: &Path, secret_key: &SecretKey, public_key: &secp256k1::PublicKey) -> Result<()> {
+    let mut accounts = if file_path.exists() {
+        let file = OpenOptions::new().read(true).open(file_path)?;
+        let reader = BufReader::new(file);
+        serde_json::from_reader(reader)?
+    } else {
+        json!({})
+    };
+
+    let account_id = hex::encode(public_key.serialize());
+    let private_key = hex::encode(secret_key.secret_bytes());
+
+    accounts[account_id] = json!({
+        "private_key": private_key,
+        "public_key": hex::encode(public_key.serialize()),
+    });
+
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(file_path)?;
+    serde_json::to_writer_pretty(file, &accounts)?;
+
+    println!("  {} Account information saved to {}", "✓".bold().green(), file_path.display());
+    Ok(())
+}
+
+// Add a new function to list accounts
+pub async fn list_accounts() -> Result<()> {
+    let keys_dir = ensure_keys_dir()?;
+    let accounts_file = keys_dir.join("accounts.json");
+
+    if !accounts_file.exists() {
+        println!("  {} No accounts found", "ℹ".bold().blue());
+        return Ok(());
+    }
+
+    let file = OpenOptions::new().read(true).open(accounts_file)?;
+    let reader = BufReader::new(file);
+    let accounts: Value = serde_json::from_reader(reader)?;
+
+    println!("{}", "Stored accounts:".bold().green());
+    for (account_id, account_info) in accounts.as_object().unwrap() {
+        println!("  {} Account ID: {}", "→".bold().blue(), account_id.yellow());
+        println!("    Public Key: {}", account_info["public_key"].as_str().unwrap());
+    }
+
     Ok(())
 }
 
