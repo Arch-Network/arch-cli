@@ -938,10 +938,11 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
 
     // Send the RPC request
     let response = client
-        .post(&leader_rpc)
-        .json(&rpc_request)
-        .send().await
-        .context("Failed to send RPC request")?;
+    .post(&leader_rpc)
+    .json(&rpc_request)
+    .send()
+    .await
+    .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
 
     // Check the response
     if response.status().is_success() {
