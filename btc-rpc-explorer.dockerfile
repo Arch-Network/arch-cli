@@ -9,7 +9,7 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 USER appuser
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git=1:2.30.2-1 && \
+    apt-get install -y git && \
     git clone --branch v3.4.0 https://github.com/joundy/janoside-btc-rpc-explorer.git .
 
 RUN npm install
