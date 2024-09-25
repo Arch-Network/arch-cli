@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ArchRpcClient, Pubkey } from 'arch-typescript-sdk';
-import { AlertCircle } from 'lucide-react';
+import { Info, Copy, Check, AlertCircle } from 'lucide-react';
 
 const NETWORK = (import.meta as any).env.VITE_NETWORK;
 const client = new ArchRpcClient((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
@@ -25,20 +25,30 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
   const [wallData, setWallData] = useState<GraffitiMessage[]>([]);
   const [isFormValid, setIsFormValid] = useState(false);
   const [name, setName] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [privateKey, setPrivateKey] = useState('');
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(`arch-cli account create --name graffiti --program-id ${PROGRAM_PUBKEY}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const checkAccountCreated = useCallback(async () => {
     if (!accountPubkey) {
       console.log("Account pubkey not available yet");
       return;
     }
-
+  
     try {
       const formalPubkey = Pubkey.fromString(accountPubkey);
       await client.readAccountInfo(formalPubkey);
       setIsAccountCreated(true);
+      setError(null); // Clear any previous errors
     } catch (error) {
       console.error('Error checking account:', error);
-      setError(`Failed to check account: ${error instanceof Error ? error.message : String(error)}`);
+      setIsAccountCreated(false);
+      setError("Network Error: Please ensure your network is up and the Arch server is running. You can start the server using the command:\n\n```\narch-cli server start\n```");
     }
   }, [accountPubkey]);
 
@@ -143,18 +153,72 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (isFormValid) {
+        handleAddToWall();
+      }
+    }
+  };
+
+  const handlePrivateKeySubmit = () => {
+    if (privateKey.trim()) {
+      localStorage.setItem('archPrivateKey', privateKey.trim());
+      setPrivateKey('');
+      alert('Private key saved successfully!');
+    } else {
+      alert('Please enter a valid private key.');
+    }
+  };
+
   return (
-    <div className="bg-gradient-to-br from-arch-gray to-gray-900 p-8 rounded-lg shadow-lg max-w-4xl mx-auto">
+  <div className="bg-gradient-to-br from-arch-gray to-gray-900 p-8 rounded-lg shadow-lg max-w-4xl mx-auto">
       <h2 className="text-3xl font-bold mb-6 text-center text-arch-white">Graffiti Wall</h2>
       
-      <div className="flex flex-col md:flex-row gap-8">
-        <div className="flex-1">
-          {!isAccountCreated ? (
-            <div className="bg-arch-black p-6 rounded-lg">
-              <h3 className="text-2xl font-bold mb-4 text-arch-white">Account Not Created</h3>
-              <p className="text-arch-white">Please use the CLI to create an account for this dApp.</p>
+      {!isAccountCreated ? (
+        <div className="bg-arch-black p-6 rounded-lg">
+          <h3 className="text-2xl font-bold mb-4 text-arch-white">Account Setup Required</h3>
+          <p className="text-arch-white mb-4">To participate in the Graffiti Wall, please create an account using the Arch CLI:</p>
+          <div className="relative mb-4">
+            <pre className="bg-gray-800 p-4 rounded-lg text-arch-white overflow-x-auto">
+              <code>
+                arch-cli account create --name graffiti --program-id {PROGRAM_PUBKEY}
+              </code>
+            </pre>
+            <button
+              onClick={copyToClipboard}
+              className="absolute top-2 right-2 p-2 bg-arch-orange text-arch-black rounded hover:bg-arch-white transition-colors duration-300"
+              title="Copy to clipboard"
+            >
+              {copied ? <Check size={20} /> : <Copy size={20} />}
+            </button>
+          </div>
+          <p className="text-arch-white mb-4">Run this command in your terminal to set up your account.</p>
+          
+          <div className="mt-6">
+            <h4 className="text-xl font-bold mb-2 text-arch-white">Enter Your Private Key</h4>
+            <div className="flex items-center">
+              <input
+                type="password"
+                value={privateKey}
+                onChange={(e) => setPrivateKey(e.target.value)}
+                placeholder="Enter your private key"
+                className="flex-grow px-3 py-2 bg-arch-gray text-arch-white rounded-l-md focus:outline-none focus:ring-2 focus:ring-arch-orange"
+              />
+              <button
+                onClick={handlePrivateKeySubmit}
+                className="bg-arch-orange text-arch-black px-4 py-2 rounded-r-md hover:bg-arch-white transition-colors duration-300"
+              >
+                Save
+              </button>
             </div>
-          ) : (
+            <p className="text-sm text-arch-white mt-2">Your private key will be securely stored in your browser's local storage.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col md:flex-row gap-8">
+          <div className="flex-1">
             <div className="bg-arch-black p-6 rounded-lg">
               <h3 className="text-2xl font-bold mb-4 text-arch-white">Add to Wall</h3>
               <input
@@ -168,6 +232,7 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
               <textarea
                 value={message}
                 onChange={handleMessageChange}
+                onKeyDown={handleKeyDown}
                 placeholder="Your Message (required, max 64 bytes)"
                 className="w-full px-3 py-2 bg-arch-gray text-arch-white rounded-md focus:outline-none focus:ring-2 focus:ring-arch-orange mb-2"
                 required
@@ -184,32 +249,37 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
                 Add to the Wall
               </button>
             </div>
-          )}
-        </div>
-        
-        <div className="flex-1">
-          <div className="bg-arch-black p-6 rounded-lg">
-            <h3 className="text-2xl font-bold mb-4 text-arch-white">Wall Messages</h3>
-            <div className="space-y-4 max-h-96 overflow-y-auto">
-              {wallData.map((item, index) => (
-                <div key={index} className="bg-arch-gray p-3 rounded-lg">
-                  <p className="font-bold text-arch-orange">{new Date(item.timestamp * 1000).toLocaleString()}</p>
-                  <p className="text-arch-white"><span className="font-semibold">{item.name}:</span> {item.message}</p>
-                </div>
-              ))}
+          </div>
+          
+          <div className="flex-1">
+            <div className="bg-arch-black p-6 rounded-lg">
+              <h3 className="text-2xl font-bold mb-4 text-arch-white">Wall Messages</h3>
+              <div className="space-y-4 max-h-96 overflow-y-auto">
+                {wallData.map((item, index) => (
+                  <div key={index} className="bg-arch-gray p-3 rounded-lg">
+                    <p className="font-bold text-arch-orange">{new Date(item.timestamp * 1000).toLocaleString()}</p>
+                    <p className="text-arch-white"><span className="font-semibold">{item.name}:</span> {item.message}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
       
       {error && (
-        <div className="mt-6 p-4 bg-red-500 text-white rounded-lg flex items-center">
-          <AlertCircle className="w-6 h-6 mr-2" />
-          <p>{error}</p>
+        <div className="mt-6 p-4 bg-red-500 text-white rounded-lg">
+          <div className="flex items-center mb-2">
+            <AlertCircle className="w-6 h-6 mr-2" />
+            <p className="font-bold">Network Error</p>
+          </div>
+          <p className="mb-2">Please ensure your network is up and the Arch server is running. You can start the server using the command:</p>
+          <pre className="bg-red-600 p-2 rounded">
+            <code>arch-cli server start</code>
+          </pre>
         </div>
       )}
     </div>
   );
 };
-
 export default GraffitiWall;
