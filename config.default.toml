@@ -27,7 +27,7 @@ port = "3032"
 [arch]
 docker_compose_file = "./arch-docker-compose.yml"
 network_mode = "localnet"
-rust_log = "debug"
+rust_log = "info"
 rust_backtrace = "1"
 bootnode_ip = "172.30.0.10"
 bootnode_p2p_port = "19001"

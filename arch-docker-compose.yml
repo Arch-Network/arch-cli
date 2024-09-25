@@ -67,7 +67,7 @@ services:
     command: /usr/local/bin/validator.sh
     environment:
       VALIDATOR_NUMBER: "1"
-      RUST_LOG: "${RUST_LOG:-info,validator=debug}"
+      RUST_LOG: "${RUST_LOG:-info,validator=info}"
       RUST_BACKTRACE: "${RUST_BACKTRACE:-1}"
       NETWORK_MODE: "${NETWORK_MODE:-localnet}"
       DATA_DIR: /arch-data
@@ -101,7 +101,7 @@ services:
     command: /usr/local/bin/validator.sh
     environment:
       VALIDATOR_NUMBER: "2"
-      RUST_LOG: "${RUST_LOG:-info,validator=debug}"
+      RUST_LOG: "${RUST_LOG:-info,validator=info}"
       RUST_BACKTRACE: "${RUST_BACKTRACE:-1}"
       NETWORK_MODE: "${NETWORK_MODE:-localnet}"
       DATA_DIR: /arch-data
