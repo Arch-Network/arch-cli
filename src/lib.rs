@@ -1586,15 +1586,22 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
         Pubkey::system_program()
     };
 
-    println!("  {} Program ID: {}", "ℹ".bold().blue(), program_id.to_string().yellow());
-
     // Transfer ownership to the program
     transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id).await?;
 
     // Save the account information to accounts.json
     save_account_to_file(&accounts_file, &secret_key, &public_key, &args.name)?;
 
+    // Output the private key to the user
+    let private_key_hex = hex::encode(secret_key.secret_bytes());
     println!("{}", "Account created and ownership transferred successfully!".bold().green());
+    println!("{}", "IMPORTANT: Please save your private key securely. It will not be displayed again.".bold().red());
+    println!("  {} Private Key: {}", "🔑".bold().yellow(), private_key_hex.bright_red());
+    println!("  {} Public Key: {}", "🔑".bold().yellow(), hex::encode(public_key.serialize()).bright_green());
+
+    // Close the Bitcoin wallet
+    wallet_manager.close_wallet()?;
+
     Ok(())
 }
 
@@ -1741,7 +1748,7 @@ async fn create_arch_account(caller_keypair: &Keypair, caller_pubkey: &Pubkey, a
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Output the bitcoin transaction info
-    println!("  {} Transaction info: {:?}", "ℹ".bold().blue(), tx_info);
+    // println!("  {} Transaction info: {:?}", "ℹ".bold().blue(), tx_info);
 
     if let Some(info) = tx_info {
 
@@ -1755,7 +1762,7 @@ async fn create_arch_account(caller_keypair: &Keypair, caller_pubkey: &Pubkey, a
         )
         .await.expect("signing and sending a transaction should not fail");
 
-        println!("  {} Account created with transaction ID: {}", "✓".bold().green(), txid.yellow());
+        println!("  {} Account created with Arch Network transaction ID: {}", "✓".bold().green(), txid.yellow());
         Ok(())
     } else {
         println!("  {} Warning: No transaction info available for deployment", "⚠".bold().yellow());
