@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import SearchBar from './SearchBar';
 import BlockList from './BlockList';
 import ErrorMessage from './ErrorMessage';
+import { useNavigate } from 'react-router-dom';
 
 const client = new ArchRpcClient(import.meta.env.VITE_RPC_URL as string);
 
@@ -23,6 +24,7 @@ const TransactionHistoryPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [totalBlocks, setTotalBlocks] = useState<number>(0);
+  const navigate = useNavigate();
 
   const fetchBlocks = useCallback(async (page: number): Promise<void> => {
     try {
@@ -66,13 +68,48 @@ const TransactionHistoryPage: React.FC = () => {
     fetchBlocks(currentPage);
   }, [currentPage, fetchBlocks]);
 
+  const handleSearch = async (searchTerm: string) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (searchTerm.length === 64) {
+        // Assume it's a block hash or transaction ID
+        try {
+          // Try to get block by hash
+          const block = await client.getBlock(searchTerm);
+          navigate(`/block/${searchTerm}`);
+        } catch (blockError) {
+          // If it's not a block hash, try to get transaction
+          try {
+            const tx = await client.getProcessedTransaction(searchTerm);
+            navigate(`/transaction/${searchTerm}`);
+          } catch (txError) {
+            setError('No block or transaction found with the given ID.');
+          }
+        }
+      } else if (!isNaN(Number(searchTerm))) {
+        // Assume it's a block height
+        const blockHash = await client.getBlockHash(Number(searchTerm));
+        navigate(`/block/${blockHash}`);
+      } else {
+        setError('Invalid search term. Please enter a valid block hash, transaction ID, or block height.');
+      }
+    } catch (err) {
+      console.error('Error during search:', err);
+      setError('An error occurred during the search. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (loading) return (
     <div className="flex justify-center items-center h-64">
       <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-arch-orange"></div>
     </div>
   );
   
-  if (error) return <ErrorMessage />;
+  if (error) return <ErrorMessage message={error} />;
 
   return (
     <div className="p-4 max-w-7xl mx-auto text-arch-white">
@@ -84,7 +121,7 @@ const TransactionHistoryPage: React.FC = () => {
         Block <span className="text-arch-orange">Explorer</span>
       </motion.h1>
       
-      <SearchBar />
+      <SearchBar onSearch={handleSearch} />
       
       <BlockList blocks={blocks} />
       

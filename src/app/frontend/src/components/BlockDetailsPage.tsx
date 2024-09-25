@@ -103,15 +103,15 @@ const BlockDetailsPage: React.FC = () => {
     <div className="grid grid-cols-1 gap-4 mt-4">
       <div className="bg-arch-gray rounded-lg p-4 flex items-start">
         <div className="mr-3 mt-1">
-          {txDetails.status === 'Processed' ? (
-            <CheckCircle className="text-green-500" size={20} />
-          ) : (
+          {txDetails.status === 0 ? (
             <AlertCircle className="text-yellow-500" size={20} />
+          ) : (
+            <CheckCircle className="text-green-500" size={20} />
           )}
         </div>
         <div>
           <h3 className="text-arch-orange font-semibold mb-2">Status</h3>
-          <p>{txDetails.status}</p>
+          <p>{txDetails.status === 0 ? 'Processing' : 'Processed'}</p>
         </div>
       </div>
       <div className="bg-arch-gray rounded-lg p-4 flex items-start">
@@ -196,7 +196,10 @@ const BlockDetailsPage: React.FC = () => {
                 </pre>
               )}
             </div>
-          ))}        </div>      </div>      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
+          ))}
+        </div>
+      </div>
+      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
         <Bitcoin className="text-arch-orange mr-3 mt-1" size={20} />
         <div>
           <h3 className="text-arch-orange font-semibold mb-2">Bitcoin TxIDs</h3>

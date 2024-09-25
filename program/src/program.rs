@@ -216,5 +216,7 @@ pub fn get_bitcoin_block_height() -> u64 {
 }
 
 pub fn get_clock() -> Clock {
-    unsafe { crate::syscalls::arch_get_clock() }
+    let mut clock = Clock::default();
+    unsafe { crate::syscalls::arch_get_clock(&mut clock) };
+    clock
 }

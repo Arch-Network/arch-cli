@@ -5,7 +5,7 @@ while [ ! -f /bootnode_data/init_complete ]; do
   sleep 5
 done
 
-sleep 10
+sleep 15
 
 # If validator binary exists move it to bin
 if [ -f ./validator ]; then

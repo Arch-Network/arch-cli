@@ -1352,6 +1352,7 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
         },
         vec![program_keypair.clone()]
     ).await?;
+    println!("    Transaction sent: {}", txid.clone());
     get_processed_transaction_async(NODE1_ADDRESS.to_string(), txid.clone()).await?;
     println!("    Program made executable successfully");
     Ok(())

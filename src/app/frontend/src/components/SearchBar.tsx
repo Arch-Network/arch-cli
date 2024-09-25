@@ -10,7 +10,16 @@ const SearchBar: React.FC = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchTerm) {
-      navigate(`/block/${searchTerm}`);
+      if (searchTerm.length === 64) {
+        // Assume it's a transaction ID or block hash
+        navigate(`/search/${searchTerm}`);
+      } else if (!isNaN(Number(searchTerm))) {
+        // Assume it's a block height
+        navigate(`/block/${searchTerm}`);
+      } else {
+        // Invalid input
+        alert('Please enter a valid block hash, transaction ID, or block height.');
+      }
     }
   };
 
@@ -27,7 +36,7 @@ const SearchBar: React.FC = () => {
           type="text"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Search by block hash or height"
+          placeholder="Search by block hash, transaction ID, or block height"
           className="w-full px-4 py-2 bg-arch-gray text-arch-white border border-arch-gray rounded-lg focus:outline-none focus:ring-2 focus:ring-arch-orange transition-all duration-300"
         />
         <button
