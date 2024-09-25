@@ -1548,6 +1548,11 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     let keys_dir = ensure_keys_dir()?;
     let accounts_file = keys_dir.join("accounts.json");
 
+    // Check if an account with the same name already exists
+    if account_name_exists(&accounts_file, &args.name)? {
+        return Err(anyhow!("An account with the name '{}' already exists. Please choose a different name.", args.name));
+    }
+
     // Create a new keypair
     let secp = Secp256k1::new();
     let (secret_key, public_key) = secp.generate_keypair(&mut OsRng);
@@ -1603,6 +1608,24 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     wallet_manager.close_wallet()?;
 
     Ok(())
+}
+
+fn account_name_exists(accounts_file: &Path, name: &str) -> Result<bool> {
+    if !accounts_file.exists() {
+        return Ok(false);
+    }
+
+    let file = OpenOptions::new().read(true).open(accounts_file)?;
+    let reader = BufReader::new(file);
+    let accounts: Value = serde_json::from_reader(reader)?;
+
+    for account_info in accounts.as_object().unwrap().values() {
+        if account_info["name"].as_str().unwrap() == name {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn save_account_to_file(file_path: &Path, secret_key: &SecretKey, public_key: &secp256k1::PublicKey, name: &str) -> Result<()> {
