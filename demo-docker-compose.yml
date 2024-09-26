@@ -2,14 +2,14 @@ services:
   backend:
     build: ./src/app/backend
     ports:
-      - "5174:5174"
+      - "${DEMO_BACKEND_PORT}:${DEMO_BACKEND_PORT}"
     networks:
       - arch-network
 
   frontend:
     build: ./src/app/frontend
     ports:
-      - "5173:5173"
+      - "${DEMO_FRONTEND_PORT}:${DEMO_FRONTEND_PORT}"
     networks:
       - arch-network
 

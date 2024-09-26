@@ -1155,6 +1155,8 @@ fn set_env_vars(config: &Config) -> Result<()> {
         ("ELECTRS_REST_API_PORT", "electrs.rest_api_port"),
         ("ELECTRS_ELECTRUM_PORT", "electrs.electrum_port"),
         ("BTC_RPC_EXPLORER_PORT", "btc_rpc_explorer.port"),
+        ("DEMO_FRONTEND_PORT", "demo.frontend_port"),
+        ("DEMO_BACKEND_PORT", "demo.backend_port"),
         ("ORD_PORT", "ord.port"),
         ("NETWORK_MODE", "arch.network_mode"),
         ("RUST_LOG", "arch.rust_log"),
@@ -1476,8 +1478,10 @@ async fn create_program_account(program_keypair: &Keypair, program_pubkey: &Pubk
     Ok(())
 }
 
-pub async fn demo_start() -> Result<()> {
+pub async fn demo_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
+
+    set_env_vars(config)?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
@@ -1498,7 +1502,7 @@ pub async fn demo_start() -> Result<()> {
     Ok(())
 }
 
-pub async fn demo_stop() -> Result<()> {
+pub async fn demo_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the demo application...".bold().green());
 
     let output = ShellCommand::new("docker-compose")
