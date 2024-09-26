@@ -1506,6 +1506,8 @@ pub async fn demo_start(config: &Config) -> Result<()> {
 pub async fn demo_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the demo application...".bold().green());
 
+    set_env_vars(config)?;
+
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
         .arg("demo-docker-compose.yml")
@@ -1914,6 +1916,8 @@ pub async fn indexer_start(config: &Config) -> Result<()> {
 
 pub async fn indexer_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the arch-indexer...".bold().green());
+
+    set_env_vars(config)?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
