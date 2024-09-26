@@ -14,10 +14,10 @@ WORKDIR /workspace
 
 COPY --from=builder /workspace .
 
-EXPOSE 3002
+EXPOSE 3003
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3002/ || exit 1
+  CMD curl -f http://localhost:3003/ || exit 1
 
 STOPSIGNAL SIGINT
 

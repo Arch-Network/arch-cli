@@ -15,7 +15,7 @@ services = ["bitcoin", "electrs", "btc-rpc-explorer"]
 key_path = "${CONFIG_DIR}/keys/program.json"
 
 [electrs]
-rest_api_port = "3002"
+rest_api_port = "3003"
 electrum_port = "60401"
 
 [btc_rpc_explorer]
