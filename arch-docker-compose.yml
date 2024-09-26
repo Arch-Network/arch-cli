@@ -13,6 +13,7 @@ services:
   bootnode:
     image: ${CUSTOM_BOOTNODE_IMAGE:-ghcr.io/arch-network/bootnode:latest}
     command: /usr/local/bin/bootnode.sh
+    restart: unless-stopped
     ports:
       - "${BOOTNODE_P2P_PORT}:${BOOTNODE_P2P_PORT}"
     environment:
@@ -35,6 +36,7 @@ services:
     ports:
       - "${LEADER_P2P_PORT}:${LEADER_P2P_PORT}"
       - "${LEADER_RPC_PORT}:${LEADER_RPC_PORT}"
+    restart: unless-stopped
     command: /usr/local/bin/leader.sh
     environment:
       RUST_LOG: "${RUST_LOG:-info,validator=info}"
@@ -64,6 +66,7 @@ services:
 
   validator-1:
     image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
+    restart: unless-stopped
     command: /usr/local/bin/validator.sh
     environment:
       VALIDATOR_NUMBER: "1"
@@ -99,6 +102,7 @@ services:
   validator-2:
     image: ${CUSTOM_VALIDATOR_IMAGE:-ghcr.io/arch-network/validator:latest}
     command: /usr/local/bin/validator.sh
+    restart: unless-stopped
     environment:
       VALIDATOR_NUMBER: "2"
       RUST_LOG: "${RUST_LOG:-info,validator=info}"
