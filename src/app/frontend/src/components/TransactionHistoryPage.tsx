@@ -5,9 +5,11 @@ import BlockList from './BlockList';
 import ErrorMessage from './ErrorMessage';
 import { useNavigate } from 'react-router-dom';
 
-const INDEXER_API_URL = import.meta.env.VITE_INDEXER_API_URL || 'http://localhost:3003/api';
+const INDEXER_API_URL =  (import.meta as any).env.VITE_INDEXER_API_URL || 'http://localhost:3003/api';
 const SYNC_THRESHOLD = 90;
-const BLOCKS_PER_PAGE = parseInt(import.meta.env.VITE_BLOCKS_PER_PAGE || '20', 10);
+const BLOCKS_PER_PAGE = parseInt((import.meta as any).env.VITE_BLOCKS_PER_PAGE || '20', 10);
+
+console.log(`${INDEXER_API_URL}`);
 
 interface BlockData {
   height: number;
@@ -237,7 +239,7 @@ const TransactionHistoryPage: React.FC = () => {
                   <BlockList blocks={blocks} />
                   <div className="mt-6 flex justify-center items-center space-x-4">
                     <button
-                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      onClick={() => setCurrentPage((prev: number) => Math.max(1, prev - 1))}
                       disabled={currentPage === 1}
                       className="px-4 py-2 bg-arch-gray text-arch-white rounded hover:bg-arch-orange disabled:bg-arch-gray disabled:text-gray-500 transition duration-300"
                     >

@@ -14,6 +14,8 @@ services:
       context: ./src/app/frontend
       args:
         DEMO_FRONTEND_PORT: ${DEMO_FRONTEND_PORT}
+        DEMO_BACKEND_PORT: ${DEMO_BACKEND_PORT}
+        INDEXER_PORT: ${INDEXER_PORT}
     ports:
       - "${DEMO_FRONTEND_PORT}:${DEMO_FRONTEND_PORT}"
     networks:
