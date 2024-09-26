@@ -92,7 +92,7 @@ pub enum Commands {
 
     /// Manage the frontend application
     #[clap(subcommand)]
-    Frontend(FrontendCommands),
+    Demo(DemoCommands),
 
     /// Manage accounts
     #[clap(subcommand)]
@@ -171,10 +171,14 @@ pub enum BitcoinCommands {
 }
 
 #[derive(Subcommand)]
-pub enum FrontendCommands {
-    /// Start the frontend application
-    #[clap(long_about = "Prepares and starts the frontend application, opening it in the default browser.")]
+pub enum DemoCommands {
+    /// Start the demo application (frontend and backend)
+    #[clap(long_about = "Starts the demo application, including both frontend and backend services.")]
     Start,
+
+    /// Stop the demo application (frontend and backend)
+    #[clap(long_about = "Stops the demo application, including both frontend and backend services.")]
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -1395,77 +1399,47 @@ async fn create_program_account(program_keypair: &Keypair, program_pubkey: &Pubk
     println!("    Program account created successfully");
     Ok(())
 }
-// Add this new async function to handle the StartApp command
-pub async fn frontend_start() -> Result<()> {
-    println!("{}", "Starting the frontend application...".bold().green());
 
-    // Copy .env.example to .env
-    println!("  {} Copying .env.example to .env...", "→".bold().blue());
-    fs::copy(
-        "src/app/frontend/.env.example",
-        "src/app/frontend/.env",
-    ).context("Failed to copy .env.example to .env")?;
-    println!("  {} .env file created", "✓".bold().green());
+pub async fn demo_start() -> Result<()> {
+    println!("{}", "Starting the demo application...".bold().green());
 
-    // Install npm packages
-    println!("  {} Installing npm packages...", "→".bold().blue());
-    let npm_install = TokioCommand::new("npm")
-        .current_dir("src/app/frontend")
-        .arg("install")
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .await
-        .context("Failed to run npm install")?;
+    let output = ShellCommand::new("docker-compose")
+        .arg("-f")
+        .arg("demo-docker-compose.yml")
+        .arg("up")        
+        .arg("-d")
+        .output()
+        .context("Failed to start the demo application using Docker Compose")?;
 
-    if !npm_install.success() {
-        return Err(anyhow!("npm install failed"));
-    }
-    println!("  {} npm packages installed", "✓".bold().green());
-
-    // Build and start the Vite server
-    println!("  {} Building and starting the Vite server...", "→".bold().blue());
-    let mut vite_dev = TokioCommand::new("npm")
-        .current_dir("src/app/frontend")
-        .arg("run")
-        .arg("dev")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Failed to start Vite server")?;
-
-    // Read the output to get the local URL
-    let stdout = vite_dev.stdout.take().expect("Failed to capture stdout");
-    let mut reader = tokio::io::BufReader::new(stdout).lines();
-
-    let mut local_url = String::new();
-    while let Some(line) = reader.next_line().await? {
-        if line.contains("Local:") {
-            local_url = line.split("Local:").nth(1).unwrap_or("").trim().to_string();
-            break;
-        }
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to start the demo application: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
-    if local_url.is_empty() {
-        return Err(anyhow!("Failed to get local URL from Vite server output"));
+    println!("{}", "Demo application started successfully!".bold().green());
+    Ok(())
+}
+
+pub async fn demo_stop() -> Result<()> {
+    println!("{}", "Stopping the demo application...".bold().green());
+
+    let output = ShellCommand::new("docker-compose")
+        .arg("-f")
+        .arg("demo-docker-compose.yml")
+        .arg("down")        
+        .output()
+        .context("Failed to stop the demo application using Docker Compose")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to stop the demo application: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
-    println!("  {} Vite server started", "✓".bold().green());
-
-    // Open the browser
-    println!("  {} Opening application in default browser...", "→".bold().blue());
-    if webbrowser::open(&local_url).is_ok() {
-        println!("  {} Application opened in default browser", "✓".bold().green());
-    } else {
-        println!("  {} Failed to open browser. Please navigate to {} manually", "⚠".bold().yellow(), local_url);
-    }
-
-    println!("{}", "Frontend application started successfully!".bold().green());
-    println!("Press Ctrl+C to stop the server and exit.");
-
-    // Wait for the Vite process to finish (i.e., until the user interrupts it)
-    vite_dev.wait().await?;
-
+    println!("{}", "Demo application stopped successfully!".bold().green());
     Ok(())
 }
 
