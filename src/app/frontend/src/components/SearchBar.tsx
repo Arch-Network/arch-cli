@@ -1,25 +1,18 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-const SearchBar: React.FC = () => {
+interface SearchBarProps {
+  onSearch: (searchTerm: string) => void;
+}
+
+const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const navigate = useNavigate();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchTerm) {
-      if (searchTerm.length === 64) {
-        // Assume it's a transaction ID or block hash
-        navigate(`/search/${searchTerm}`);
-      } else if (!isNaN(Number(searchTerm))) {
-        // Assume it's a block height
-        navigate(`/block/${searchTerm}`);
-      } else {
-        // Invalid input
-        alert('Please enter a valid block hash, transaction ID, or block height.');
-      }
+      onSearch(searchTerm);
     }
   };
 

@@ -1,12 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { Hash, Layers, Clock, User, FileText } from 'lucide-react';
 
 interface BlockData {
   height: number;
   hash: string;
   timestamp: number;
-  transactions: string[];
+  transactions?: string[];
 }
 
 interface BlockListProps {
@@ -16,39 +17,52 @@ interface BlockListProps {
 const BlockList: React.FC<BlockListProps> = ({ blocks }) => {
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full bg-arch-gray rounded-lg overflow-hidden">
-        <thead className="bg-arch-black">
+      <table className="w-full text-sm text-left text-arch-white">
+        <thead className="text-xs uppercase bg-arch-gray">
           <tr>
-            <th className="px-4 py-2 text-left text-arch-orange">Block Number</th>
-            <th className="px-4 py-2 text-left text-arch-orange">Block Hash</th>
-            <th className="px-4 py-2 text-left text-arch-orange">Time</th>
-            <th className="px-4 py-2 text-left text-arch-orange">Tx Count</th>
+            <th className="px-6 py-3">Block Hash</th>
+            <th className="px-6 py-3">Slot</th>
+            <th className="px-6 py-3">Time</th>
+            <th className="px-6 py-3">Leader</th>
+            <th className="px-6 py-3">Tx Count</th>
+            <th className="px-6 py-3">Reward</th>
           </tr>
         </thead>
         <tbody>
-          {blocks.map((block, index) => (
-            <motion.tr
-              key={block.hash}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: index * 0.05 }}
-              className="border-b border-arch-gray-700 hover:bg-arch-black transition-colors duration-300"
-            >
-              <td className="px-4 py-2 text-arch-white">
-                <Link to={`/block/${block.height}`} className="hover:text-arch-orange transition-colors duration-300">
+          {blocks.map((block) => (
+            <tr key={block.hash} className="bg-arch-black border-b border-arch-gray hover:bg-arch-gray/20">
+              <td className="px-6 py-4">
+                <Link to={`/block/${block.hash}`} className="text-arch-orange hover:underline flex items-center">
+                  <Hash size={16} className="mr-2" />
+                  {block.hash.substring(0, 8)}...
+                </Link>
+              </td>
+              <td className="px-6 py-4">
+                <div className="flex items-center">
+                  <Layers size={16} className="mr-2 text-arch-orange" />
                   {block.height}
-                </Link>
+                </div>
               </td>
-              <td className="px-4 py-2 text-arch-white">
-                <Link to={`/block/${block.hash}`} className="hover:text-arch-orange transition-colors duration-300">
-                  {block.hash.length > 25 ? `${block.hash.substring(0, 12)}...${block.hash.substring(block.hash.length - 10)}` : block.hash}
-                </Link>
+              <td className="px-6 py-4">
+                <div className="flex items-center">
+                  <Clock size={16} className="mr-2 text-arch-orange" />
+                  {new Date(Number(block.timestamp)).toLocaleString()}              
+                </div>
               </td>
-              <td className="px-4 py-2 text-arch-white">
-                {new Date(block.timestamp).toLocaleString()}
+              <td className="px-6 py-4">
+                <div className="flex items-center">
+                  <User size={16} className="mr-2 text-arch-orange" />
+                  Arch Node
+                </div>
               </td>
-              <td className="px-4 py-2 text-arch-white">{block.transactions.length}</td>
-            </motion.tr>
+              <td className="px-6 py-4">
+                <div className="flex items-center">
+                  <FileText size={16} className="mr-2 text-arch-orange" />
+                  {block.transactions ? block.transactions.length : 'N/A'}
+                </div>
+              </td>
+              <td className="px-6 py-4">0</td>
+            </tr>
           ))}
         </tbody>
       </table>

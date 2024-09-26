@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArchRpcClient, ProcessedTransaction } from 'arch-typescript-sdk';
 import { Buffer } from 'buffer';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Clock, Hash, Database, ChevronDown, ChevronUp, CheckCircle, AlertCircle, FileText, Layers, Bitcoin, User, Code } from 'lucide-react';
 import bs58 from 'bs58';
-const RPC_URL = (import.meta as any).env.VITE_RPC_URL;
 
-const client = new ArchRpcClient(RPC_URL);
+const INDEXER_API_URL = import.meta.env.VITE_INDEXER_API_URL || 'http://localhost:3003/api';
 
 interface BlockDetails {
   height: number;
@@ -36,26 +34,22 @@ const BlockDetailsPage: React.FC = () => {
     const fetchBlockDetails = async () => {
       try {
         setLoading(true);
-        let block;
+        let response;
         if (blockHashOrHeight!.length === 64) {
-          block = await client.getBlock(blockHashOrHeight!);
-          console.log(block);
-          block.height = 0;
-          block.hash = blockHashOrHeight!;
+          response = await fetch(`${INDEXER_API_URL}/blocks/${blockHashOrHeight}`);
         } else {
-          const height = parseInt(blockHashOrHeight!);
-          const blockHash = await client.getBlockHash(height);
-          console.log(blockHash);
-          block = await client.getBlock(blockHash);
-          block.height = height;
-          block.hash = blockHash;
+          response = await fetch(`${INDEXER_API_URL}/blocks/${parseInt(blockHashOrHeight!)}`);
         }
+        if (!response.ok) {
+          throw new Error('Failed to fetch block details');
+        }
+        const block = await response.json();
         setBlockDetails({
           height: block.height,
           hash: block.hash,
           previous_block_hash: block.previous_block_hash,
           transactions: block.transactions || [],
-          timestamp: block.timestamp || 0,
+          timestamp: block.timestamp,
         });
       } catch (err) {
         console.error('Error fetching block details:', err);
@@ -70,7 +64,11 @@ const BlockDetailsPage: React.FC = () => {
   const fetchTransactionDetails = async (txId: string) => {
     try {
       setLoading(true);
-      const txDetails = await client.getProcessedTransaction(txId);
+      const response = await fetch(`${INDEXER_API_URL}/transactions/${txId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch transaction details');
+      }
+      const txDetails = await response.json();
       setTransactionDetails(txDetails);
     } catch (err) {
       console.error('Error fetching transaction details:', err);
@@ -99,115 +97,134 @@ const BlockDetailsPage: React.FC = () => {
     return status === 0 ? 'Processing' : 'Processed';
   };
 
-  const renderTransactionDetails = (txDetails: ProcessedTransaction) => (
-    <div className="grid grid-cols-1 gap-4 mt-4">
-      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
-        <div className="mr-3 mt-1">
-          {txDetails.status === 0 ? (
-            <AlertCircle className="text-yellow-500" size={20} />
-          ) : (
-            <CheckCircle className="text-green-500" size={20} />
-          )}
-        </div>
-        <div>
-          <h3 className="text-arch-orange font-semibold mb-2">Status</h3>
-          <p>{txDetails.status === 0 ? 'Processing' : 'Processed'}</p>
-        </div>
-      </div>
-      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
-        <FileText className="text-arch-orange mr-3 mt-1" size={20} />
-        <div>
-          <h3 className="text-arch-orange font-semibold mb-2">Version</h3>
-          <p>{txDetails.runtime_transaction.version}</p>
-        </div>
-      </div>
-      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
-        <Hash className="text-arch-orange mr-3 mt-1" size={20} />
-        <div>
-          <h3 className="text-arch-orange font-semibold mb-2">Signatures</h3>
-          <ul className="space-y-2">
-            {txDetails.runtime_transaction.signatures.map((sig, index) => {
-              const base58Sig = bs58.encode(Buffer.from(sig));
-              return (
-                <li key={index} className="text-sm">
-                  {base58Sig}
-                  <button
-                    className="ml-2 text-arch-orange hover:underline"
-                    onClick={() => navigator.clipboard.writeText(base58Sig)}
-                  >
-                    Copy
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      </div>
-      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
-        <User className="text-arch-orange mr-3 mt-1" size={20} />
-        <div>
-          <h3 className="text-arch-orange font-semibold mb-2">Signers</h3>
-          <ul className="space-y-2">
-            {txDetails.runtime_transaction.message.signers.map((signer, index) => {
-              const base58Signer = bs58.encode(Buffer.from(signer));
-              return (
-                <li key={index} className="text-sm">
-                  {base58Signer}
-                  <button
-                    className="ml-2 text-arch-orange hover:underline"
-                    onClick={() => navigator.clipboard.writeText(base58Signer)}
-                  >
-                    Copy
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      </div>
-      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
-        <Code className="text-arch-orange mr-3 mt-1" size={20} />
-        <div>
-          <h3 className="text-arch-orange font-semibold mb-2">Instructions</h3>
-          {txDetails.runtime_transaction.message.instructions.map((instruction, index) => (
-            <div key={index} className="mb-4">
-              <h4 className="text-arch-orange font-semibold">Instruction {index + 1}</h4>
-              <p><strong>Program ID:</strong> {Buffer.from(instruction.program_id).toString('hex')}</p>
-              <p><strong>Accounts:</strong></p>
-              <ul className="list-disc list-inside">
-                {instruction.accounts.map((account, accIndex) => (
-                  <li key={accIndex}>
-                    {Buffer.from(account.pubkey).toString('hex')}
-                    {account.is_signer && ' (Signer)'}
-                    {account.is_writable && ' (Writable)'}
-                  </li>
-                ))}
+  const renderTransactionDetails = (txDetails: ProcessedTransaction) => {
+    const renderStatusIcon = (status: number) => {
+      return status === 0 ? (
+        <AlertCircle className="text-yellow-500" size={20} />
+      ) : (
+        <CheckCircle className="text-green-500" size={20} />
+      );
+    };
+  
+    const renderCopyButton = (text: string) => (
+      <button
+        className="ml-2 text-arch-orange hover:underline"
+        onClick={() => navigator.clipboard.writeText(text)}
+      >
+        Copy
+      </button>
+    );
+  
+    const renderInstructionData = (data: number[]) => {
+      if (data.length === 37 && data[0] === 0) {
+        const bitcoinTxId = Buffer.from(data.slice(1, 33)).toString('hex');
+        const output = Buffer.from(data.slice(33)).readUInt32LE(0).toString();
+        return (
+          <div>
+            <p><strong>Create Account Instruction</strong></p>
+            <p><strong>Bitcoin TxID:</strong> {bitcoinTxId}</p>
+            <p><strong>Output:</strong> {output}</p>
+          </div>
+        );
+      } else {
+        return (
+          <pre className="whitespace-pre-wrap break-all bg-arch-black p-2 rounded mt-1 text-xs">
+            {`[${data.join(', ')}]`}
+          </pre>
+        );
+      }
+    };
+  
+    return (
+      <div className="grid grid-cols-1 gap-4 mt-4">
+        {[
+          {
+            icon: renderStatusIcon(txDetails.status),
+            title: "Status",
+            content: txDetails.status === 0 ? 'Processing' : 'Processed'
+          },
+          {
+            icon: <FileText className="text-arch-orange" size={20} />,
+            title: "Version",
+            content: txDetails.runtime_transaction.version
+          },
+          {
+            icon: <Hash className="text-arch-orange" size={20} />,
+            title: "Signatures",
+            content: (
+              <ul className="space-y-2">
+                {txDetails.runtime_transaction.signatures.map((sig, index) => {
+                  const base58Sig = bs58.encode(Buffer.from(sig));
+                  return (
+                    <li key={index} className="text-sm">
+                      {base58Sig}
+                      {renderCopyButton(base58Sig)}
+                    </li>
+                  );
+                })}
               </ul>
-              <p><strong>Data:</strong></p>
-              {instruction.data.length === 37 && instruction.data[0] === 0 ? (
-                <div>
-                  <p><strong>Create Account Instruction</strong></p>
-                  <p><strong>Bitcoin TxID:</strong> {Buffer.from(instruction.data.slice(1, 33)).toString('hex')}</p>
-                  <p><strong>Output:</strong> {Buffer.from(instruction.data.slice(33)).readUInt32LE(0).toString()}</p>
-                </div>
-              ) : (
-                <pre className="whitespace-pre-wrap break-all bg-arch-black p-2 rounded mt-1 text-xs">
-                  {`[${Array.from(Buffer.from(instruction.data)).join(', ')}]`}
-                </pre>
-              )}
+            )
+          },
+          {
+            icon: <User className="text-arch-orange" size={20} />,
+            title: "Signers",
+            content: (
+              <ul className="space-y-2">
+                {txDetails.runtime_transaction.message.signers.map((signer, index) => {
+                  const base58Signer = bs58.encode(Buffer.from(signer));
+                  return (
+                    <li key={index} className="text-sm">
+                      {base58Signer}
+                      {renderCopyButton(base58Signer)}
+                    </li>
+                  );
+                })}
+              </ul>
+            )
+          },
+          {
+            icon: <Code className="text-arch-orange" size={20} />,
+            title: "Instructions",
+            content: (
+              <>
+                {txDetails.runtime_transaction.message.instructions.map((instruction, index) => (
+                  <div key={index} className="mb-4">
+                    <h4 className="text-arch-orange font-semibold">Instruction {index + 1}</h4>
+                    <p><strong>Program ID:</strong> {Buffer.from(instruction.program_id).toString('hex')}</p>
+                    <p><strong>Accounts:</strong></p>
+                    <ul className="list-disc list-inside">
+                      {instruction.accounts.map((account, accIndex) => (
+                        <li key={accIndex}>
+                          {Buffer.from(account.pubkey).toString('hex')}
+                          {account.is_signer && ' (Signer)'}
+                          {account.is_writable && ' (Writable)'}
+                        </li>
+                      ))}
+                    </ul>
+                    <p><strong>Data:</strong></p>
+                    {renderInstructionData(instruction.data)}
+                  </div>
+                ))}
+              </>
+            )
+          },
+          {
+            icon: <Bitcoin className="text-arch-orange" size={20} />,
+            title: "Bitcoin TxIDs",
+            content: txDetails.bitcoin_txids.length > 0 ? txDetails.bitcoin_txids.join(', ') : 'None'
+          }
+        ].map((item, index) => (
+          <div key={index} className="bg-arch-gray rounded-lg p-4 flex items-start">
+            <div className="mr-3 mt-1">{item.icon}</div>
+            <div>
+              <h3 className="text-arch-orange font-semibold mb-2">{item.title}</h3>
+              {item.content}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
-      <div className="bg-arch-gray rounded-lg p-4 flex items-start">
-        <Bitcoin className="text-arch-orange mr-3 mt-1" size={20} />
-        <div>
-          <h3 className="text-arch-orange font-semibold mb-2">Bitcoin TxIDs</h3>
-          <p>{txDetails.bitcoin_txids.length > 0 ? txDetails.bitcoin_txids.join(', ') : 'None'}</p>
-        </div>
-      </div>
-    </div>
-  );
+    );
+  };
 
   if (loading) return (
     <div className="flex justify-center items-center h-screen">
@@ -233,7 +250,7 @@ const BlockDetailsPage: React.FC = () => {
           </div>
           <div className="flex items-center">
             <Clock className="text-arch-orange mr-2" size={20} />
-            <p><strong className="text-arch-orange">Timestamp:</strong> {new Date(blockDetails.timestamp).toLocaleString()}</p>
+            <p><strong className="text-arch-orange">Timestamp:</strong> {new Date(Number(blockDetails.timestamp)).toLocaleString()}</p>
           </div>
           <div className="flex items-center col-span-2">
             <Hash className="text-arch-orange mr-2" size={20} />
