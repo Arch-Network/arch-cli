@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@bitcoin-design/bitcoin-icons-react": "^0.1.10",
-    "arch-typescript-sdk": "^0.0.67",
+    "arch-typescript-sdk": "0.0.68",
     "axios": "^1.7.7",
     "borsh": "^2.0.0",
     "bs58": "^6.0.0",
