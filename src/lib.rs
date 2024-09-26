@@ -1483,11 +1483,11 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
 
     set_env_vars(config)?;
-
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
         .arg("demo-docker-compose.yml")
-        .arg("up")        
+        .arg("build")
+        .arg("up")
         .arg("-d")
         .output()
         .context("Failed to start the demo application using Docker Compose")?;
@@ -1899,6 +1899,7 @@ pub async fn indexer_start(config: &Config) -> Result<()> {
         .arg("-f")
         .arg("./arch-indexer/docker-compose.yml") // Updated path
         .arg("up")
+        .arg("build")
         .arg("-d")
         .output()
         .context("Failed to start the arch-indexer using Docker Compose")?;
