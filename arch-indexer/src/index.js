@@ -1,6 +1,7 @@
 const express = require('express');
 const { Pool } = require('pg');
 const { ArchRpcClient } = require('arch-typescript-sdk');
+const cors = require('cors');
 
 const app = express();
 app.use(cors());
