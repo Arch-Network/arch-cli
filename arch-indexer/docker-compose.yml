@@ -1,8 +1,11 @@
 services:
   indexer:
-    build: .
+    build: 
+      context: .
+      args:
+        INDEXER_PORT: ${INDEXER_PORT}
     ports:
-      - "3003:3003"
+      - "${INDEXER_PORT}:${INDEXER_PORT}"
     environment:
       - DB_USER=postgres
       - DB_HOST=db

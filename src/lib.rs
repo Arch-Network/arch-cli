@@ -1157,6 +1157,7 @@ fn set_env_vars(config: &Config) -> Result<()> {
         ("BTC_RPC_EXPLORER_PORT", "btc_rpc_explorer.port"),
         ("DEMO_FRONTEND_PORT", "demo.frontend_port"),
         ("DEMO_BACKEND_PORT", "demo.backend_port"),
+        ("INDEXER_PORT", "indexer.port"),
         ("ORD_PORT", "ord.port"),
         ("NETWORK_MODE", "arch.network_mode"),
         ("RUST_LOG", "arch.rust_log"),
@@ -1889,6 +1890,8 @@ async fn transfer_account_ownership(caller_keypair: &Keypair, account_pubkey: &P
 
 pub async fn indexer_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the arch-indexer...".bold().green());
+
+    set_env_vars(config)?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")

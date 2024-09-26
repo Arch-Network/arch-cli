@@ -8,6 +8,9 @@ RUN npm install
 
 COPY . .
 
-EXPOSE 3003
+ARG INDEXER_PORT
+ENV INDEXER_PORT=${INDEXER_PORT}
+
+EXPOSE ${INDEXER_PORT}
 
 CMD [ "node", "src/index.js" ]
