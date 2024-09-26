@@ -1,0 +1,38 @@
+services:
+  indexer:
+    build: .
+    ports:
+      - "3003:3003"
+    environment:
+      - DB_USER=postgres
+      - DB_HOST=db
+      - DB_NAME=archindexer
+      - DB_PASSWORD=yourpassword
+      - DB_PORT=5432
+      - ARCH_NODE_URL=http://leader:9002
+    depends_on:
+      - db
+    networks:
+      - arch-network
+      - internal
+  db:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=yourpassword
+      - POSTGRES_DB=archindexer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - internal
+
+volumes:
+  pgdata:
+
+networks:
+  arch-network:
+    external: true
+    name: arch-cli_arch-network
+  internal:
+    external: true
