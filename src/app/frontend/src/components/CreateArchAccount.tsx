@@ -5,6 +5,7 @@ import { Info, Copy, Check, AlertCircle } from 'lucide-react';
 const NETWORK = (import.meta as any).env.VITE_NETWORK;
 const client = new ArchRpcClient((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
 const PROGRAM_PUBKEY = (import.meta as any).env.VITE_PROGRAM_PUBKEY;
+const BACKEND_URL = (import.meta as any).env.VITE_BACKEND_URL || 'http://localhost:5174';
 
 interface CreateArchAccountProps {
   accountPubkey: string;
@@ -25,8 +26,7 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
   const [wallData, setWallData] = useState<GraffitiMessage[]>([]);
   const [isFormValid, setIsFormValid] = useState(false);
   const [name, setName] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [privateKey, setPrivateKey] = useState('');
+  const [copied, setCopied] = useState(false);  
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(`arch-cli account create --name graffiti --program-id ${PROGRAM_PUBKEY}`);
@@ -51,7 +51,6 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
       setError("Network Error: Please ensure your network is up and the Arch server is running. You can start the server using the command:\n\n```\narch-cli server start\n```");
     }
   }, [accountPubkey]);
-
   const fetchWallData = useCallback(async () => {
     if (!accountPubkey || !isAccountCreated) return;
 
@@ -92,7 +91,6 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
       setError(`Failed to fetch wall data: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, [accountPubkey, isAccountCreated]);
-
   useEffect(() => {
     checkAccountCreated();
     if (isAccountCreated) {
@@ -107,24 +105,31 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
       setError("Name and message are required, and account must be created.");
       return;
     }
-
+  
     try {
-      const privateKey = localStorage.getItem('archPrivateKey');
-      if (!privateKey) throw new Error('Private key not found in localStorage');
-      const privateKeyBytes = new Uint8Array(privateKey.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16)));
-
-      const encoder = new TextEncoder();
-      const nameBytes = encoder.encode(name.slice(0, 16).padEnd(16, '\0')).slice(0, 16);
-      const messageBytes = encoder.encode(message).slice(0, 64);
-
-      const instructionData = new Uint8Array(80); // 16 bytes for name, 64 bytes for message
-      instructionData.set(nameBytes, 0);
-      instructionData.set(messageBytes, 16);
-
-      await client.callProgram(privateKeyBytes, PROGRAM_PUBKEY, Array.from(instructionData));
-
-      await fetchWallData();
-      setMessage('');
+      const response = await fetch(`${BACKEND_URL}/add-to-wall`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          programPubkey: PROGRAM_PUBKEY,
+          name,
+          message,
+        }),
+      });
+  
+      if (!response.ok) {
+        throw new Error('Failed to add to wall');
+      }
+  
+      const result = await response.json();
+      if (result.success) {
+        await fetchWallData();
+        setMessage('');
+      } else {
+        throw new Error(result.error);
+      }
     } catch (error) {
       console.error('Error adding to wall:', error);
       setError(`Failed to add to wall: ${error instanceof Error ? error.message : String(error)}`);
@@ -162,15 +167,6 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
     }
   };
 
-  const handlePrivateKeySubmit = () => {
-    if (privateKey.trim()) {
-      localStorage.setItem('archPrivateKey', privateKey.trim());
-      setPrivateKey('');
-      alert('Private key saved successfully!');
-    } else {
-      alert('Please enter a valid private key.');
-    }
-  };
 
   return (
   <div className="bg-gradient-to-br from-arch-gray to-gray-900 p-8 rounded-lg shadow-lg max-w-4xl mx-auto">
@@ -196,25 +192,6 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
           </div>
           <p className="text-arch-white mb-4">Run this command in your terminal to set up your account.</p>
           
-          <div className="mt-6">
-            <h4 className="text-xl font-bold mb-2 text-arch-white">Enter Your Private Key</h4>
-            <div className="flex items-center">
-              <input
-                type="password"
-                value={privateKey}
-                onChange={(e) => setPrivateKey(e.target.value)}
-                placeholder="Enter your private key"
-                className="flex-grow px-3 py-2 bg-arch-gray text-arch-white rounded-l-md focus:outline-none focus:ring-2 focus:ring-arch-orange"
-              />
-              <button
-                onClick={handlePrivateKeySubmit}
-                className="bg-arch-orange text-arch-black px-4 py-2 rounded-r-md hover:bg-arch-white transition-colors duration-300"
-              >
-                Save
-              </button>
-            </div>
-            <p className="text-sm text-arch-white mt-2">Your private key will be securely stored in your browser's local storage.</p>
-          </div>
         </div>
       ) : (
         <div className="flex flex-col md:flex-row gap-8">
