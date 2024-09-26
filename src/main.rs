@@ -45,7 +45,9 @@ async fn main() -> Result<()> {
         Commands::Config(ConfigCommands::Edit) => config_edit().await,
         Commands::Config(ConfigCommands::Reset) => config_reset().await,
         Commands::Start => server_start(&config).await,
-        Commands::Stop => server_stop().await,
+        Commands::Stop => server_stop().await,        
+        Commands::Indexer(IndexerCommands::Start) => indexer_start(&config).await,
+        Commands::Indexer(IndexerCommands::Stop) => indexer_stop(&config).await,
     };
 
     if let Err(e) = result {

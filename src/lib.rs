@@ -109,6 +109,10 @@ pub enum Commands {
     /// Alias for 'server stop'
     #[clap(alias = "down", hide = true)]
     Stop,
+
+    /// Manage the indexer
+    #[clap(subcommand)]
+    Indexer(IndexerCommands),
 }
 
 #[derive(Subcommand)]
@@ -139,6 +143,17 @@ pub enum ProjectCommands {
     /// Clean the project
     #[clap(long_about = "Removes the src/app directory, cleaning the project structure.")]
     Clean,
+}
+
+#[derive(Subcommand)]
+pub enum IndexerCommands {
+    /// Start the indexer
+    #[clap(long_about = "Starts the arch-indexer using Docker Compose.")]
+    Start,
+
+    /// Stop the indexer
+    #[clap(long_about = "Stops the arch-indexer using Docker Compose.")]
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -1815,5 +1830,48 @@ async fn transfer_account_ownership(caller_keypair: &Keypair, account_pubkey: &P
     )
     .await.expect("signing and sending a transaction should not fail");
 
+    Ok(())
+}
+
+pub async fn indexer_start(config: &Config) -> Result<()> {
+    println!("{}", "Starting the arch-indexer...".bold().green());
+
+    let output = ShellCommand::new("docker-compose")
+        .arg("-f")
+        .arg("./arch-indexer/docker-compose.yml") // Updated path
+        .arg("up")
+        .arg("-d")
+        .output()
+        .context("Failed to start the arch-indexer using Docker Compose")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to start the arch-indexer: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    println!("{}", "arch-indexer started successfully!".bold().green());
+    Ok(())
+}
+
+pub async fn indexer_stop(config: &Config) -> Result<()> {
+    println!("{}", "Stopping the arch-indexer...".bold().green());
+
+    let output = ShellCommand::new("docker-compose")
+        .arg("-f")
+        .arg("./arch-indexer/docker-compose.yml")
+        .arg("down")
+        .output()
+        .context("Failed to stop the arch-indexer using Docker Compose")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to stop the arch-indexer: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    println!("{}", "arch-indexer stopped successfully!".bold().green());
     Ok(())
 }
