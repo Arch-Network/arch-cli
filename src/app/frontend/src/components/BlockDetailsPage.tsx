@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Buffer } from 'buffer';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Clock, Hash, Database, ChevronDown, ChevronUp, CheckCircle, AlertCircle, FileText, Layers, Bitcoin, User, Code } from 'lucide-react';
+import { Lock, Edit, FileSignature, PlusCircle, Key, PenTool } from 'lucide-react';
 import bs58 from 'bs58';
 
 const INDEXER_API_URL = import.meta.env.VITE_INDEXER_API_URL || 'http://localhost:3003/api';
@@ -13,6 +14,25 @@ interface BlockDetails {
   previous_block_hash: string;
   transactions: string[];
   timestamp: number;
+}
+
+interface ProcessedTransaction {
+  bitcoin_txids: string[];
+  block_height: number;
+  data: {
+    message: {
+      signers: string[][];
+      instructions: {
+        program_id: number[];
+        accounts: number[][];
+        data: number[];
+      }[];
+    };
+    signatures: number[][];
+    version: number;
+  };
+  status: number;
+  txid: string;
 }
 
 const BlockDetailsPage: React.FC = () => {
@@ -38,7 +58,7 @@ const BlockDetailsPage: React.FC = () => {
         if (blockHashOrHeight!.length === 64) {
           response = await fetch(`${INDEXER_API_URL}/blocks/${blockHashOrHeight}`);
         } else {
-          response = await fetch(`${INDEXER_API_URL}/blocks/${parseInt(blockHashOrHeight!)}`);
+          response = await fetch(`${INDEXER_API_URL}/blocks/height/${parseInt(blockHashOrHeight!)}`);
         }
         if (!response.ok) {
           throw new Error('Failed to fetch block details');
@@ -97,7 +117,30 @@ const BlockDetailsPage: React.FC = () => {
     return status === 0 ? 'Processing' : 'Processed';
   };
 
+  
+
   const renderTransactionDetails = (txDetails: ProcessedTransaction) => {
+
+    const getInstructionType = (programId: string, data: number[]): string => {
+      if (programId === '0000000000000000000000000000000000000000000000000000000000000001') {
+        if (data[0] === 2) return 'Make Executable';
+        if (data[0] === 3) return 'Assign Ownership';
+        if (data[0] === 1) return 'Write Data';
+        if (data[0] === 0) return 'Create Account';
+      }
+      return 'Unknown';
+    };
+
+    const getInstructionIcon = (type: string) => {
+      switch (type) {
+        case 'Make Executable': return <Lock className="text-blue-500" size={16} />;
+        case 'Assign Ownership': return <Key className="text-purple-500" size={16} />;
+        case 'Write Data': return <Edit className="text-green-500" size={16} />;
+        case 'Create Account': return <PlusCircle className="text-yellow-500" size={16} />;
+        default: return <FileSignature className="text-gray-500" size={16} />;
+      }
+    };
+
     const renderStatusIcon = (status: number) => {
       return status === 0 ? (
         <AlertCircle className="text-yellow-500" size={20} />
@@ -116,23 +159,11 @@ const BlockDetailsPage: React.FC = () => {
     );
   
     const renderInstructionData = (data: number[]) => {
-      if (data.length === 37 && data[0] === 0) {
-        const bitcoinTxId = Buffer.from(data.slice(1, 33)).toString('hex');
-        const output = Buffer.from(data.slice(33)).readUInt32LE(0).toString();
-        return (
-          <div>
-            <p><strong>Create Account Instruction</strong></p>
-            <p><strong>Bitcoin TxID:</strong> {bitcoinTxId}</p>
-            <p><strong>Output:</strong> {output}</p>
-          </div>
-        );
-      } else {
-        return (
-          <pre className="whitespace-pre-wrap break-all bg-arch-black p-2 rounded mt-1 text-xs">
-            {`[${data.join(', ')}]`}
-          </pre>
-        );
-      }
+      return (
+        <pre className="whitespace-pre-wrap break-all bg-arch-black p-2 rounded mt-1 text-xs">
+          {`[${data.join(', ')}]`}
+        </pre>
+      );
     };
   
     return (
@@ -146,14 +177,14 @@ const BlockDetailsPage: React.FC = () => {
           {
             icon: <FileText className="text-arch-orange" size={20} />,
             title: "Version",
-            content: txDetails.runtime_transaction.version
+            content: txDetails.data.version
           },
           {
             icon: <Hash className="text-arch-orange" size={20} />,
             title: "Signatures",
             content: (
               <ul className="space-y-2">
-                {txDetails.runtime_transaction.signatures.map((sig, index) => {
+                {txDetails.data.signatures.map((sig, index) => {
                   const base58Sig = bs58.encode(Buffer.from(sig));
                   return (
                     <li key={index} className="text-sm">
@@ -170,7 +201,7 @@ const BlockDetailsPage: React.FC = () => {
             title: "Signers",
             content: (
               <ul className="space-y-2">
-                {txDetails.runtime_transaction.message.signers.map((signer, index) => {
+                {txDetails.data.message.signers.map((signer, index) => {
                   const base58Signer = bs58.encode(Buffer.from(signer));
                   return (
                     <li key={index} className="text-sm">
@@ -187,24 +218,31 @@ const BlockDetailsPage: React.FC = () => {
             title: "Instructions",
             content: (
               <>
-                {txDetails.runtime_transaction.message.instructions.map((instruction, index) => (
-                  <div key={index} className="mb-4">
-                    <h4 className="text-arch-orange font-semibold">Instruction {index + 1}</h4>
-                    <p><strong>Program ID:</strong> {Buffer.from(instruction.program_id).toString('hex')}</p>
-                    <p><strong>Accounts:</strong></p>
-                    <ul className="list-disc list-inside">
-                      {instruction.accounts.map((account, accIndex) => (
-                        <li key={accIndex}>
-                          {Buffer.from(account.pubkey).toString('hex')}
-                          {account.is_signer && ' (Signer)'}
-                          {account.is_writable && ' (Writable)'}
-                        </li>
-                      ))}
-                    </ul>
-                    <p><strong>Data:</strong></p>
-                    {renderInstructionData(instruction.data)}
-                  </div>
-                ))}
+                {txDetails.data.message.instructions.map((instruction, index) => {
+                  const programId = Buffer.from(instruction.program_id).toString('hex');
+                  const instructionType = getInstructionType(programId, instruction.data);
+                  return (
+                    <div key={index} className="mb-4 bg-arch-gray rounded-lg p-4">
+                      <h4 className="text-arch-orange font-semibold flex items-center">
+                        {getInstructionIcon(instructionType)}
+                        <span className="ml-2">Instruction {index + 1}: {instructionType}</span>
+                      </h4>
+                      <p><strong>Program ID:</strong> {programId === '0000000000000000000000000000000000000000000000000000000000000001' ? 'System Program' : programId}</p>
+                      <p><strong>Accounts:</strong></p>
+                      <ul className="list-disc list-inside">
+                        {instruction.accounts.map((account, accIndex) => (
+                          <li key={accIndex} className="flex items-center">
+                            <span className="truncate">{Buffer.from(account.pubkey).toString('hex')}</span>
+                            {account.is_signer && <PenTool className="text-yellow-500 ml-2" size={16} title="Signer" />}
+                            {account.is_writable && <Edit className="text-green-500 ml-2" size={16} title="Writable" />}
+                          </li>
+                        ))}
+                      </ul>
+                      <p><strong>Data:</strong></p>
+                      {renderInstructionData(instruction.data)}
+                    </div>
+                  );
+                })}
               </>
             )
           },
@@ -212,7 +250,7 @@ const BlockDetailsPage: React.FC = () => {
             icon: <Bitcoin className="text-arch-orange" size={20} />,
             title: "Bitcoin TxIDs",
             content: txDetails.bitcoin_txids.length > 0 ? txDetails.bitcoin_txids.join(', ') : 'None'
-          }
+          }          
         ].map((item, index) => (
           <div key={index} className="bg-arch-gray rounded-lg p-4 flex items-start">
             <div className="mr-3 mt-1">{item.icon}</div>

@@ -129,7 +129,6 @@ async function storeBlock(block) {
   app.get('/api/blocks/:blockhash', async (req, res) => {
     const { blockhash } = req.params;
     try {
-      // Fetch block details including previous_block_hash
       const blockQuery = `
         SELECT b.*, 
                (SELECT hash FROM blocks WHERE height = b.height - 1) AS previous_block_hash
@@ -144,7 +143,6 @@ async function storeBlock(block) {
   
       const block = blockResult.rows[0];
   
-      // Fetch associated transactions
       const transactionsQuery = `
         SELECT txid 
         FROM transactions 
@@ -152,7 +150,6 @@ async function storeBlock(block) {
       `;
       const transactionsResult = await pool.query(transactionsQuery, [block.height]);
   
-      // Combine block data with transactions
       const response = {
         ...block,
         transactions: transactionsResult.rows.map(row => row.txid)
@@ -161,6 +158,42 @@ async function storeBlock(block) {
       res.json(response);
     } catch (error) {
       console.error('Error fetching block:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  
+  app.get('/api/blocks/height/:height', async (req, res) => {
+    const { height } = req.params;
+    try {
+      const blockQuery = `
+        SELECT b.*, 
+               (SELECT hash FROM blocks WHERE height = b.height - 1) AS previous_block_hash
+        FROM blocks b 
+        WHERE b.height = $1
+      `;
+      const blockResult = await pool.query(blockQuery, [height]);
+  
+      if (blockResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Block not found' });
+      }
+  
+      const block = blockResult.rows[0];
+  
+      const transactionsQuery = `
+        SELECT txid 
+        FROM transactions 
+        WHERE block_height = $1
+      `;
+      const transactionsResult = await pool.query(transactionsQuery, [height]);
+  
+      const response = {
+        ...block,
+        transactions: transactionsResult.rows.map(row => row.txid)
+      };
+  
+      res.json(response);
+    } catch (error) {
+      console.error('Error fetching block by height:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
