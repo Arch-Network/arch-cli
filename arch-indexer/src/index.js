@@ -3,6 +3,8 @@ const { Pool } = require('pg');
 const { ArchRpcClient } = require('arch-typescript-sdk');
 
 const app = express();
+app.use(cors());
+
 const port = process.env.INDEXER_PORT || 3003;
 
 const pool = new Pool({
