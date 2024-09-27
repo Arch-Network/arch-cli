@@ -187,22 +187,17 @@ To quickly set up and run the demo application, follow these steps:
    arch-cli server start
    ```
 
-3. Start the Distributed Key Generation (DKG) process:
-   ```
-   arch-cli dkg start
-   ```
-
-4. Deploy your application:
+3. Deploy your application:
    ```
    arch-cli deploy
    ```
 
-5. Create an account for your dApp:
+4. Create an account for your dApp:
    ```
    arch-cli account create
    ```
 
-6. Start the frontend application:
+5. Start the frontend application:
    ```
    arch-cli frontend start
    ```
