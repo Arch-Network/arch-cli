@@ -546,34 +546,7 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
     Ok(())
 }
 
-pub async fn server_start(config: &Config) -> Result<()> {
-    println!("{}", "Starting the development server...".bold().green());
 
-    let arch_data_dir = get_arch_data_dir(config)?;
-
-    // Set the ARCH_DATA_DIR environment variable
-    env::set_var("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap());
-
-    // Set other required environment variables
-    set_env_vars(config)?;
-
-    // Start Bitcoin services
-    start_docker_service("Bitcoin", "bitcoin", &config.get_string("bitcoin.docker_compose_file")?)?;
-
-    // Start Arch Network services
-    let arch_compose_file = config.get_string("arch.docker_compose_file")?;
-    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
-
-    Command::new(docker_compose_cmd)
-        .args(docker_compose_args)
-        .args(&["-f", &arch_compose_file, "up", "-d"])
-        .env("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap())
-        .status()?;
-
-    println!("  {} Development server started successfully.", "✓".bold().green());
-
-    Ok(())
-}
 
 pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
@@ -715,6 +688,38 @@ fn stop_all_related_containers() -> Result<()> {
             );
         }
     }
+
+    Ok(())
+}
+
+pub async fn server_start(config: &Config) -> Result<()> {
+    println!("{}", "Starting the development server...".bold().green());
+
+    let arch_data_dir = get_arch_data_dir(config)?;
+
+    // Set the ARCH_DATA_DIR environment variable
+    env::set_var("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap());
+
+    // Set other required environment variables
+    set_env_vars(config)?;
+
+    // Start Bitcoin services
+    start_docker_service("Bitcoin", "bitcoin", &config.get_string("bitcoin.docker_compose_file")?)?;
+
+    // Start Arch Network services
+    let arch_compose_file = config.get_string("arch.docker_compose_file")?;
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+
+    Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(&["-f", &arch_compose_file, "up", "-d"])
+        .env("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap())
+        .status()?;
+
+    // Start the DKG process
+    start_dkg(config).await?;
+
+    println!("  {} Development server started successfully.", "✓".bold().green());
 
     Ok(())
 }
@@ -972,41 +977,107 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
         .build()?;
 
     // Prepare the RPC request
-    let rpc_request =
-        serde_json::json!({
+    let rpc_request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "start_dkg",
         "params": [],
         "id": 1
     });
 
-    // Send the RPC request
-    let response = client
-        .post(&leader_rpc)
-        .json(&rpc_request)
-        .send()
-        .await
-        .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
+    // Check if the leader node is up
+    loop {
+        match client.get(&leader_rpc).send().await {
+            Ok(_) => {
+                println!("  {} Leader node is up", "✓".bold().green());
+                break;
+            }
+            Err(e) => {
+                println!("  {} Leader node is not up yet, retrying... ({})", "⚠".bold().yellow(), e);
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+    }
 
-    // Check the response
-    if response.status().is_success() {
-        let result: serde_json::Value = response
-            .json().await
-            .context("Failed to parse JSON response")?;
-        println!("  {} DKG process started successfully", "✓".bold().green());
-        println!(
-            "  {} Response: {}",
-            "ℹ".bold().blue(),
-            serde_json::to_string_pretty(&result).unwrap()
-        );
-    } else {
-        let error_message = response.text().await.context("Failed to get error message")?;
-        println!("  {} Failed to start DKG process", "✗".bold().red());
-        println!("  {} Error: {}", "ℹ".bold().blue(), error_message);
+    // Attempt to start the DKG process
+    loop {
+        // Send the RPC request
+        let response = client
+            .post(&leader_rpc)
+            .json(&rpc_request)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
+
+        // Check the response
+        if response.status().is_success() {
+            let result: serde_json::Value = response
+                .json().await
+                .context("Failed to parse JSON response")?;
+            
+            if let Some(error) = result.get("error") {
+                let error_message = error["message"].as_str().unwrap_or("Unknown error");
+                if error_message == "dkg already occured" {
+                    println!("  {} DKG process already occurred", "✓".bold().green());
+                    break;
+                } else if error_message == "node not ready for dkg" {
+                    println!("  {} Node not ready for DKG, retrying...", "⚠".bold().yellow());
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                } else {
+                    println!("  {} Failed to start DKG process: {}", "✗".bold().red(), error_message);
+                    return Err(anyhow!(error_message.to_string()));
+                }
+            } else {
+                println!("  {} DKG process started successfully", "✓".bold().green());
+                println!(
+                    "  {} Response: {}",
+                    "ℹ".bold().blue(),
+                    serde_json::to_string_pretty(&result).unwrap()
+                );
+            }
+        } else {
+            let error_message = response.text().await.context("Failed to get error message")?;
+            println!("  {} Failed to start DKG process", "✗".bold().red());
+            println!("  {} Error: {}", "ℹ".bold().blue(), error_message);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
+    // Ensure the DKG process has occurred
+    loop {
+        let response = client
+            .post(&leader_rpc)
+            .json(&rpc_request)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response
+                .json().await
+                .context("Failed to parse JSON response")?;
+
+            if let Some(error) = result.get("error") {
+                let error_message = error["message"].as_str().unwrap_or("Unknown error");
+                if error_message == "dkg already occured" {
+                    println!("  {} DKG process already occurred", "✓".bold().green());
+                    break;
+                } else {
+                    println!("  {} Waiting for DKG process to complete...", "⚠".bold().yellow());
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+        } else {
+            let error_message = response.text().await.context("Failed to get error message")?;
+            println!("  {} Failed to check DKG process status", "✗".bold().red());
+            println!("  {} Error: {}", "ℹ".bold().blue(), error_message);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
     }
 
     Ok(())
 }
+
 pub fn start_arch_nodes() -> Result<()> {
     println!("  {} Starting Arch Network nodes...", "→".bold().blue());
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
@@ -1116,18 +1187,23 @@ pub fn start_docker_service(service_name: &str, container_name: &str, compose_fi
     let is_running = check_docker_status(container_name)?;
 
     if !is_running {
-        let output = Command::new(docker_compose_cmd)
-            .args(docker_compose_args)
-            .args(&["-f", compose_file, "up", "-d"])
-            .output()?;
+        println!("  {} {} is not running. Starting it now...", "ℹ".bold().blue(), service_name.yellow());
+        println!("  {} Executing command: {} {} -f {} up -d", "→".bold().blue(), docker_compose_cmd, docker_compose_args.join(" "), compose_file);
 
-        if !output.status.success() {
-            let error_message = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to start {}: {}", service_name, error_message));
+        let mut command = Command::new(docker_compose_cmd);
+        command.args(docker_compose_args)
+               .args(&["-f", compose_file, "up", "-d"])
+               .stdout(Stdio::inherit())
+               .stderr(Stdio::inherit());
+
+        let status = command.status()?;
+
+        if !status.success() {
+            return Err(anyhow!("Failed to start {}", service_name));
         }
-        println!("  {} {} started.", "✓".bold().green(), service_name.yellow());
+        println!("  {} {} started successfully.", "✓".bold().green(), service_name.yellow());
     } else {
-        println!("  {} {} already running.", "ℹ".bold().blue(), service_name.yellow());
+        println!("  {} {} is already running.", "ℹ".bold().blue(), service_name.yellow());
     }
 
     Ok(())
