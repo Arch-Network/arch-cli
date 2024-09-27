@@ -570,6 +570,9 @@ pub async fn server_start(config: &Config) -> Result<()> {
         .env("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap())
         .status()?;
 
+    // Start the DKG process
+    start_dkg(config).await?;
+
     println!("  {} Development server started successfully.", "✓".bold().green());
 
     Ok(())
@@ -972,41 +975,107 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
         .build()?;
 
     // Prepare the RPC request
-    let rpc_request =
-        serde_json::json!({
+    let rpc_request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "start_dkg",
         "params": [],
         "id": 1
     });
 
-    // Send the RPC request
-    let response = client
-        .post(&leader_rpc)
-        .json(&rpc_request)
-        .send()
-        .await
-        .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
+    // Check if the leader node is up
+    loop {
+        match client.get(&leader_rpc).send().await {
+            Ok(_) => {
+                println!("  {} Leader node is up", "✓".bold().green());
+                break;
+            }
+            Err(e) => {
+                println!("  {} Leader node is not up yet, retrying... ({})", "⚠".bold().yellow(), e);
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+    }
 
-    // Check the response
-    if response.status().is_success() {
-        let result: serde_json::Value = response
-            .json().await
-            .context("Failed to parse JSON response")?;
-        println!("  {} DKG process started successfully", "✓".bold().green());
-        println!(
-            "  {} Response: {}",
-            "ℹ".bold().blue(),
-            serde_json::to_string_pretty(&result).unwrap()
-        );
-    } else {
-        let error_message = response.text().await.context("Failed to get error message")?;
-        println!("  {} Failed to start DKG process", "✗".bold().red());
-        println!("  {} Error: {}", "ℹ".bold().blue(), error_message);
+    // Attempt to start the DKG process
+    loop {
+        // Send the RPC request
+        let response = client
+            .post(&leader_rpc)
+            .json(&rpc_request)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
+
+        // Check the response
+        if response.status().is_success() {
+            let result: serde_json::Value = response
+                .json().await
+                .context("Failed to parse JSON response")?;
+            
+            if let Some(error) = result.get("error") {
+                let error_message = error["message"].as_str().unwrap_or("Unknown error");
+                if error_message == "dkg already occured" {
+                    println!("  {} DKG process already occurred", "✓".bold().green());
+                    break;
+                } else if error_message == "node not ready for dkg" {
+                    println!("  {} Node not ready for DKG, retrying...", "⚠".bold().yellow());
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                } else {
+                    println!("  {} Failed to start DKG process: {}", "✗".bold().red(), error_message);
+                    return Err(anyhow!(error_message.to_string()));
+                }
+            } else {
+                println!("  {} DKG process started successfully", "✓".bold().green());
+                println!(
+                    "  {} Response: {}",
+                    "ℹ".bold().blue(),
+                    serde_json::to_string_pretty(&result).unwrap()
+                );
+            }
+        } else {
+            let error_message = response.text().await.context("Failed to get error message")?;
+            println!("  {} Failed to start DKG process", "✗".bold().red());
+            println!("  {} Error: {}", "ℹ".bold().blue(), error_message);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
+    // Ensure the DKG process has occurred
+    loop {
+        let response = client
+            .post(&leader_rpc)
+            .json(&rpc_request)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response
+                .json().await
+                .context("Failed to parse JSON response")?;
+
+            if let Some(error) = result.get("error") {
+                let error_message = error["message"].as_str().unwrap_or("Unknown error");
+                if error_message == "dkg already occured" {
+                    println!("  {} DKG process already occurred", "✓".bold().green());
+                    break;
+                } else {
+                    println!("  {} Waiting for DKG process to complete...", "⚠".bold().yellow());
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+        } else {
+            let error_message = response.text().await.context("Failed to get error message")?;
+            println!("  {} Failed to check DKG process status", "✗".bold().red());
+            println!("  {} Error: {}", "ℹ".bold().blue(), error_message);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
     }
 
     Ok(())
 }
+
 pub fn start_arch_nodes() -> Result<()> {
     println!("  {} Starting Arch Network nodes...", "→".bold().blue());
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
