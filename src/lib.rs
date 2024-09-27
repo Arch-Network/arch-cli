@@ -278,33 +278,33 @@ pub async fn init() -> Result<()> {
         .output()
         .expect("Failed to build Arch Network program");
 
-    // Create project structure
-    println!("{}", "Creating project structure...".bold().blue());
-    let dirs = ["src/app/backend", "src/app/keys"];
-    for dir in dirs.iter() {
-        fs::create_dir_all(dir)
-            .with_context(|| format!("Failed to create directory: {}", dir.yellow()))?;
-    }
+    // // Create project structure
+    // println!("{}", "Creating project structure...".bold().blue());
+    // let dirs = ["src/app/backend", "src/app/keys"];
+    // for dir in dirs.iter() {
+    //     fs::create_dir_all(dir)
+    //         .with_context(|| format!("Failed to create directory: {}", dir.yellow()))?;
+    // }
 
-    // Create boilerplate files
-    println!("{}", "Creating boilerplate files...".bold().blue());
-    let files = [
-        ("src/app/backend/index.ts", include_str!("../templates/backend_index.ts")),
-        ("src/app/backend/package.json", include_str!("../templates/backend_package.json")),
-    ];
+    // // Create boilerplate files
+    // println!("{}", "Creating boilerplate files...".bold().blue());
+    // let files = [
+    //     ("src/app/backend/index.ts", include_str!("../templates/backend_index.ts")),
+    //     ("src/app/backend/package.json", include_str!("../templates/backend_package.json")),
+    // ];
 
-    for (file_path, content) in files.iter() {
-        if !Path::new(file_path).exists() {
-            fs::write(file_path, content)
-                .with_context(|| format!("Failed to write file: {}", file_path))?;
-        } else {
-            println!("  {} File already exists, skipping: {}", "ℹ".bold().blue(), file_path);
-        }
-    }
+    // for (file_path, content) in files.iter() {
+    //     if !Path::new(file_path).exists() {
+    //         fs::write(file_path, content)
+    //             .with_context(|| format!("Failed to write file: {}", file_path))?;
+    //     } else {
+    //         println!("  {} File already exists, skipping: {}", "ℹ".bold().blue(), file_path);
+    //     }
+    // }
 
     // Check if program and frontend directories exist
     let program_dir = Path::new("src/app/program");
-    let frontend_dir = Path::new("src/app/frontend");
+    // let frontend_dir = Path::new("src/app/frontend");
 
     if !program_dir.exists() {
         println!("  {} Creating default program directory", "→".bold().blue());
@@ -323,24 +323,24 @@ pub async fn init() -> Result<()> {
         println!("  {} Existing program directory found, preserving it", "ℹ".bold().blue());
     }
 
-    if !frontend_dir.exists() {
-        println!("  {} Creating default frontend directory", "→".bold().blue());
-        fs::create_dir_all(frontend_dir)?;
-        fs::write(
-            frontend_dir.join("index.html"),
-            include_str!("../templates/frontend_index.html")
-        )?;
-        fs::write(
-            frontend_dir.join("index.js"),
-            include_str!("../templates/frontend_index.js")
-        )?;
-        fs::write(
-            frontend_dir.join("package.json"),
-            include_str!("../templates/frontend_package.json")
-        )?;
-    } else {
-        println!("  {} Existing frontend directory found, preserving it", "ℹ".bold().blue());
-    }
+    // if !frontend_dir.exists() {
+    //     println!("  {} Creating default frontend directory", "→".bold().blue());
+    //     fs::create_dir_all(frontend_dir)?;
+    //     fs::write(
+    //         frontend_dir.join("index.html"),
+    //         include_str!("../templates/frontend_index.html")
+    //     )?;
+    //     fs::write(
+    //         frontend_dir.join("index.js"),
+    //         include_str!("../templates/frontend_index.js")
+    //     )?;
+    //     fs::write(
+    //         frontend_dir.join("package.json"),
+    //         include_str!("../templates/frontend_package.json")
+    //     )?;
+    // } else {
+    //     println!("  {} Existing frontend directory found, preserving it", "ℹ".bold().blue());
+    // }
 
     println!("  {} New Arch Network app initialized successfully!", "✓".bold().green());
     Ok(())
@@ -546,7 +546,37 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
     Ok(())
 }
 
+pub async fn server_start(config: &Config) -> Result<()> {
+    println!("{}", "Starting the development server...".bold().green());
 
+    let arch_data_dir = get_arch_data_dir(config)?;
+
+    // Set the ARCH_DATA_DIR environment variable
+    env::set_var("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap());
+
+    // Set other required environment variables
+    set_env_vars(config)?;
+
+    // Start Bitcoin services
+    start_docker_service("Bitcoin", "bitcoin", &config.get_string("bitcoin.docker_compose_file")?)?;
+
+    // Start Arch Network services
+    let arch_compose_file = config.get_string("arch.docker_compose_file")?;
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+
+    Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(&["-f", &arch_compose_file, "up", "-d"])
+        .env("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap())
+        .status()?;
+
+    // Start the DKG process
+    start_dkg(config).await?;
+
+    println!("  {} Development server started successfully.", "✓".bold().green());
+
+    Ok(())
+}
 
 pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
@@ -688,38 +718,6 @@ fn stop_all_related_containers() -> Result<()> {
             );
         }
     }
-
-    Ok(())
-}
-
-pub async fn server_start(config: &Config) -> Result<()> {
-    println!("{}", "Starting the development server...".bold().green());
-
-    let arch_data_dir = get_arch_data_dir(config)?;
-
-    // Set the ARCH_DATA_DIR environment variable
-    env::set_var("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap());
-
-    // Set other required environment variables
-    set_env_vars(config)?;
-
-    // Start Bitcoin services
-    start_docker_service("Bitcoin", "bitcoin", &config.get_string("bitcoin.docker_compose_file")?)?;
-
-    // Start Arch Network services
-    let arch_compose_file = config.get_string("arch.docker_compose_file")?;
-    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
-
-    Command::new(docker_compose_cmd)
-        .args(docker_compose_args)
-        .args(&["-f", &arch_compose_file, "up", "-d"])
-        .env("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap())
-        .status()?;
-
-    // Start the DKG process
-    start_dkg(config).await?;
-
-    println!("  {} Development server started successfully.", "✓".bold().green());
 
     Ok(())
 }
@@ -1155,6 +1153,9 @@ fn set_env_vars(config: &Config) -> Result<()> {
         ("ELECTRS_REST_API_PORT", "electrs.rest_api_port"),
         ("ELECTRS_ELECTRUM_PORT", "electrs.electrum_port"),
         ("BTC_RPC_EXPLORER_PORT", "btc_rpc_explorer.port"),
+        ("DEMO_FRONTEND_PORT", "demo.frontend_port"),
+        ("DEMO_BACKEND_PORT", "demo.backend_port"),
+        ("INDEXER_PORT", "indexer.port"),
         ("ORD_PORT", "ord.port"),
         ("NETWORK_MODE", "arch.network_mode"),
         ("RUST_LOG", "arch.rust_log"),
@@ -1187,23 +1188,18 @@ pub fn start_docker_service(service_name: &str, container_name: &str, compose_fi
     let is_running = check_docker_status(container_name)?;
 
     if !is_running {
-        println!("  {} {} is not running. Starting it now...", "ℹ".bold().blue(), service_name.yellow());
-        println!("  {} Executing command: {} {} -f {} up -d", "→".bold().blue(), docker_compose_cmd, docker_compose_args.join(" "), compose_file);
+        let output = Command::new(docker_compose_cmd)
+            .args(docker_compose_args)
+            .args(&["-f", compose_file, "up", "-d"])
+            .output()?;
 
-        let mut command = Command::new(docker_compose_cmd);
-        command.args(docker_compose_args)
-               .args(&["-f", compose_file, "up", "-d"])
-               .stdout(Stdio::inherit())
-               .stderr(Stdio::inherit());
-
-        let status = command.status()?;
-
-        if !status.success() {
-            return Err(anyhow!("Failed to start {}", service_name));
+        if !output.status.success() {
+            let error_message = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to start {}: {}", service_name, error_message));
         }
-        println!("  {} {} started successfully.", "✓".bold().green(), service_name.yellow());
+        println!("  {} {} started.", "✓".bold().green(), service_name.yellow());
     } else {
-        println!("  {} {} is already running.", "ℹ".bold().blue(), service_name.yellow());
+        println!("  {} {} already running.", "ℹ".bold().blue(), service_name.yellow());
     }
 
     Ok(())
@@ -1476,13 +1472,15 @@ async fn create_program_account(program_keypair: &Keypair, program_pubkey: &Pubk
     Ok(())
 }
 
-pub async fn demo_start() -> Result<()> {
+pub async fn demo_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
 
+    set_env_vars(config)?;
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
         .arg("demo-docker-compose.yml")
-        .arg("up")        
+        .arg("--build")
+        .arg("up")
         .arg("-d")
         .output()
         .context("Failed to start the demo application using Docker Compose")?;
@@ -1498,8 +1496,10 @@ pub async fn demo_start() -> Result<()> {
     Ok(())
 }
 
-pub async fn demo_stop() -> Result<()> {
+pub async fn demo_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the demo application...".bold().green());
+
+    set_env_vars(config)?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
@@ -1886,10 +1886,13 @@ async fn transfer_account_ownership(caller_keypair: &Keypair, account_pubkey: &P
 pub async fn indexer_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the arch-indexer...".bold().green());
 
+    set_env_vars(config)?;
+
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
         .arg("./arch-indexer/docker-compose.yml") // Updated path
         .arg("up")
+        .arg("--build")
         .arg("-d")
         .output()
         .context("Failed to start the arch-indexer using Docker Compose")?;
@@ -1907,6 +1910,8 @@ pub async fn indexer_start(config: &Config) -> Result<()> {
 
 pub async fn indexer_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the arch-indexer...".bold().green());
+
+    set_env_vars(config)?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")

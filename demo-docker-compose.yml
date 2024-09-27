@@ -1,15 +1,23 @@
 services:
   backend:
-    build: ./src/app/backend
+    build: 
+      context: ./src/app/backend
+      args:
+        DEMO_FRONTEND_PORT: ${DEMO_BACKEND_PORT}
     ports:
-      - "5174:5174"
+      - "${DEMO_BACKEND_PORT}:${DEMO_BACKEND_PORT}"
     networks:
       - arch-network
 
   frontend:
-    build: ./src/app/frontend
+    build: 
+      context: ./src/app/frontend
+      args:
+        DEMO_FRONTEND_PORT: ${DEMO_FRONTEND_PORT}
+        DEMO_BACKEND_PORT: ${DEMO_BACKEND_PORT}
+        INDEXER_PORT: ${INDEXER_PORT}
     ports:
-      - "5173:5173"
+      - "${DEMO_FRONTEND_PORT}:${DEMO_FRONTEND_PORT}"
     networks:
       - arch-network
 

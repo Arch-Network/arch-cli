@@ -14,10 +14,10 @@ WORKDIR /workspace
 
 COPY --from=builder /workspace .
 
-EXPOSE 3003
+EXPOSE ${BTC_RPC_EXPLORER_PORT}
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3003/ || exit 1
+  CMD curl -f http://localhost:${BTC_RPC_EXPLORER_PORT}/ || exit 1
 
 STOPSIGNAL SIGINT
 

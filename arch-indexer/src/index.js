@@ -1,9 +1,12 @@
 const express = require('express');
 const { Pool } = require('pg');
 const { ArchRpcClient } = require('arch-typescript-sdk');
+const cors = require('cors');
 
 const app = express();
-const port = process.env.PORT || 3003;
+app.use(cors());
+
+const port = process.env.INDEXER_PORT || 3003;
 
 const pool = new Pool({
   user: process.env.DB_USER,

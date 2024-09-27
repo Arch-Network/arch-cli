@@ -9,8 +9,9 @@
   "author": "Arch Network",
   "license": "MIT",
   "dependencies": {
+    "arch-typescript-sdk": "^0.0.68",
+    "cors": "^2.8.5",
     "express": "^4.17.1",
-    "pg": "^8.7.1",
-    "arch-typescript-sdk": "^0.0.67"
+    "pg": "^8.7.1"
   }
 }
