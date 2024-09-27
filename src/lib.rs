@@ -92,7 +92,7 @@ pub enum Commands {
 
     /// Manage the frontend application
     #[clap(subcommand)]
-    Demo(DemoCommands),
+    Frontend(FrontendCommands),
 
     /// Manage accounts
     #[clap(subcommand)]
@@ -109,10 +109,6 @@ pub enum Commands {
     /// Alias for 'server stop'
     #[clap(alias = "down", hide = true)]
     Stop,
-
-    /// Manage the indexer
-    #[clap(subcommand)]
-    Indexer(IndexerCommands),
 }
 
 #[derive(Subcommand)]
@@ -146,17 +142,6 @@ pub enum ProjectCommands {
 }
 
 #[derive(Subcommand)]
-pub enum IndexerCommands {
-    /// Start the indexer
-    #[clap(long_about = "Starts the arch-indexer using Docker Compose.")]
-    Start,
-
-    /// Stop the indexer
-    #[clap(long_about = "Stops the arch-indexer using Docker Compose.")]
-    Stop,
-}
-
-#[derive(Subcommand)]
 pub enum DkgCommands {
     /// Start the Distributed Key Generation (DKG) process
     #[clap(long_about = "Initiates the Distributed Key Generation process on the Arch Network.")]
@@ -171,14 +156,10 @@ pub enum BitcoinCommands {
 }
 
 #[derive(Subcommand)]
-pub enum DemoCommands {
-    /// Start the demo application (frontend and backend)
-    #[clap(long_about = "Starts the demo application, including both frontend and backend services.")]
+pub enum FrontendCommands {
+    /// Start the frontend application
+    #[clap(long_about = "Prepares and starts the frontend application, opening it in the default browser.")]
     Start,
-
-    /// Stop the demo application (frontend and backend)
-    #[clap(long_about = "Stops the demo application, including both frontend and backend services.")]
-    Stop,
 }
 
 #[derive(Subcommand)]
@@ -278,33 +259,33 @@ pub async fn init() -> Result<()> {
         .output()
         .expect("Failed to build Arch Network program");
 
-    // // Create project structure
-    // println!("{}", "Creating project structure...".bold().blue());
-    // let dirs = ["src/app/backend", "src/app/keys"];
-    // for dir in dirs.iter() {
-    //     fs::create_dir_all(dir)
-    //         .with_context(|| format!("Failed to create directory: {}", dir.yellow()))?;
-    // }
+    // Create project structure
+    println!("{}", "Creating project structure...".bold().blue());
+    let dirs = ["src/app/backend", "src/app/keys"];
+    for dir in dirs.iter() {
+        fs::create_dir_all(dir)
+            .with_context(|| format!("Failed to create directory: {}", dir.yellow()))?;
+    }
 
-    // // Create boilerplate files
-    // println!("{}", "Creating boilerplate files...".bold().blue());
-    // let files = [
-    //     ("src/app/backend/index.ts", include_str!("../templates/backend_index.ts")),
-    //     ("src/app/backend/package.json", include_str!("../templates/backend_package.json")),
-    // ];
+    // Create boilerplate files
+    println!("{}", "Creating boilerplate files...".bold().blue());
+    let files = [
+        ("src/app/backend/index.ts", include_str!("../templates/backend_index.ts")),
+        ("src/app/backend/package.json", include_str!("../templates/backend_package.json")),
+    ];
 
-    // for (file_path, content) in files.iter() {
-    //     if !Path::new(file_path).exists() {
-    //         fs::write(file_path, content)
-    //             .with_context(|| format!("Failed to write file: {}", file_path))?;
-    //     } else {
-    //         println!("  {} File already exists, skipping: {}", "ℹ".bold().blue(), file_path);
-    //     }
-    // }
+    for (file_path, content) in files.iter() {
+        if !Path::new(file_path).exists() {
+            fs::write(file_path, content)
+                .with_context(|| format!("Failed to write file: {}", file_path))?;
+        } else {
+            println!("  {} File already exists, skipping: {}", "ℹ".bold().blue(), file_path);
+        }
+    }
 
     // Check if program and frontend directories exist
     let program_dir = Path::new("src/app/program");
-    // let frontend_dir = Path::new("src/app/frontend");
+    let frontend_dir = Path::new("src/app/frontend");
 
     if !program_dir.exists() {
         println!("  {} Creating default program directory", "→".bold().blue());
@@ -323,24 +304,24 @@ pub async fn init() -> Result<()> {
         println!("  {} Existing program directory found, preserving it", "ℹ".bold().blue());
     }
 
-    // if !frontend_dir.exists() {
-    //     println!("  {} Creating default frontend directory", "→".bold().blue());
-    //     fs::create_dir_all(frontend_dir)?;
-    //     fs::write(
-    //         frontend_dir.join("index.html"),
-    //         include_str!("../templates/frontend_index.html")
-    //     )?;
-    //     fs::write(
-    //         frontend_dir.join("index.js"),
-    //         include_str!("../templates/frontend_index.js")
-    //     )?;
-    //     fs::write(
-    //         frontend_dir.join("package.json"),
-    //         include_str!("../templates/frontend_package.json")
-    //     )?;
-    // } else {
-    //     println!("  {} Existing frontend directory found, preserving it", "ℹ".bold().blue());
-    // }
+    if !frontend_dir.exists() {
+        println!("  {} Creating default frontend directory", "→".bold().blue());
+        fs::create_dir_all(frontend_dir)?;
+        fs::write(
+            frontend_dir.join("index.html"),
+            include_str!("../templates/frontend_index.html")
+        )?;
+        fs::write(
+            frontend_dir.join("index.js"),
+            include_str!("../templates/frontend_index.js")
+        )?;
+        fs::write(
+            frontend_dir.join("package.json"),
+            include_str!("../templates/frontend_package.json")
+        )?;
+    } else {
+        println!("  {} Existing frontend directory found, preserving it", "ℹ".bold().blue());
+    }
 
     println!("  {} New Arch Network app initialized successfully!", "✓".bold().green());
     Ok(())
@@ -1155,9 +1136,6 @@ fn set_env_vars(config: &Config) -> Result<()> {
         ("ELECTRS_REST_API_PORT", "electrs.rest_api_port"),
         ("ELECTRS_ELECTRUM_PORT", "electrs.electrum_port"),
         ("BTC_RPC_EXPLORER_PORT", "btc_rpc_explorer.port"),
-        ("DEMO_FRONTEND_PORT", "demo.frontend_port"),
-        ("DEMO_BACKEND_PORT", "demo.backend_port"),
-        ("INDEXER_PORT", "indexer.port"),
         ("ORD_PORT", "ord.port"),
         ("NETWORK_MODE", "arch.network_mode"),
         ("RUST_LOG", "arch.rust_log"),
@@ -1478,51 +1456,77 @@ async fn create_program_account(program_keypair: &Keypair, program_pubkey: &Pubk
     println!("    Program account created successfully");
     Ok(())
 }
+// Add this new async function to handle the StartApp command
+pub async fn frontend_start() -> Result<()> {
+    println!("{}", "Starting the frontend application...".bold().green());
 
-pub async fn demo_start(config: &Config) -> Result<()> {
-    println!("{}", "Starting the demo application...".bold().green());
+    // Copy .env.example to .env
+    println!("  {} Copying .env.example to .env...", "→".bold().blue());
+    fs::copy(
+        "src/app/frontend/.env.example",
+        "src/app/frontend/.env",
+    ).context("Failed to copy .env.example to .env")?;
+    println!("  {} .env file created", "✓".bold().green());
 
-    set_env_vars(config)?;
-    let output = ShellCommand::new("docker-compose")
-        .arg("-f")
-        .arg("demo-docker-compose.yml")
-        .arg("--build")
-        .arg("up")
-        .arg("-d")
-        .output()
-        .context("Failed to start the demo application using Docker Compose")?;
+    // Install npm packages
+    println!("  {} Installing npm packages...", "→".bold().blue());
+    let npm_install = TokioCommand::new("npm")
+        .current_dir("src/app/frontend")
+        .arg("install")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .await
+        .context("Failed to run npm install")?;
 
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Failed to start the demo application: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if !npm_install.success() {
+        return Err(anyhow!("npm install failed"));
+    }
+    println!("  {} npm packages installed", "✓".bold().green());
+
+    // Build and start the Vite server
+    println!("  {} Building and starting the Vite server...", "→".bold().blue());
+    let mut vite_dev = TokioCommand::new("npm")
+        .current_dir("src/app/frontend")
+        .arg("run")
+        .arg("dev")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to start Vite server")?;
+
+    // Read the output to get the local URL
+    let stdout = vite_dev.stdout.take().expect("Failed to capture stdout");
+    let mut reader = tokio::io::BufReader::new(stdout).lines();
+
+    let mut local_url = String::new();
+    while let Some(line) = reader.next_line().await? {
+        if line.contains("Local:") {
+            local_url = line.split("Local:").nth(1).unwrap_or("").trim().to_string();
+            break;
+        }
     }
 
-    println!("{}", "Demo application started successfully!".bold().green());
-    Ok(())
-}
-
-pub async fn demo_stop(config: &Config) -> Result<()> {
-    println!("{}", "Stopping the demo application...".bold().green());
-
-    set_env_vars(config)?;
-
-    let output = ShellCommand::new("docker-compose")
-        .arg("-f")
-        .arg("demo-docker-compose.yml")
-        .arg("down")        
-        .output()
-        .context("Failed to stop the demo application using Docker Compose")?;
-
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Failed to stop the demo application: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if local_url.is_empty() {
+        return Err(anyhow!("Failed to get local URL from Vite server output"));
     }
 
-    println!("{}", "Demo application stopped successfully!".bold().green());
+    println!("  {} Vite server started", "✓".bold().green());
+
+    // Open the browser
+    println!("  {} Opening application in default browser...", "→".bold().blue());
+    if webbrowser::open(&local_url).is_ok() {
+        println!("  {} Application opened in default browser", "✓".bold().green());
+    } else {
+        println!("  {} Failed to open browser. Please navigate to {} manually", "⚠".bold().yellow(), local_url);
+    }
+
+    println!("{}", "Frontend application started successfully!".bold().green());
+    println!("Press Ctrl+C to stop the server and exit.");
+
+    // Wait for the Vite process to finish (i.e., until the user interrupts it)
+    vite_dev.wait().await?;
+
     Ok(())
 }
 
@@ -1887,53 +1891,5 @@ async fn transfer_account_ownership(caller_keypair: &Keypair, account_pubkey: &P
     )
     .await.expect("signing and sending a transaction should not fail");
 
-    Ok(())
-}
-
-pub async fn indexer_start(config: &Config) -> Result<()> {
-    println!("{}", "Starting the arch-indexer...".bold().green());
-
-    set_env_vars(config)?;
-
-    let output = ShellCommand::new("docker-compose")
-        .arg("-f")
-        .arg("./arch-indexer/docker-compose.yml") // Updated path
-        .arg("up")
-        .arg("--build")
-        .arg("-d")
-        .output()
-        .context("Failed to start the arch-indexer using Docker Compose")?;
-
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Failed to start the arch-indexer: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    println!("{}", "arch-indexer started successfully!".bold().green());
-    Ok(())
-}
-
-pub async fn indexer_stop(config: &Config) -> Result<()> {
-    println!("{}", "Stopping the arch-indexer...".bold().green());
-
-    set_env_vars(config)?;
-
-    let output = ShellCommand::new("docker-compose")
-        .arg("-f")
-        .arg("./arch-indexer/docker-compose.yml")
-        .arg("down")
-        .output()
-        .context("Failed to stop the arch-indexer using Docker Compose")?;
-
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Failed to stop the arch-indexer: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    println!("{}", "arch-indexer stopped successfully!".bold().green());
     Ok(())
 }
