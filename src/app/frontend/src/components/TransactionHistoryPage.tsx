@@ -44,6 +44,7 @@ const TransactionHistoryPage: React.FC = () => {
   const [totalBlocks, setTotalBlocks] = useState<number>(0);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null);
+  const [pagination, setPagination] = useState<PaginationData | null>(null);
 
   const navigate = useNavigate();
 
@@ -92,9 +93,9 @@ const TransactionHistoryPage: React.FC = () => {
       if (!response.ok) {
         throw new Error('Failed to fetch blocks from indexer');
       }
-      const data = await response.json();            
-      setBlocks(data);
-      setTotalBlocks(data.length);
+      const data = await response.json();
+      setBlocks(data.blocks);
+      setPagination(data.pagination);
     } catch (err) {
       console.error('Error fetching blocks:', err);
       setError('Failed to fetch blocks. Please try again later.');
@@ -222,44 +223,47 @@ const TransactionHistoryPage: React.FC = () => {
           </AnimatePresence>
           
           {showBlocks && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.3 }}
-            >
-              <SearchBar onSearch={handleSearch} />
-              {loading ? (
-                <div className="flex justify-center items-center h-64">
-                  <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-arch-orange"></div>
-                </div>
-              ) : error ? (
-                <ErrorMessage message={error} />
-              ) : (
-                <>
-                  <BlockList blocks={blocks} />
-                  <div className="mt-6 flex justify-center items-center space-x-4">
-                    <button
-                      onClick={() => setCurrentPage((prev: number) => Math.max(1, prev - 1))}
-                      disabled={currentPage === 1}
-                      className="px-4 py-2 bg-arch-gray text-arch-white rounded hover:bg-arch-orange disabled:bg-arch-gray disabled:text-gray-500 transition duration-300"
-                    >
-                      Previous
-                    </button>
-                    <span className="text-arch-white">
-                      Page {currentPage} of {Math.ceil(totalBlocks / BLOCKS_PER_PAGE)}
-                    </span>
-                    <button
-                      onClick={() => setCurrentPage(prev => prev + 1)}
-                      disabled={currentPage * BLOCKS_PER_PAGE >= totalBlocks}
-                      className="px-4 py-2 bg-arch-gray text-arch-white rounded hover:bg-arch-orange disabled:bg-arch-gray disabled:text-gray-500 transition duration-300"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </>
-              )}
-            </motion.div>
-          )}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.3 }}
+      >
+        <SearchBar onSearch={handleSearch} />
+        {loading ? (
+          <div className="flex justify-center items-center h-64">
+            <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-arch-orange"></div>
+          </div>
+        ) : error ? (
+          <ErrorMessage message={error} />
+        ) : (
+          <>
+            <BlockList blocks={blocks} />
+            {pagination && (
+              <div className="mt-6 flex justify-center items-center space-x-4">
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={pagination.currentPage === 1}
+                  className="px-4 py-2 bg-arch-gray text-arch-white rounded hover:bg-arch-orange disabled:bg-arch-gray disabled:text-gray-500 transition duration-300"
+                >
+                  Previous
+                </button>
+                <span className="text-arch-white">
+                  Page {pagination.currentPage} of {pagination.totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.min(pagination.totalPages, prev + 1))}
+                  disabled={pagination.currentPage >= pagination.totalPages}
+                  className="px-4 py-2 bg-arch-gray text-arch-white rounded hover:bg-arch-orange disabled:bg-arch-gray disabled:text-gray-500 transition duration-300"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </motion.div>
+    )}
+        
         </div>
       </div>
     </div>

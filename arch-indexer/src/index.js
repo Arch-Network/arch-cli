@@ -121,8 +121,30 @@ async function storeBlock(block) {
   
   app.get('/api/blocks', async (req, res) => {
     try {
-      const { rows } = await pool.query('SELECT * FROM blocks ORDER BY height DESC LIMIT 200');
-      res.json(rows);
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 50;
+      const offset = (page - 1) * limit;
+  
+      const countQuery = 'SELECT COUNT(*) FROM blocks';
+      const dataQuery = 'SELECT * FROM blocks ORDER BY height DESC LIMIT $1 OFFSET $2';
+  
+      const [countResult, dataResult] = await Promise.all([
+        pool.query(countQuery),
+        pool.query(dataQuery, [limit, offset])
+      ]);
+  
+      const totalBlocks = parseInt(countResult.rows[0].count);
+      const totalPages = Math.ceil(totalBlocks / limit);
+  
+      res.json({
+        blocks: dataResult.rows,
+        pagination: {
+          currentPage: page,
+          totalPages: totalPages,
+          totalItems: totalBlocks,
+          itemsPerPage: limit
+        }
+      });
     } catch (error) {
       console.error('Error fetching blocks:', error);
       res.status(500).json({ error: 'Internal server error' });

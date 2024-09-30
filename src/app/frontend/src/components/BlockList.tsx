@@ -8,13 +8,18 @@ interface BlockData {
   hash: string;
   timestamp: number;
   transactions?: string[];
+  txCount?: number;
 }
 
 interface BlockListProps {
-  blocks: BlockData[];
+  blocks: BlockData[] | undefined;
 }
 
 const BlockList: React.FC<BlockListProps> = ({ blocks }) => {
+  if (!blocks || blocks.length === 0) {
+    return <div className="text-arch-white">No blocks available.</div>;
+  }
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm text-left text-arch-white">
@@ -58,7 +63,8 @@ const BlockList: React.FC<BlockListProps> = ({ blocks }) => {
               <td className="px-6 py-4">
                 <div className="flex items-center">
                   <FileText size={16} className="mr-2 text-arch-orange" />
-                  {block.transactions ? block.transactions.length : 'N/A'}
+                  {block.txCount !== undefined ? block.txCount : 
+                   (block.transactions ? block.transactions.length : 'N/A')}
                 </div>
               </td>
               <td className="px-6 py-4">0</td>
