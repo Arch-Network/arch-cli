@@ -7,7 +7,7 @@ const client = new ArchRpcClient((import.meta as any).env.VITE_ARCH_NODE_URL || 
 const PROGRAM_PUBKEY = (import.meta as any).env.VITE_PROGRAM_PUBKEY;
 const BACKEND_URL = (import.meta as any).env.VITE_BACKEND_URL || 'http://localhost:5174';
 
-interface CreateArchAccountProps {
+interface GraffitiWallProps {
   accountPubkey: string;
 }
 
@@ -19,7 +19,7 @@ class GraffitiMessage {
   ) {}
 }
 
-const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
+const GraffitiWall: React.FC<GraffitiWallProps> = ({ accountPubkey }) => {
   const [error, setError] = useState<string | null>(null);
   const [isAccountCreated, setIsAccountCreated] = useState(false);
   const [message, setMessage] = useState('');
@@ -48,7 +48,7 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
     } catch (error) {
       console.error('Error checking account:', error);
       setIsAccountCreated(false);
-      setError("Network Error: Please ensure your network is up and the Arch server is running. You can start the server using the command:\n\n```\narch-cli server start\n```");
+      // setError("Network Error: Please ensure your network is up and the Arch server is running. You can start the server using the command:\n\n```\narch-cli server start\n```");
     }
   }, [accountPubkey]);
   const fetchWallData = useCallback(async () => {
