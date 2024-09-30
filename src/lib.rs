@@ -1752,11 +1752,18 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
 
     set_env_vars(config)?;
+    
+    // Get the demo frontend port from the config or use the default
+    let frontend_port = config
+        .get_string("demo.frontend_port")
+        .unwrap_or_else(|_| "5173".to_string());
+
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
         .arg("demo-docker-compose.yml")
         .arg("up")
-        .arg("-d")
+        .arg("-d")// Ensure the images are rebuilt if there are changes
+        .env("DEMO_FRONTEND_PORT", &frontend_port)  // Pass the port as an environment variable
         .output()
         .context("Failed to start the demo application using Docker Compose")?;
 
@@ -1767,10 +1774,21 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         ));
     }
 
-    println!(
-        "{}",
-        "Demo application started successfully!".bold().green()
-    );
+    println!("{}", "Demo application started successfully!".bold().green());
+
+    // Use the configured frontend port for the demo URL
+    let demo_url = format!("http://localhost:{}", frontend_port);
+
+    println!("{}", "You can access the demo application at:".bold());
+    println!("  {} {}", "→".bold().blue(), demo_url.yellow());
+
+    // Optionally, open the URL in the default web browser
+    if webbrowser::open(&demo_url).is_ok() {
+        println!("  {} Opened the demo application in your default web browser", "✓".bold().green());
+    } else {
+        println!("  {} Unable to open the URL automatically. Please visit it manually.", "ℹ".bold().blue());
+    }
+
     Ok(())
 }
 
