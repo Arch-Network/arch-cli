@@ -1,10 +1,10 @@
-use arch_cli::*;
-use anyhow::Result;
-use config::{Config, File, Environment};
-use colored::*;
-use dotenv::dotenv;
-use clap::Parser;
 use anyhow::Context;
+use anyhow::Result;
+use arch_cli::*;
+use clap::Parser;
+use colored::*;
+use config::{Config, Environment, File};
+use dotenv::dotenv;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
         Commands::Config(ConfigCommands::Edit) => config_edit().await,
         Commands::Config(ConfigCommands::Reset) => config_reset().await,
         Commands::Start => server_start(&config).await,
-        Commands::Stop => server_stop().await,        
+        Commands::Stop => server_stop().await,
         Commands::Indexer(IndexerCommands::Start) => indexer_start(&config).await,
         Commands::Indexer(IndexerCommands::Stop) => indexer_stop(&config).await,
     };
