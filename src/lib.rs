@@ -7,14 +7,12 @@ use arch_program::system_instruction::SystemInstruction;
 use bitcoin::Address;
 use bitcoin::Amount;
 use bitcoin::Network;
-use bitcoincore_rpc::jsonrpc::client;
 use bitcoincore_rpc::jsonrpc::serde_json;
 use bitcoincore_rpc::{Client, RpcApi};
 use clap::{Args, Parser, Subcommand};
 use colored::*;
 use common::constants::*;
 use common::helper::*;
-use common::wallet_manager;
 use config::{Config, Environment, File};
 use rand::rngs::OsRng;
 use secp256k1::Keypair;
@@ -33,16 +31,12 @@ use std::process::Command as ShellCommand;
 use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
-use tokio;
 
 use common::wallet_manager::*;
-use std::process::Stdio;
-use tokio::io::AsyncBufReadExt;
-use tokio::process::Command as TokioCommand;
-use webbrowser;
 
 #[derive(Deserialize)]
 pub struct ServiceConfig {
+    #[allow(dead_code)]
     docker_compose_file: String,
     services: Vec<String>,
 }
@@ -478,7 +472,7 @@ fn check_dependencies() -> Result<()> {
     Ok(())
 }
 
-fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
+fn _start_or_create_services(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
     println!(
         "  {} Starting {}...",
         "→".bold().blue(),
@@ -490,7 +484,7 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
 
     for container in &service_config.services {
         let ps_output = Command::new("docker-compose")
-            .args(&[
+            .args([
                 "-f",
                 &service_config.docker_compose_file,
                 "ps",
@@ -510,11 +504,11 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
         }
 
         let status_output = Command::new("docker")
-            .args(&[
+            .args([
                 "inspect",
                 "-f",
                 "{{.State.Running}}",
-                &String::from_utf8_lossy(&ps_output.stdout).trim(),
+                String::from_utf8_lossy(&ps_output.stdout).trim(),
             ])
             .output()
             .context(format!("Failed to check status of container {}", container))?;
@@ -538,7 +532,7 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
                 service_name.yellow()
             );
             let start_output = Command::new("docker-compose")
-                .args(&["-f", &service_config.docker_compose_file, "start"])
+                .args(["-f", &service_config.docker_compose_file, "start"])
                 .output()
                 .context(format!(
                     "Failed to start existing {} containers",
@@ -569,7 +563,7 @@ fn start_or_create_services(service_name: &str, service_config: &ServiceConfig) 
             service_name.yellow()
         );
         let up_output = Command::new("docker-compose")
-            .args(&[
+            .args([
                 "--progress",
                 "auto",
                 "-f",
@@ -646,7 +640,7 @@ pub async fn server_start(config: &Config) -> Result<()> {
 
     Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(&["-f", &arch_compose_file, "up", "-d"])
+        .args(["-f", &arch_compose_file, "up", "-d"])
         .env("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap())
         .status()?;
 
@@ -779,7 +773,7 @@ fn stop_all_related_containers() -> Result<()> {
 
         // List all running containers with the given prefix
         let output = Command::new("docker")
-            .args(&["ps", "-q", "--filter", &format!("name={}", prefix)])
+            .args(["ps", "-q", "--filter", &format!("name={}", prefix)])
             .output()
             .context(format!("Failed to list running {} containers", prefix))?;
 
@@ -858,7 +852,7 @@ fn fetch_service_logs(service_name: &str, service_config: &ServiceConfig) -> Res
     for container in &service_config.services {
         println!("    Logs for {}:", container.bold());
         let log_output = Command::new("docker")
-            .args(&["logs", "--tail", "50", container])
+            .args(["logs", "--tail", "50", container])
             .output()
             .context(format!("Failed to fetch logs for container {}", container))?;
 
@@ -877,7 +871,7 @@ fn check_service_status(service_name: &str, service_config: &ServiceConfig) -> R
 
     for container in &service_config.services {
         let status_output = Command::new("docker")
-            .args(&[
+            .args([
                 "ps",
                 "-a",
                 "--filter",
@@ -945,7 +939,7 @@ pub async fn server_logs(service: &str, config: &Config) -> Result<()> {
 
 pub fn start_existing_containers(compose_file: &str) -> Result<()> {
     let output = Command::new("docker-compose")
-        .args(&["-f", compose_file, "ps", "-q"])
+        .args(["-f", compose_file, "ps", "-q"])
         .output()
         .context("Failed to list existing containers")?;
 
@@ -955,7 +949,7 @@ pub fn start_existing_containers(compose_file: &str) -> Result<()> {
             "→".bold().blue()
         );
         let start_output = Command::new("docker-compose")
-            .args(&["-f", compose_file, "start"])
+            .args(["-f", compose_file, "start"])
             .output()
             .context("Failed to start existing containers")?;
 
@@ -994,7 +988,7 @@ pub fn remove_docker_networks() -> Result<()> {
         );
 
         let output = Command::new("docker")
-            .args(&["network", "rm", network])
+            .args(["network", "rm", network])
             .output()
             .context(format!("Failed to remove Docker network: {}", network))?;
 
@@ -1036,7 +1030,7 @@ pub fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()
 
     let output = Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(&["-f", compose_file, "down"])
+        .args(["-f", compose_file, "down"])
         .output()?;
 
     if !output.status.success() {
@@ -1070,7 +1064,7 @@ pub async fn clean() -> Result<()> {
     // Stop and remove Docker containers
     Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(&[
+        .args([
             "-f",
             &config
                 .get_string("bitcoin.docker_compose_file")
@@ -1081,7 +1075,7 @@ pub async fn clean() -> Result<()> {
         .status()?;
     Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(&[
+        .args([
             "-f",
             &config
                 .get_string("arch.docker_compose_file")
@@ -1103,7 +1097,7 @@ pub fn start_bitcoin_regtest() -> Result<()> {
 
     Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(&["-f", "path/to/bitcoin-docker-compose.yml", "up", "-d"])
+        .args(["-f", "path/to/bitcoin-docker-compose.yml", "up", "-d"])
         .status()?;
 
     println!(
@@ -1122,7 +1116,7 @@ pub fn stop_bitcoin_regtest() -> Result<()> {
 
     Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(&["-f", "path/to/bitcoin-docker-compose.yml", "down"])
+        .args(["-f", "path/to/bitcoin-docker-compose.yml", "down"])
         .status()?;
 
     println!(
@@ -1279,7 +1273,7 @@ pub fn start_arch_nodes() -> Result<()> {
 
     Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(&["-f", "path/to/arch-docker-compose.yml", "up", "-d"])
+        .args(["-f", "path/to/arch-docker-compose.yml", "up", "-d"])
         .status()?;
 
     println!(
@@ -1295,7 +1289,7 @@ pub fn stop_arch_nodes() -> Result<()> {
 
     Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(&["-f", "path/to/arch-docker-compose.yml", "down"])
+        .args(["-f", "path/to/arch-docker-compose.yml", "down"])
         .status()?;
 
     println!(
@@ -1401,7 +1395,7 @@ pub fn start_docker_service(
     if !is_running {
         let output = Command::new(docker_compose_cmd)
             .args(docker_compose_args)
-            .args(&["-f", compose_file, "up", "-d"])
+            .args(["-f", compose_file, "up", "-d"])
             .output()?;
 
         if !output.status.success() {
@@ -1443,9 +1437,9 @@ pub fn check_docker_status(container_name: &str) -> Result<bool> {
     Ok(running)
 }
 
-fn create_docker_network(network_name: &str) -> Result<()> {
+fn _create_docker_network(network_name: &str) -> Result<()> {
     let output = Command::new("docker")
-        .args(&["network", "create", "--driver", "bridge", network_name])
+        .args(["network", "create", "--driver", "bridge", network_name])
         .output()
         .context("Failed to execute docker network create command")?;
 
@@ -1485,7 +1479,7 @@ fn get_program_path(args: &DeployArgs) -> PathBuf {
 }
 
 fn build_program(args: &DeployArgs) -> Result<()> {
-    println!("  {} Building program...", "ℹ");
+    println!("  ℹ Building program...");
 
     let path = get_program_path(args);
     if !std::path::Path::new(&path).exists() {
@@ -1493,7 +1487,7 @@ fn build_program(args: &DeployArgs) -> Result<()> {
     }
 
     let output = std::process::Command::new("cargo")
-        .args(&["build-sbf", "--manifest-path", path.to_str().unwrap()])
+        .args(["build-sbf", "--manifest-path", path.to_str().unwrap()])
         .output()
         .context("Failed to execute cargo build-sbf")?;
 
@@ -1504,10 +1498,10 @@ fn build_program(args: &DeployArgs) -> Result<()> {
         return Err(anyhow!("Build failed"));
     }
 
-    println!("  {} Program built successfully", "✓");
+    println!("  ✓ Program built successfully");
     Ok(())
 }
-fn get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
+fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
     Ok(args.program_key.clone().unwrap_or_else(|| {
         config
             .get_string("program.key_path")
@@ -1693,7 +1687,7 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
             }],
             data: vec![2],
         },
-        vec![program_keypair.clone()],
+        vec![*program_keypair],
     )
     .await?;
     println!("    Transaction sent: {}", txid.clone());
@@ -1701,7 +1695,7 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
     println!("    Program made executable successfully");
     Ok(())
 }
-async fn deploy_program_txs(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
+async fn deploy_program_txs(program_keypair: &Keypair, _program_pubkey: &Pubkey) -> Result<()> {
     println!("    Deploying program transactions...");
     deploy_program_txs_async(
         *program_keypair,
@@ -1724,7 +1718,7 @@ async fn create_program_account(
             vout,
             *program_pubkey,
         ),
-        vec![program_keypair.clone()],
+        vec![*program_keypair],
     )
     .await?;
     get_processed_transaction_async(NODE1_ADDRESS.to_string(), txid.clone()).await?;
@@ -2196,7 +2190,7 @@ async fn generate_account_address(caller_pubkey: Pubkey) -> Result<String> {
     Ok(account_address)
 }
 
-async fn wait_for_funds(client: &Client, address: &str, config: &Config) -> Result<()> {
+async fn _wait_for_funds(client: &Client, address: &str, config: &Config) -> Result<()> {
     // Check if wallet_manager.client is connected
     let connected = client.get_blockchain_info()?;
     println!("  {} Connected: {:?}", "ℹ".bold().blue(), connected);
@@ -2221,7 +2215,7 @@ async fn create_arch_account(
     wallet_manager: &WalletManager,
     config: &Config,
 ) -> Result<()> {
-    let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
+    let tx_info = fund_address(&wallet_manager.client, account_address, config).await?;
 
     // Output the bitcoin transaction info
     // println!("  {} Transaction info: {:?}", "ℹ".bold().blue(), tx_info);

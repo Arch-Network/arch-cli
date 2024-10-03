@@ -11,17 +11,13 @@ use bitcoin::{
 };
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use colored::*;
-use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
 use reqwest::blocking::Client as HttpClient;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{from_str, json, Value};
-use std::env;
 use std::fs;
-use std::process::Child;
-use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::{self};
@@ -33,7 +29,7 @@ use crate::constants::{
     GET_ACCOUNT_ADDRESS, GET_BEST_BLOCK_HASH, GET_BLOCK, GET_PROCESSED_TRANSACTION, GET_PROGRAM,
     NODE1_ADDRESS, READ_ACCOUNT_INFO, TRANSACTION_NOT_FOUND_CODE,
 };
-use crate::models::{BitcoinRpcInfo, CallerInfo};
+use crate::models::{CallerInfo};
 use crate::runtime_transaction::RuntimeTransaction;
 use crate::signature::Signature;
 use arch_program::instruction::Instruction;

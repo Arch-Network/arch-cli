@@ -1,13 +1,8 @@
-use anyhow::Context;
 use anyhow::Result;
 use arch_cli::*;
 use clap::Parser;
 use colored::*;
-use config::{Config, Environment, File};
 use dotenv::dotenv;
-use std::env;
-use std::fs;
-use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> Result<()> {
