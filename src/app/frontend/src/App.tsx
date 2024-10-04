@@ -8,27 +8,26 @@ import TransactionDetailsPage from './components/TransactionDetailsPage';
 import SearchResultPage from './components/SearchResultPage';
 
 
-
 const App: React.FC = () => {
   const [privateKey, setPrivateKey] = useState<string>('');  
   const [generatedPubkey, setGeneratedPubkey] = useState<string>('');
   const [accountPubkey, setAccountPubkey] = useState<string>('');
   const [error, setError] = useState<string>('');
   
-  useEffect(() => {
-    // Check if private key exists in local storage
-    const storedPrivateKey = localStorage.getItem('archPrivateKey');
-    if (storedPrivateKey) {
-      setPrivateKey(storedPrivateKey);
-      handleGeneratePubkey(storedPrivateKey);
-    } else {
-      // Generate a new private key
-      const newPrivateKey = generatePrivateKey();
-      localStorage.setItem('archPrivateKey', newPrivateKey);
-      setPrivateKey(newPrivateKey);
-      handleGeneratePubkey(newPrivateKey);
-    }
-  }, []);
+  // useEffect(() => {
+  //   // Check if private key exists in local storage
+  //   const storedPrivateKey = localStorage.getItem('archPrivateKey');
+  //   if (storedPrivateKey) {
+  //     setPrivateKey(storedPrivateKey);
+  //     handleGeneratePubkey(storedPrivateKey);
+  //   } else {
+  //     // Generate a new private key
+  //     const newPrivateKey = generatePrivateKey();
+  //     localStorage.setItem('archPrivateKey', newPrivateKey);
+  //     setPrivateKey(newPrivateKey);
+  //     handleGeneratePubkey(newPrivateKey);
+  //   }
+  // }, []);
 
   const handleGeneratePubkey = (key: string = privateKey) => {
     try {

@@ -3,7 +3,7 @@ import { ArchRpcClient, Pubkey, RuntimeTransaction, Instruction, Message } from 
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import { AlertCircle } from 'lucide-react';
-import { schnorr } from '@noble/secp256k1';
+import { schnorr } from 'noble-secp256k1';
 import {
   AddressPurpose,
   MessageSigningProtocols,

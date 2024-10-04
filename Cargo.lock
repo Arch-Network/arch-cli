@@ -86,6 +86,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+
+[[package]]
 name = "async-trait"
 version = "0.1.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -153,6 +159,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98f7eed2b2781a6f0b5c903471d48e15f56fb4e1165df8a9a2337fd1a59d45ea"
 
 [[package]]
+name = "bip322"
+version = "0.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1ce446a2647b907e2b39a956e1739c9f49f12fea948a3a5ead25e5d2bf2c67c"
+dependencies = [
+ "base64 0.22.1",
+ "bitcoin",
+ "bitcoin_hashes 0.14.0",
+ "hex",
+ "miniscript",
+ "snafu",
+]
+
+[[package]]
 name = "bitcoin"
 version = "0.31.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -160,8 +180,8 @@ checksum = "6c85783c2fe40083ea54a33aa2f0ba58831d90fcd190f5bdc47e74e84d2a96ae"
 dependencies = [
  "bech32",
  "bitcoin-internals",
- "bitcoin_hashes",
- "hex-conservative",
+ "bitcoin_hashes 0.13.0",
+ "hex-conservative 0.1.2",
  "hex_lit",
  "secp256k1",
  "serde",
@@ -177,14 +197,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitcoin-io"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "340e09e8399c7bd8912f495af6aa58bea0c9214773417ffaa8f6460f93aaee56"
+
+[[package]]
 name = "bitcoin_hashes"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1930a4dabfebb8d7d9992db18ebe3ae2876f0a305fab206fd168df931ede293b"
 dependencies = [
  "bitcoin-internals",
- "hex-conservative",
+ "hex-conservative 0.1.2",
  "serde",
+]
+
+[[package]]
+name = "bitcoin_hashes"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb18c03d0db0247e147a21a6faafd5a7eb851c743db062de72018b6b7e8e4d16"
+dependencies = [
+ "bitcoin-io",
+ "hex-conservative 0.2.1",
 ]
 
 [[package]]
@@ -375,6 +411,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arch_program",
+ "bip322",
  "bitcoin",
  "bitcoincore-rpc",
  "borsh",
@@ -783,6 +820,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "212ab92002354b4819390025006c897e8140934349e8635c9b077f47b4dcbd20"
 
 [[package]]
+name = "hex-conservative"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5313b072ce3c597065a808dbf612c4c8e8590bdbf8b579508bf7a762c5eae6cd"
+dependencies = [
+ "arrayvec",
+]
+
+[[package]]
 name = "hex_lit"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1111,6 +1157,17 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "miniscript"
+version = "11.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3127e10529a57a8f7fa9b1332c4c2f72baadaca6777798f910dff3c922620b14"
+dependencies = [
+ "bech32",
+ "bitcoin",
+ "bitcoin-internals",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -1753,7 +1810,7 @@ version = "0.28.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d24b59d129cdadea20aea4fb2352fa053712e5d713eee47d700cd4b2bc002f10"
 dependencies = [
- "bitcoin_hashes",
+ "bitcoin_hashes 0.13.0",
  "rand",
  "secp256k1-sys",
  "serde",
@@ -1888,6 +1945,27 @@ name = "smallvec"
 version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
+
+[[package]]
+name = "snafu"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "223891c85e2a29c3fe8fb900c1fae5e69c2e42415e3177752e8718475efa5019"
+dependencies = [
+ "snafu-derive",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03c3c6b7927ffe7ecaa769ee0e3994da3b8cafc8f444578982c83ecb161af917"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.77",
+]
 
 [[package]]
 name = "socket2"
