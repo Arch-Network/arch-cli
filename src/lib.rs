@@ -113,6 +113,10 @@ pub enum Commands {
     /// Manage the indexer
     #[clap(subcommand)]
     Indexer(IndexerCommands),
+
+    /// Manage the validator
+    #[clap(subcommand)]
+    Validator(ValidatorCommands),
 }
 
 #[derive(Subcommand)]
@@ -153,6 +157,17 @@ pub enum IndexerCommands {
 
     /// Stop the indexer
     #[clap(long_about = "Stops the arch-indexer using Docker Compose.")]
+    Stop,
+}
+
+#[derive(Subcommand)]
+pub enum ValidatorCommands {
+    /// Start the validator
+    #[clap(long_about = "Starts a local validator with specified network settings.")]
+    Start(ValidatorStartArgs),
+
+    /// Stop the validator
+    #[clap(long_about = "Stops the local validator.")]
     Stop,
 }
 
@@ -242,6 +257,13 @@ pub struct SendCoinsArgs {
     /// Amount to send
     #[clap(long, help = "Specifies the amount of coins to send")]
     amount: u64,
+}
+
+#[derive(Args)]
+pub struct ValidatorStartArgs {
+    /// Network to use (testnet or mainnet)
+    #[clap(long, default_value = "testnet", help = "Specifies the network to use: testnet or mainnet")]
+    network: String,
 }
 
 pub async fn init() -> Result<()> {
@@ -1928,5 +1950,98 @@ pub async fn indexer_stop(config: &Config) -> Result<()> {
     }
 
     println!("{}", "arch-indexer stopped successfully!".bold().green());
+    Ok(())
+}
+
+pub async fn validator_start(args: &ValidatorStartArgs) -> Result<()> {
+    println!("{}", "Starting the local validator...".bold().green());
+
+    let network = &args.network;
+    let rust_log = "info";
+    let rpc_bind_ip = "0.0.0.0";
+    let rpc_bind_port = "9002";
+    let bitcoin_rpc_endpoint = "bitcoin-node.dev.aws.archnetwork.xyz";
+    let bitcoin_rpc_port = "18443";
+    let bitcoin_rpc_username = "bitcoin";
+    let bitcoin_rpc_password = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618";
+
+    let container_name = "local_validator";
+    let container_exists = String::from_utf8(
+        ShellCommand::new("docker")
+            .arg("ps")
+            .arg("-a")
+            .arg("--format")
+            .arg("{{.Names}}")
+            .output()
+            .context("Failed to check existing containers")?
+            .stdout
+    )?
+    .lines()
+    .any(|name| name == container_name);
+
+    let output = if container_exists {
+        ShellCommand::new("docker")
+            .arg("start")
+            .arg(container_name)
+            .output()
+            .context("Failed to start the existing local validator container")?
+    } else {
+        ShellCommand::new("docker")
+        .arg("run")
+        .arg("--platform")
+        .arg("linux/amd64")
+        .arg("--rm")
+        .arg("-d")
+        .arg("--name")
+        .arg("local_validator")
+        .arg("-e")
+        .arg(format!("RUST_LOG={}", rust_log))
+        .arg("-p")
+        .arg(format!("{}:{}", rpc_bind_port, rpc_bind_port))
+        .arg("ghcr.io/arch-network/local_validator:pr-282")
+        .arg("/usr/bin/local_validator")
+        .arg("--rpc-bind-ip")
+        .arg(rpc_bind_ip)
+        .arg("--rpc-bind-port")
+        .arg(rpc_bind_port)
+        .arg("--bitcoin-rpc-endpoint")
+        .arg(bitcoin_rpc_endpoint)
+        .arg("--bitcoin-rpc-port")
+        .arg(bitcoin_rpc_port)
+        .arg("--bitcoin-rpc-username")
+        .arg(bitcoin_rpc_username)
+        .arg("--bitcoin-rpc-password")
+        .arg(bitcoin_rpc_password)
+        .output()
+        .context("Failed to start the local validator")?
+    };
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to start the local validator: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    println!("{}", "Local validator started successfully!".bold().green());
+    Ok(())
+}
+pub async fn validator_stop() -> Result<()> {
+    println!("{}", "Stopping the local validator...".bold().green());
+
+    let output = ShellCommand::new("docker")
+        .arg("stop")
+        .arg("local_validator")
+        .output()
+        .context("Failed to stop the local validator")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to stop the local validator: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    println!("{}", "Local validator stopped successfully!".bold().green());
     Ok(())
 }
