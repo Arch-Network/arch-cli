@@ -103,7 +103,6 @@ arch-cli init
 
 This command sets up a new Arch Network project with the necessary folder structure, boilerplate code, and Docker configurations.
 
-
 ### Manage the development server
 
 ```sh
@@ -172,6 +171,16 @@ arch-cli config reset
 ```
 
 These commands allow you to view, edit, and reset the configuration file.
+
+### Manage the validator
+
+```sh
+arch-cli validator start
+arch-cli validator stop
+```
+
+- `arch-cli validator start`: Starts a local validator with specified network settings.
+- `arch-cli validator stop`: Stops the local validator.
 
 ## Getting Started with the Demo App
 
