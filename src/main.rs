@@ -1,13 +1,8 @@
-use arch_cli::*;
 use anyhow::Result;
-use config::{Config, File, Environment};
+use arch_cli::*;
+use clap::Parser;
 use colored::*;
 use dotenv::dotenv;
-use clap::Parser;
-use anyhow::Context;
-use std::env;
-use std::fs;
-use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -46,7 +41,7 @@ async fn main() -> Result<()> {
         Commands::Config(ConfigCommands::Edit) => config_edit().await,
         Commands::Config(ConfigCommands::Reset) => config_reset().await,
         Commands::Start => server_start(&config).await,
-        Commands::Stop => server_stop().await,        
+        Commands::Stop => server_stop().await,
         Commands::Indexer(IndexerCommands::Start) => indexer_start(&config).await,
         Commands::Indexer(IndexerCommands::Stop) => indexer_stop(&config).await,
         Commands::Validator(ValidatorCommands::Start(args)) => validator_start(args).await,

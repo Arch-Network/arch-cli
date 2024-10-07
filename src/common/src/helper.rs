@@ -11,17 +11,13 @@ use bitcoin::{
 };
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use colored::*;
-use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
 use reqwest::blocking::Client as HttpClient;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{from_str, json, Value};
-use std::env;
 use std::fs;
-use std::process::Child;
-use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::{self};
@@ -33,7 +29,7 @@ use crate::constants::{
     GET_ACCOUNT_ADDRESS, GET_BEST_BLOCK_HASH, GET_BLOCK, GET_PROCESSED_TRANSACTION, GET_PROGRAM,
     NODE1_ADDRESS, READ_ACCOUNT_INFO, TRANSACTION_NOT_FOUND_CODE,
 };
-use crate::models::{BitcoinRpcInfo, CallerInfo};
+use crate::models::{CallerInfo};
 use crate::runtime_transaction::RuntimeTransaction;
 use crate::signature::Signature;
 use arch_program::instruction::Instruction;
@@ -984,72 +980,4 @@ pub fn get_address_utxos(rpc: &Client, address: String) -> Vec<Value> {
         })
         .map(|utxo| utxo.clone())
         .collect()
-}
-
-pub fn start_boot_node(port: u16, arch_nodes: &str, bitcoin_rpc_info: &BitcoinRpcInfo) -> Child {
-    std::env::set_var("RISC0_DEV_MODE", "1");
-
-    let mut command = Command::new("cargo");
-    command.current_dir(env::current_dir().unwrap().parent().unwrap());
-
-    command.args([
-        "run",
-        "-p",
-        "zkvm",
-        "--",
-        "--is-boot-node",
-        "--arch-nodes",
-        arch_nodes,
-        "--rpc-bind-port",
-        &port.to_string(),
-        "--bitcoin-rpc-endpoint",
-        &bitcoin_rpc_info.endpoint,
-        "--bitcoin-rpc-port",
-        &bitcoin_rpc_info.port.to_string(),
-        "--bitcoin-rpc-username",
-        &bitcoin_rpc_info.username,
-        "--bitcoin-rpc-password",
-        &bitcoin_rpc_info.password,
-    ]);
-
-    info!("Starting boot node on port {}", port);
-    command.spawn().expect("Failed to start boot node process")
-}
-
-pub fn start_node(port: u16, bitcoin_rpc_info: &BitcoinRpcInfo) -> Child {
-    env::set_var("RISC0_DEV_MODE", "1");
-
-    let mut command = Command::new("cargo");
-    command.current_dir(env::current_dir().unwrap().parent().unwrap());
-
-    command.args([
-        "run",
-        "-p",
-        "arch-node",
-        "--",
-        "--rpc-bind-port",
-        &port.to_string(),
-        "--bitcoin-rpc-endpoint",
-        &bitcoin_rpc_info.endpoint,
-        "--bitcoin-rpc-port",
-        &bitcoin_rpc_info.port.to_string(),
-        "--bitcoin-rpc-username",
-        &bitcoin_rpc_info.username,
-        "--bitcoin-rpc-password",
-        &bitcoin_rpc_info.password,
-        "--data-dir",
-        &format!(".participant{}", port),
-    ]);
-
-    info!("Starting node on port {}", port);
-    command.spawn().expect("Failed to start node process")
-}
-
-pub async fn stop_node(mut child: Child) {
-    match child.kill() {
-        Ok(_) => info!("Node stopped successfully"),
-        Err(e) => error!("Failed to stop node: {}", e),
-    }
-
-    let _ = child.wait();
 }
