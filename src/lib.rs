@@ -290,6 +290,9 @@ pub async fn init() -> Result<()> {
     // Check dependencies
     check_dependencies()?;
 
+    // Store the current directory
+    let cli_dir = std::env::current_dir()?;
+
     // Get the default project directory based on the OS
     let default_dir = get_default_project_dir();
 
@@ -323,8 +326,13 @@ pub async fn init() -> Result<()> {
         }
     }
 
-    // Change to the project directory
-    std::env::set_current_dir(&project_dir)?;
+    // Create the 'demo' folder within the project directory
+    let demo_dir = project_dir.join("demo");
+    fs::create_dir_all(&demo_dir)?;
+    println!("  {} Created demo directory at {:?}", "✓".bold().green(), demo_dir);
+
+    // Change to the demo directory
+    std::env::set_current_dir(&demo_dir)?;
 
     // Get the configuration file path
     let config_path = get_config_path()?;
@@ -350,6 +358,9 @@ pub async fn init() -> Result<()> {
             "✓".bold().green(),
             dest_path
         );
+
+        // Update config.toml with project directory
+        update_config_with_project_dir(&dest_path, &project_dir)?;
     } else {
         println!(
             "  {} Warning: config.default.toml not found",
@@ -357,31 +368,44 @@ pub async fn init() -> Result<()> {
         );
     }
 
-    // Create project structure
-    println!("{}", "Creating project structure...".bold().blue());
-    let dirs = ["src/app/program", "src/app/keys"];
-    for dir in dirs.iter() {
-        fs::create_dir_all(dir)
-            .with_context(|| format!("Failed to create directory: {}", dir.yellow()))?;
-        println!("  {} Created directory: {}", "✓".bold().green(), dir);
+    // Create the 'demo' folder within the project directory
+    let demo_dir = project_dir.join("demo");
+    fs::create_dir_all(&demo_dir)?;
+    println!("  {} Created demo directory at {:?}", "✓".bold().green(), demo_dir);
+
+    // Change to the CLI project directory
+    std::env::set_current_dir(&cli_dir)?;
+
+    // Copy everything from ./src to the demo folder
+    println!("{}", "Copying project files...".bold().blue());
+    println!(" Current directory: {:?}", std::env::current_dir()?);
+    let src_dir = cli_dir.join("src");
+    if src_dir.exists() {
+        copy_dir_all(&src_dir, &demo_dir)?;
+        println!("  {} Copied project files to demo directory", "✓".bold().green());
+    } else {
+        println!("  {} Warning: ./src directory not found", "⚠".bold().yellow());
     }
 
-    // Create program files
-    println!("{}", "Creating program files...".bold().blue());
-    let program_files = [
-        ("src/app/program/Cargo.toml", include_str!("../templates/program_cargo.toml")),
-        ("src/app/program/src/lib.rs", include_str!("../templates/program_lib.rs")),
-    ];
-    for (path, content) in program_files.iter() {
-        fs::write(path, content)
-            .with_context(|| format!("Failed to create file: {}", path.yellow()))?;
-        println!("  {} Created file: {}", "✓".bold().green(), path);
+    // Copy the whole program folder to the demo folder
+    println!("{}", "Copying program folder...".bold().blue());
+    let program_dir = cli_dir.join("program");
+    if program_dir.exists() {
+        let program_dir_in_demo = demo_dir.join("program");
+        fs::create_dir_all(&program_dir_in_demo)?;
+        copy_dir_all(&program_dir, &program_dir_in_demo)?;
+        println!("  {} Copied program folder to demo directory", "✓".bold().green());
+    } else {
+        println!("  {} Warning: ./program directory not found", "⚠".bold().yellow());
     }
+
+    // Change to the demo directory
+    std::env::set_current_dir(&demo_dir)?;
 
     // Build the program
     println!("{}", "Building Arch Network program...".bold().blue());
     let build_result = ShellCommand::new("cargo")
-        .current_dir("src/app/program")
+        .current_dir("program")
         .arg("build-sbf")
         .output();
 
@@ -411,6 +435,35 @@ pub async fn init() -> Result<()> {
     );
     Ok(())
 }
+
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
+    fs::create_dir_all(&dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+fn update_config_with_project_dir(config_path: &Path, project_dir: &Path) -> Result<()> {
+    let mut config = config::Config::builder()
+        .add_source(config::File::with_name(config_path.to_str().unwrap()))
+        .build()?;
+
+    config.set("project.directory", project_dir.to_str().unwrap())?;
+
+    let config_string = serde_json::to_string_pretty(&config.try_deserialize::<serde_json::Value>()?)?;
+    fs::write(config_path, config_string)?;
+
+    println!("  {} Updated config with project directory", "✓".bold().green());
+    Ok(())
+}
+
 fn is_directory_empty(path: &Path) -> Result<bool> {
     Ok(fs::read_dir(path)?.next().is_none())
 }
