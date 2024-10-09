@@ -31,6 +31,8 @@ use std::process::Command as ShellCommand;
 use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
+use dirs::home_dir;
+use shellexpand::tilde;
 
 use common::wallet_manager::*;
 
@@ -288,6 +290,42 @@ pub async fn init() -> Result<()> {
     // Check dependencies
     check_dependencies()?;
 
+    // Get the default project directory based on the OS
+    let default_dir = get_default_project_dir();
+
+    // Ask the user where they want to create the project
+    let mut project_dir = prompt_for_project_dir(&default_dir)?;
+
+    // Ensure the project directory is empty or create it
+    loop {
+        if !project_dir.exists() {
+            println!(
+                "  {} Directory does not exist. Do you want to create it? (Y/n)",
+                "ℹ".bold().blue()
+            );
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            if input.trim().to_lowercase() != "n" {
+                fs::create_dir_all(&project_dir)?;
+                println!("  {} Directory created successfully", "✓".bold().green());
+                break;
+            } else {
+                project_dir = prompt_for_project_dir(&default_dir)?;
+            }
+        } else if is_directory_empty(&project_dir)? {
+            break;
+        } else {
+            println!(
+                "  {} Directory is not empty. Please choose an empty directory.",
+                "⚠".bold().yellow()
+            );
+            project_dir = prompt_for_project_dir(&default_dir)?;
+        }
+    }
+
+    // Change to the project directory
+    std::env::set_current_dir(&project_dir)?;
+
     // Get the configuration file path
     let config_path = get_config_path()?;
 
@@ -319,85 +357,112 @@ pub async fn init() -> Result<()> {
         );
     }
 
-    // Navigate to the program folder and run `cargo build-sbf`
-    println!("{}", "Building Arch Network program...".bold().blue());
-    ShellCommand::new("cargo")
-        .current_dir("program")
-        .arg("build-sbf")
-        .output()
-        .expect("Failed to build Arch Network program");
-
-    // // Create project structure
-    // println!("{}", "Creating project structure...".bold().blue());
-    // let dirs = ["src/app/backend", "src/app/keys"];
-    // for dir in dirs.iter() {
-    //     fs::create_dir_all(dir)
-    //         .with_context(|| format!("Failed to create directory: {}", dir.yellow()))?;
-    // }
-
-    // // Create boilerplate files
-    // println!("{}", "Creating boilerplate files...".bold().blue());
-    // let files = [
-    //     ("src/app/backend/index.ts", include_str!("../templates/backend_index.ts")),
-    //     ("src/app/backend/package.json", include_str!("../templates/backend_package.json")),
-    // ];
-
-    // for (file_path, content) in files.iter() {
-    //     if !Path::new(file_path).exists() {
-    //         fs::write(file_path, content)
-    //             .with_context(|| format!("Failed to write file: {}", file_path))?;
-    //     } else {
-    //         println!("  {} File already exists, skipping: {}", "ℹ".bold().blue(), file_path);
-    //     }
-    // }
-
-    // Check if program and frontend directories exist
-    let program_dir = Path::new("src/app/program");
-    // let frontend_dir = Path::new("src/app/frontend");
-
-    if !program_dir.exists() {
-        println!("  {} Creating default program directory", "→".bold().blue());
-        fs::create_dir_all(program_dir.join("src"))?;
-        fs::write(
-            program_dir.join("src/lib.rs"),
-            include_str!("../templates/program_lib.rs"),
-        )?;
-        fs::write(
-            program_dir.join("Cargo.toml"),
-            include_str!("../templates/program_cargo.toml"),
-        )?;
-
-        println!("  {} Default program files created", "✓".bold().green());
-    } else {
-        println!(
-            "  {} Existing program directory found, preserving it",
-            "ℹ".bold().blue()
-        );
+    // Create project structure
+    println!("{}", "Creating project structure...".bold().blue());
+    let dirs = ["src/app/program", "src/app/keys"];
+    for dir in dirs.iter() {
+        fs::create_dir_all(dir)
+            .with_context(|| format!("Failed to create directory: {}", dir.yellow()))?;
+        println!("  {} Created directory: {}", "✓".bold().green(), dir);
     }
 
-    // if !frontend_dir.exists() {
-    //     println!("  {} Creating default frontend directory", "→".bold().blue());
-    //     fs::create_dir_all(frontend_dir)?;
-    //     fs::write(
-    //         frontend_dir.join("index.html"),
-    //         include_str!("../templates/frontend_index.html")
-    //     )?;
-    //     fs::write(
-    //         frontend_dir.join("index.js"),
-    //         include_str!("../templates/frontend_index.js")
-    //     )?;
-    //     fs::write(
-    //         frontend_dir.join("package.json"),
-    //         include_str!("../templates/frontend_package.json")
-    //     )?;
-    // } else {
-    //     println!("  {} Existing frontend directory found, preserving it", "ℹ".bold().blue());
-    // }
+    // Create program files
+    println!("{}", "Creating program files...".bold().blue());
+    let program_files = [
+        ("src/app/program/Cargo.toml", include_str!("../templates/program_cargo.toml")),
+        ("src/app/program/src/lib.rs", include_str!("../templates/program_lib.rs")),
+    ];
+    for (path, content) in program_files.iter() {
+        fs::write(path, content)
+            .with_context(|| format!("Failed to create file: {}", path.yellow()))?;
+        println!("  {} Created file: {}", "✓".bold().green(), path);
+    }
+
+    // Build the program
+    println!("{}", "Building Arch Network program...".bold().blue());
+    let build_result = ShellCommand::new("cargo")
+        .current_dir("src/app/program")
+        .arg("build-sbf")
+        .output();
+
+    match build_result {
+        Ok(output) if output.status.success() => {
+            println!("  {} Arch Network program built successfully", "✓".bold().green());
+        }
+        Ok(output) => {
+            println!(
+                "  {} Warning: Failed to build Arch Network program: {}",
+                "⚠".bold().yellow(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Err(e) => {
+            println!(
+                "  {} Warning: Failed to build Arch Network program: {}",
+                "⚠".bold().yellow(),
+                e
+            );
+        }
+    }
 
     println!(
         "  {} New Arch Network app initialized successfully!",
         "✓".bold().green()
     );
+    Ok(())
+}
+fn is_directory_empty(path: &Path) -> Result<bool> {
+    Ok(fs::read_dir(path)?.next().is_none())
+}
+
+fn get_default_project_dir() -> PathBuf {
+    let mut path = home_dir().unwrap_or_else(|| PathBuf::from("."));
+    if cfg!(windows) {
+        path.push("Projects");
+    } else if cfg!(target_os = "macos") {
+        path.push("Documents");
+    }
+    path.push("ArchNetwork");
+    path
+}
+
+fn prompt_for_project_dir(default_dir: &Path) -> Result<PathBuf> {
+    println!("Where would you like to create your Arch Network project?");
+    println!("Default: {}", default_dir.display());
+    print!("Project directory (press Enter for default): ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    if input.is_empty() {
+        Ok(default_dir.to_path_buf())
+    } else {
+        Ok(PathBuf::from(shellexpand::tilde(input).into_owned()))
+    }
+}
+
+fn create_project_dir(project_dir: &Path) -> Result<()> {
+    if !project_dir.exists() {
+        println!(
+            "  {} Directory does not exist. Creating it now...",
+            "ℹ".bold().blue()
+        );
+        match fs::create_dir_all(project_dir) {
+            Ok(_) => println!(
+                "  {} Directory created successfully",
+                "✓".bold().green()
+            ),
+            Err(e) => {
+                return Err(anyhow!(
+                    "Failed to create directory '{}': {}",
+                    project_dir.display(),
+                    e
+                ))
+            }
+        }
+    }
     Ok(())
 }
 
