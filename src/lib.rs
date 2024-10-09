@@ -32,7 +32,7 @@ use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
 use dirs::home_dir;
-use shellexpand::tilde;
+use toml_edit::{Document, Item, value};
 
 use common::wallet_manager::*;
 
@@ -331,9 +331,6 @@ pub async fn init() -> Result<()> {
     fs::create_dir_all(&demo_dir)?;
     println!("  {} Created demo directory at {:?}", "✓".bold().green(), demo_dir);
 
-    // Change to the demo directory
-    std::env::set_current_dir(&demo_dir)?;
-
     // Get the configuration file path
     let config_path = get_config_path()?;
 
@@ -451,16 +448,25 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
 }
 
 fn update_config_with_project_dir(config_path: &Path, project_dir: &Path) -> Result<()> {
-    let mut config = config::Config::builder()
-        .add_source(config::File::with_name(config_path.to_str().unwrap()))
-        .build()?;
+    let config_content = fs::read_to_string(config_path)?;
+    let mut doc = config_content.parse::<Document>()?;
 
-    config.set("project.directory", project_dir.to_str().unwrap())?;
+    // Add a new [project] section if it doesn't exist
+    if doc.get("project").is_none() {
+        doc["project"] = toml_edit::table();
+    }
 
-    let config_string = serde_json::to_string_pretty(&config.try_deserialize::<serde_json::Value>()?)?;
-    fs::write(config_path, config_string)?;
+    // Update the directory in the [project] section
+    doc["project"]["directory"] = value(project_dir.to_str().unwrap());
 
-    println!("  {} Updated config with project directory", "✓".bold().green());
+    // Write the updated config back to the file
+    fs::write(config_path, doc.to_string())?;
+
+    println!(
+        "  {} Updated configuration with project directory",
+        "✓".bold().green()
+    );
+
     Ok(())
 }
 
@@ -1870,11 +1876,21 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
 
     set_env_vars(config)?;
+
+    // Get the project directory from the config
+    let project_dir = config.get_string("project.directory")
+        .context("Failed to get project directory from config")?;
+
+    // Change to the demo directory
+    let demo_dir = PathBuf::from(project_dir).join("demo");
+    std::env::set_current_dir(&demo_dir)
+        .context("Failed to change to demo directory")?;
+
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
-        .arg("demo-docker-compose.yml")
-        .arg("--build")
+        .arg("app/demo-docker-compose.yml")
         .arg("up")
+        .arg("--build")
         .arg("-d")
         .output()
         .context("Failed to start the demo application using Docker Compose")?;
@@ -1897,6 +1913,15 @@ pub async fn demo_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the demo application...".bold().green());
 
     set_env_vars(config)?;
+
+    // Get the project directory from the config
+    let project_dir = config.get_string("project.directory")
+        .context("Failed to get project directory from config")?;
+
+    // Change to the demo directory
+    let demo_dir = PathBuf::from(project_dir).join("demo");
+    std::env::set_current_dir(&demo_dir)
+        .context("Failed to change to demo directory")?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
