@@ -263,8 +263,8 @@ pub struct DeleteAccountArgs {
 #[derive(Args)]
 pub struct CreateProjectArgs {
     /// Name of the project
-    #[clap(long, help = "Specifies the name of the project")]
-    name: String,
+    #[clap(short, long)]
+    pub name: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -2931,8 +2931,95 @@ pub async fn validator_stop() -> Result<()> {
     Ok(())
 }
 
-pub async fn project_create(args: &CreateProjectArgs) -> Result<()> {
+pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result<()> {
     println!("{}", "Creating a new project...".bold().green());
+
+    // Get the project directory from the config
+    let project_dir = PathBuf::from(config.get_string("project.directory")
+        .context("Failed to get project directory from config")?);
+
+    // Get project name, either from args or by asking the user
+    let mut project_name = args.name.clone().unwrap_or_default();
+    if project_name.is_empty() {
+        project_name = Input::<String>::new()
+            .with_prompt("Enter a name for your project")
+            .interact()?;
+    }
+
+    // Create the new project folder
+    let mut new_project_dir = project_dir.join(&project_name);
+
+    // Check if the folder already exists and ask for a new name if it does
+    while new_project_dir.exists() {
+        println!("  {} A project with this name already exists.", "⚠".bold().yellow());
+        let use_existing = Confirm::new()
+            .with_prompt("Do you want to use the existing project?")
+            .default(false)
+            .interact()?;
+
+        if use_existing {
+            println!("  {} Using existing project directory.", "ℹ".bold().blue());
+            break;
+        } else {
+            project_name = Input::<String>::new()
+                .with_prompt("Enter a new name for your project")
+                .interact()?;
+            new_project_dir = project_dir.join(&project_name);
+        }
+    }
+
+    // Create the project directory if it doesn't exist
+    if !new_project_dir.exists() {
+        fs::create_dir_all(&new_project_dir)
+            .context(format!("Failed to create project directory: {:?}", new_project_dir))?;
+        println!("  {} Created project directory at {:?}", "✓".bold().green(), new_project_dir);
+    }
+
+    // Get the CLI directory (where the template files are located)
+    let cli_dir = std::env::current_dir()?;
+
+    // Copy the dummy program folder to the new project directory
+    let src_program_dir = cli_dir.join("src/app/program");
+    let dest_program_dir = new_project_dir.join("app/program");
+    copy_dir_all(&src_program_dir, &dest_program_dir)
+        .context("Failed to copy program folder")?;
+
+    println!("  {} Copied program template to {:?}", "✓".bold().green(), dest_program_dir);
+
+    // Copy the program folder to the new project directory
+    let src_program_dir = cli_dir.join("program");
+    let dest_program_dir = new_project_dir.join("program");
+    copy_dir_all(&src_program_dir, &dest_program_dir)
+        .context("Failed to copy program folder")?;
+
+    println!("  {} Copied program to {:?}", "✓".bold().green(), dest_program_dir);
+
+    // Copy the src/common folder over to the proejct directory
+    let src_common_dir = cli_dir.join("src/common");
+    let dest_common_dir = new_project_dir.join("common");
+    copy_dir_all(&src_common_dir, &dest_common_dir)
+        .context("Failed to copy common folder")?;
+
+    println!("  {} Copied common libraries to {:?}", "✓".bold().green(), dest_common_dir);
+
+    // // Copy other template files (if any)
+    // let template_dir = cli_dir.join("templates");
+    // if template_dir.exists() {
+    //     copy_dir_all(&template_dir, &new_project_dir)
+    //         .context("Failed to copy template files")?;
+    //     println!("  {} Copied additional template files", "✓".bold().green());
+    // }
+
+    // Create a basic README.md file
+    let readme_content = format!("# {}\n\nThis is a new Arch Network project.", project_name);
+    fs::write(new_project_dir.join("README.md"), readme_content)
+        .context("Failed to create README.md")?;
+
+    println!("  {} Created README.md", "✓".bold().green());
+
+    println!("{}", "New project created successfully!".bold().green());
+    println!("  {} Project location: {:?}", "ℹ".bold().blue(), new_project_dir);
+    // println!("  {} To get started, navigate to the project directory and run 'arch-cli init'", "ℹ".bold().blue());
 
     Ok(())
 }
