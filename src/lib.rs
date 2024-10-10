@@ -148,13 +148,17 @@ pub enum ServerCommands {
         #[clap(default_value = "all")]
         service: String,
     },
+
+    /// Clean the project
+    #[clap(long_about = "Removes the src/app directory, cleaning the project structure.")]
+    Clean,
 }
 
 #[derive(Subcommand)]
 pub enum ProjectCommands {
-    /// Clean the project
-    #[clap(long_about = "Removes the src/app directory, cleaning the project structure.")]
-    Clean,
+    /// Create a new project
+    #[clap(long_about = "Creates a new project with a specified name.")]
+    Create(CreateProjectArgs),
 }
 
 #[derive(Subcommand)]
@@ -254,6 +258,13 @@ pub struct DeleteAccountArgs {
     /// Account ID or name to delete
     #[clap(help = "Specifies the account ID or name to delete")]
     identifier: String,
+}
+
+#[derive(Args)]
+pub struct CreateProjectArgs {
+    /// Name of the project
+    #[clap(long, help = "Specifies the name of the project")]
+    name: String,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -1270,38 +1281,93 @@ pub fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()
     Ok(())
 }
 
-pub async fn clean() -> Result<()> {
+pub async fn server_clean() -> Result<()> {
     println!("{}", "Cleaning up the project...".bold().yellow());
     let config = load_config()?;
     let arch_data_dir = get_arch_data_dir(&config)?;
+    let config_dir = get_config_dir()?;
+    let keys_file = config_dir.join("keys.json");
+    let config_file = config_dir.join("config.toml");
+
+    // Ask user if they want to delete the keys.json file
+    let delete_keys = dialoguer::Confirm::new()
+        .with_prompt("Do you want to delete the keys.json file? This action cannot be undone.")
+        .default(false)
+        .interact()?;
+
+    // Ask user if they want to delete the config.toml file
+    let delete_config = dialoguer::Confirm::new()
+        .with_prompt("Do you want to delete the config.toml file? This action cannot be undone.")
+        .default(false)
+        .interact()?;
+
     if arch_data_dir.exists() {
         fs::remove_dir_all(&arch_data_dir)?;
         println!("  {} Removed arch-data directory", "✓".bold().green());
     }
-    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
-    // Stop and remove Docker containers
-    Command::new(docker_compose_cmd)
-        .args(docker_compose_args)
-        .args([
-            "-f",
-            &config
-                .get_string("bitcoin.docker_compose_file")
-                .unwrap_or_default(),
-            "down",
-            "-v",
-        ])
-        .status()?;
-    Command::new(docker_compose_cmd)
-        .args(docker_compose_args)
-        .args([
-            "-f",
-            &config
-                .get_string("arch.docker_compose_file")
-                .unwrap_or_default(),
-            "down",
-            "-v",
-        ])
-        .status()?;
+
+    if keys_file.exists() {
+        if delete_keys {
+            fs::remove_file(&keys_file)?;
+            println!("  {} Removed keys.json file", "✓".bold().green());
+        } else {
+            println!("  {} Preserved keys.json file", "ℹ".bold().blue());
+        }
+    } else {
+        println!("  {} No keys.json file found", "ℹ".bold().blue());
+    }
+
+    if config_file.exists() {
+        if delete_config {
+            fs::remove_file(&config_file)?;
+            println!("  {} Removed config.toml file", "✓".bold().green());
+        } else {
+            println!("  {} Preserved config.toml file", "ℹ".bold().blue());
+        }
+    } else {
+        println!("  {} No config.toml file found", "ℹ".bold().blue());
+    }
+
+    // Stop and remove Docker containers for Bitcoin
+    let bitcoin_compose_file = config.get_string("bitcoin.docker_compose_file").unwrap_or_default();
+    if !bitcoin_compose_file.is_empty() {
+        let status = Command::new("docker-compose")
+            .args(["-f", &bitcoin_compose_file, "down", "--volumes"])
+            .env("BITCOIN_RPC_USER", "")
+            .env("ORD_PORT", "")
+            .env("ELECTRS_REST_API_PORT", "")
+            .env("ELECTRS_ELECTRUM_PORT", "")
+            .env("BTC_RPC_EXPLORER_PORT", "")
+            .status()
+            .context("Failed to stop Bitcoin containers")?;
+
+        if status.success() {
+            println!("  {} Stopped and removed Bitcoin containers", "✓".bold().green());
+        } else {
+            println!("  {} Failed to stop Bitcoin containers", "✗".bold().red());
+        }
+    }
+
+    // Stop and remove Docker containers for Arch
+    let arch_compose_file = config.get_string("arch.docker_compose_file").unwrap_or_default();
+    if !arch_compose_file.is_empty() {
+        let status = Command::new("docker-compose")
+            .args(["-f", &arch_compose_file, "down", "--volumes"])
+            .env("BITCOIN_RPC_USER", "")
+            .env("ORD_PORT", "")
+            .env("ELECTRS_REST_API_PORT", "")
+            .env("ELECTRS_ELECTRUM_PORT", "")
+            .env("BTC_RPC_EXPLORER_PORT", "")
+            .status()
+            .context("Failed to stop Arch containers")?;
+
+        if status.success() {
+            println!("  {} Stopped and removed Arch containers", "✓".bold().green());
+        } else {
+            println!("  {} Failed to stop Arch containers", "✗".bold().red());
+        }
+    }
+
     println!("  {} Project cleaned up successfully", "✓".bold().green());
     Ok(())
 }
@@ -2816,7 +2882,7 @@ pub async fn validator_start(args: &ValidatorStartArgs) -> Result<()> {
         .arg(format!("RUST_LOG={}", rust_log))
         .arg("-p")
         .arg(format!("{}:{}", rpc_bind_port, rpc_bind_port))
-        .arg("ghcr.io/arch-network/local_validator:pr-282")
+        .arg("ghcr.io/arch-network/local_validator:pr-323")
         .arg("/usr/bin/local_validator")
         .arg("--rpc-bind-ip")
         .arg(rpc_bind_ip)
@@ -2862,5 +2928,11 @@ pub async fn validator_stop() -> Result<()> {
     }
 
     println!("{}", "Local validator stopped successfully!".bold().green());
+    Ok(())
+}
+
+pub async fn project_create(args: &CreateProjectArgs) -> Result<()> {
+    println!("{}", "Creating a new project...".bold().green());
+
     Ok(())
 }
