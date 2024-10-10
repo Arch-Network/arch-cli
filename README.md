@@ -231,11 +231,29 @@ By following these steps in order, you'll have a fully functional demo Arch Netw
 
 ## Project Structure
 
-[Project Structure section remains unchanged]
+After initialization, your project will have the following structure:
 
-## Development
-
-[Development section remains unchanged]
+```
+my-arch-project/
+├── src/
+│   └── app/
+│       ├── program/
+│       │   └── src/
+│       │       └── lib.rs
+│       ├── backend/
+│       │   ├── index.ts
+│       │   └── package.json
+│       ├── frontend/
+│       │   ├── index.html
+│       │   ├── index.js
+│       │   ├── package.json
+│       │   └── .env.example
+│       └── keys/
+├── Cargo.toml
+├── config.toml
+├── bitcoin-docker-compose.yml
+└── arch-docker-compose.yml
+```
 
 ## Troubleshooting
 
