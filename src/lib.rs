@@ -3002,14 +3002,6 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
 
     println!("  {} Copied common libraries to {:?}", "✓".bold().green(), dest_common_dir);
 
-    // // Copy other template files (if any)
-    // let template_dir = cli_dir.join("templates");
-    // if template_dir.exists() {
-    //     copy_dir_all(&template_dir, &new_project_dir)
-    //         .context("Failed to copy template files")?;
-    //     println!("  {} Copied additional template files", "✓".bold().green());
-    // }
-
     // Create a basic README.md file
     let readme_content = format!("# {}\n\nThis is a new Arch Network project.", project_name);
     fs::write(new_project_dir.join("README.md"), readme_content)
