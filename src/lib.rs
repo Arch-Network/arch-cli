@@ -17,6 +17,7 @@ use config::{Config, Environment, File};
 use rand::rngs::OsRng;
 use secp256k1::Keypair;
 use secp256k1::{Secp256k1, SecretKey};
+use dialoguer::{Select, Input, Confirm};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::env;
@@ -250,7 +251,7 @@ pub struct DeleteAccountArgs {
     identifier: String,
 }
 
-#[derive(Args)]
+#[derive(Args, Clone, Debug)]
 pub struct DeployArgs {
     /// Directory of your program
     #[clap(
@@ -265,7 +266,15 @@ pub struct DeployArgs {
         help = "Specifies the path to the program's key file for deployment"
     )]
     program_key: Option<String>,
+
+    /// Folder within the project directory to deploy
+    #[clap(
+        long,
+        help = "Specifies the folder within the project directory to deploy"
+    )]
+    folder: Option<String>,
 }
+
 
 #[derive(Args)]
 pub struct SendCoinsArgs {
@@ -804,8 +813,68 @@ pub async fn server_start(config: &Config) -> Result<()> {
 pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
 
+    // Get the project directory from the config
+    let project_dir = PathBuf::from(config.get_string("project.directory")
+        .context("Failed to get project directory from config")?);
+
+    // Determine the deploy folder
+    let deploy_folder = if let Some(folder) = &args.folder {
+        project_dir.join(folder)
+    } else {
+        // List all folders in the project directory
+        let folders = fs::read_dir(&project_dir)?
+            .filter_map(|entry| {
+                entry.ok().and_then(|e| {
+                    if e.file_type().ok()?.is_dir() {
+                        Some(e.file_name().to_string_lossy().into_owned())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect::<Vec<String>>();
+
+        if folders.is_empty() {
+            return Err(anyhow!("No folders found in the project directory"));
+        }
+
+        println!("Available folders to deploy:");
+        for (i, folder) in folders.iter().enumerate() {
+            println!("  {}. {}", i + 1, folder);
+        }
+
+        let selected_folder = loop {
+            let mut input = String::new();
+            print!("Enter the number of the folder you want to deploy (or 'q' to quit): ");
+            io::stdout().flush()?;
+            io::stdin().read_line(&mut input)?;
+
+            let input = input.trim();
+            if input.eq_ignore_ascii_case("q") {
+                return Ok(());
+            }
+
+            if let Ok(choice) = input.parse::<usize>() {
+                if choice > 0 && choice <= folders.len() {
+                    break folders[choice - 1].clone();
+                }
+            }
+            println!("Invalid selection. Please try again.");
+        };
+
+        project_dir.join(selected_folder)
+    };
+
+    println!("Deploying from folder: {:?}", deploy_folder);
+
+    // Create a new DeployArgs with the updated folder
+    let updated_args = DeployArgs {
+        folder: Some(deploy_folder.to_str().unwrap().to_string()),
+        ..args.clone()
+    };
+
     // Build the program
-    build_program(args)?;
+    build_program(&updated_args)?;
 
     // Ensure the keys directory exists and load/generate the program keypair
     let (program_keypair, program_pubkey) = prepare_program_keys()?;
@@ -822,7 +891,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
-    deploy_program_with_tx_info(&program_keypair, &program_pubkey, tx_info).await?;
+    deploy_program_with_tx_info(&program_keypair, &program_pubkey, tx_info, deploy_folder.to_str().map(String::from)).await?;
 
     wallet_manager.close_wallet()?;
 
@@ -834,9 +903,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
 
     Ok(())
 }
-
-pub async fn server_stop() -> Result<()> {
-    println!("{}", "Stopping development server...".bold().yellow());
+pub async fn server_stop() -> Result<()> {    println!("{}", "Stopping development server...".bold().yellow());
 
     stop_all_related_containers()?;
 
@@ -1618,7 +1685,7 @@ fn get_program_path(args: &DeployArgs) -> PathBuf {
     let mut path = PathBuf::from(
         args.directory
             .clone()
-            .unwrap_or_else(|| "src/app/program".to_string()),
+            .unwrap_or_else(|| "program".to_string()),
     );
     path.push("Cargo.toml");
     path
@@ -1627,13 +1694,19 @@ fn get_program_path(args: &DeployArgs) -> PathBuf {
 fn build_program(args: &DeployArgs) -> Result<()> {
     println!("  ℹ Building program...");
 
-    let path = get_program_path(args);
-    if !std::path::Path::new(&path).exists() {
-        return Err(anyhow!("Cargo.toml not found at: {}", path.display()));
-    }
+    // Print out the path to the Cargo.toml file
+    println!("  ℹ Cargo.toml found at: {}", args.folder.clone().unwrap());
+
+    // Change to the program directory
+    let program_dir = args.folder.clone().unwrap();
+    std::env::set_current_dir(&program_dir)
+        .context("Failed to change to program directory")?;
+
+    // Print out the current working directory
+    println!("  ℹ Current working directory: {}", std::env::current_dir().unwrap().display());
 
     let output = std::process::Command::new("cargo")
-        .args(["build-sbf", "--manifest-path", path.to_str().unwrap()])
+        .args(["build-sbf", "--manifest-path", "app/program/Cargo.toml"])
         .output()
         .context("Failed to execute cargo build-sbf")?;
 
@@ -1646,8 +1719,7 @@ fn build_program(args: &DeployArgs) -> Result<()> {
 
     println!("  ✓ Program built successfully");
     Ok(())
-}
-fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
+}fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
     Ok(args.program_key.clone().unwrap_or_else(|| {
         config
             .get_string("program.key_path")
@@ -1659,6 +1731,7 @@ async fn deploy_program_with_tx_info(
     program_keypair: &bitcoin::secp256k1::Keypair,
     program_pubkey: &arch_program::pubkey::Pubkey,
     tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>,
+    deploy_folder: Option<String>,
 ) -> Result<()> {
     if let Some(info) = tx_info {
         deploy_program(
@@ -1666,6 +1739,7 @@ async fn deploy_program_with_tx_info(
             program_pubkey,
             &info.info.txid.to_string(),
             0,
+            deploy_folder
         )
         .await?;
         println!("  {} Program deployed successfully", "✓".bold().green());
@@ -1680,10 +1754,90 @@ async fn deploy_program_with_tx_info(
     }
 }
 
-fn prepare_program_keys() -> Result<(Keypair, Pubkey)> {
-    let keys_dir = ensure_keys_dir()?;
-    let program_key_path = keys_dir.join("program.json");
-    with_secret_key_file(program_key_path.to_str().unwrap())
+pub fn prepare_program_keys() -> Result<(secp256k1::Keypair, Pubkey)> {
+    let config_dir = get_config_dir()?;
+    let keys_file = config_dir.join("keys.json");
+
+    if keys_file.exists() {
+        let keys = load_keys(&keys_file)?;
+        if !keys.as_object().map_or(true, |obj| obj.is_empty()) {
+            return select_existing_key(&keys);
+        }
+    }
+
+    create_new_key(&keys_file)
+}
+
+fn load_keys(keys_file: &PathBuf) -> Result<Value> {
+    let keys_content = fs::read_to_string(keys_file)?;
+    Ok(serde_json::from_str(&keys_content)?)
+}
+
+fn select_existing_key(keys: &Value) -> Result<(secp256k1::Keypair, Pubkey)> {
+    let account_names: Vec<String> = keys.as_object().unwrap().keys().cloned().collect();
+    let selection = Select::new()
+        .with_prompt("Select a key to use as the program key")
+        .items(&account_names)
+        .interact()?;
+
+    let selected_account = &keys[&account_names[selection]];
+    let secret_key = selected_account["secret_key"].as_str().unwrap();
+    with_secret_key(secret_key)
+}
+
+fn create_new_key(keys_file: &PathBuf) -> Result<(secp256k1::Keypair, Pubkey)> {
+    println!("No existing keys found or keys.json is empty.");
+    if Confirm::new().with_prompt("Do you want to create a new key?").interact()? {
+        let name = Input::<String>::new()
+            .with_prompt("Enter a name for the new key")
+            .interact_text()?;
+
+        let secp = Secp256k1::new();
+        let (secret_key, public_key) = secp.generate_keypair(&mut OsRng);
+        let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+        let pubkey = Pubkey::from_slice(&public_key.serialize()[1..33]); // Use only the 32-byte compressed public key
+
+        save_keypair_to_json(keys_file, &name, &keypair, &pubkey)?;
+
+        println!("New key created and saved as '{}'", name);
+        Ok((keypair, pubkey))
+    } else {
+        Err(anyhow!("No key selected or created"))
+    }
+}
+fn with_secret_key(secret_key_hex: &str) -> Result<(secp256k1::Keypair, Pubkey)> {
+    let secp = Secp256k1::new();
+    let secret_key = SecretKey::from_str(secret_key_hex)?;
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+    let public_key = keypair.public_key();
+    let pubkey = Pubkey::from_slice(&public_key.serialize()[1..33]); // Use only the 32-byte compressed public key
+    Ok((keypair, pubkey))
+}
+
+fn save_keypair_to_json(file_path: &PathBuf, name: &str, keypair: &secp256k1::Keypair, pubkey: &Pubkey) -> Result<()> {
+    let mut keys: Value = if file_path.exists() {
+        serde_json::from_str(&fs::read_to_string(file_path)?)?
+    } else {
+        json!({})
+    };
+
+    let account_info = json!({
+        "public_key": hex::encode(pubkey.serialize()),
+        "secret_key": hex::encode(keypair.secret_key().secret_bytes()),
+    });
+
+    keys[name] = account_info;
+
+    fs::write(file_path, serde_json::to_string_pretty(&keys)?)?;
+    Ok(())
+}
+
+fn generate_new_keypair() -> Result<(secp256k1::Keypair, Pubkey)> {
+    let secp = Secp256k1::new();
+    let (secret_key, _) = secp.generate_keypair(&mut OsRng);
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+    let pubkey = Pubkey::from_slice(&keypair.public_key().serialize());
+    Ok((keypair, pubkey))
 }
 
 fn display_program_id(program_pubkey: &Pubkey) {
@@ -1808,12 +1962,13 @@ async fn deploy_program(
     program_pubkey: &Pubkey,
     txid: &str,
     vout: u32,
+    deploy_folder: Option<String>,
 ) -> Result<()> {
     // Create a new account for the program
     create_program_account(program_keypair, program_pubkey, txid, vout).await?;
 
     // Deploy the program transactions
-    deploy_program_txs(program_keypair, program_pubkey).await?;
+    deploy_program_txs(program_keypair, program_pubkey, deploy_folder).await?;
 
     // Make program executable
     make_program_executable(program_keypair, program_pubkey).await?;
@@ -1841,16 +1996,21 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
     println!("    Program made executable successfully");
     Ok(())
 }
-async fn deploy_program_txs(program_keypair: &Keypair, _program_pubkey: &Pubkey) -> Result<()> {
+async fn deploy_program_txs(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
     println!("    Deploying program transactions...");
+
+    // Look in deploy_folder/program/target/sbf-solana-solana/release/ for the .so file and the file name
+    let so_file = format!("{}/app/program/target/sbf-solana-solana/release/arch_network_app.so", deploy_folder.unwrap());
+
     deploy_program_txs_async(
         *program_keypair,
-        "src/app/program/target/sbf-solana-solana/release/arch_network_app.so",
+        &so_file,
     )
     .await?;
     println!("    Program transactions deployed successfully");
     Ok(())
 }
+
 async fn create_program_account(
     program_keypair: &Keypair,
     program_pubkey: &Pubkey,
