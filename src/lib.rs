@@ -1797,7 +1797,7 @@ fn create_new_key(keys_file: &PathBuf) -> Result<(secp256k1::Keypair, Pubkey)> {
         let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
         let pubkey = Pubkey::from_slice(&public_key.serialize()[1..33]); // Use only the 32-byte compressed public key
 
-        save_keypair_to_json(keys_file, &name, &keypair, &pubkey)?;
+        save_keypair_to_json(keys_file, &keypair, &pubkey, &name)?;
 
         println!("New key created and saved as '{}'", name);
         Ok((keypair, pubkey))
@@ -1805,6 +1805,7 @@ fn create_new_key(keys_file: &PathBuf) -> Result<(secp256k1::Keypair, Pubkey)> {
         Err(anyhow!("No key selected or created"))
     }
 }
+
 fn with_secret_key(secret_key_hex: &str) -> Result<(secp256k1::Keypair, Pubkey)> {
     let secp = Secp256k1::new();
     let secret_key = SecretKey::from_str(secret_key_hex)?;
@@ -1814,7 +1815,7 @@ fn with_secret_key(secret_key_hex: &str) -> Result<(secp256k1::Keypair, Pubkey)>
     Ok((keypair, pubkey))
 }
 
-fn save_keypair_to_json(file_path: &PathBuf, name: &str, keypair: &secp256k1::Keypair, pubkey: &Pubkey) -> Result<()> {
+fn save_keypair_to_json(file_path: &PathBuf, keypair: &Keypair, pubkey: &Pubkey, name: &str) -> Result<()> {
     let mut keys: Value = if file_path.exists() {
         serde_json::from_str(&fs::read_to_string(file_path)?)?
     } else {
@@ -2245,11 +2246,11 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     println!("{}", "Creating account for dApp...".bold().green());
 
     // Get the keys directory
-    let keys_dir = ensure_keys_dir()?;
-    let accounts_file = keys_dir.join("accounts.json");
+    let keys_dir = get_config_dir()?;
+    let keys_file = keys_dir.join("keys.json");
 
     // Check if an account with the same name already exists
-    if account_name_exists(&accounts_file, &args.name)? {
+    if key_name_exists(&keys_file, &args.name)? {
         return Err(anyhow!(
             "An account with the name '{}' already exists. Please choose a different name.",
             args.name
@@ -2318,8 +2319,8 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     // Transfer ownership to the program
     transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id).await?;
 
-    // Save the account information to accounts.json
-    save_account_to_file(&accounts_file, &secret_key, &public_key, &args.name)?;
+    // Save the account information to keys.json
+    save_keypair_to_json(&keys_file, &caller_keypair, &caller_pubkey, &args.name)?;
 
     // Output the private key to the user
     let private_key_hex = hex::encode(secret_key.secret_bytes());
@@ -2411,26 +2412,23 @@ fn save_account_to_file(
 
 // Add a new function to list accounts
 pub async fn list_accounts() -> Result<()> {
-    let keys_dir = ensure_keys_dir()?;
-    let accounts_file = keys_dir.join("accounts.json");
+    let keys_dir = get_config_dir()?;
+    let keys_file = keys_dir.join("keys.json");
 
-    if !accounts_file.exists() {
+    if !keys_file.exists() {
         println!("  {} No accounts found", "ℹ".bold().blue());
         return Ok(());
     }
 
-    let file = OpenOptions::new().read(true).open(accounts_file)?;
-    let reader = BufReader::new(file);
-    let accounts: Value = serde_json::from_reader(reader)?;
+    let keys = load_keys(&keys_file)?;
 
     println!("{}", "Stored accounts:".bold().green());
-    for (account_id, account_info) in accounts.as_object().unwrap() {
+    for (name, account_info) in keys.as_object().unwrap() {
         println!(
             "  {} Account: {}",
             "→".bold().blue(),
-            account_info["name"].as_str().unwrap().yellow()
+            name.yellow()
         );
-        println!("    ID: {}", account_id);
         println!(
             "    Public Key: {}",
             account_info["public_key"].as_str().unwrap()
@@ -2439,6 +2437,18 @@ pub async fn list_accounts() -> Result<()> {
 
     Ok(())
 }
+
+fn key_name_exists(keys_file: &PathBuf, name: &str) -> Result<bool> {
+    if !keys_file.exists() {
+        return Ok(false);
+    }
+
+    let keys = load_keys(keys_file)?;
+
+    Ok(keys.as_object().unwrap().contains_key(name))
+}
+
+
 
 pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
     let keys_dir = ensure_keys_dir()?;
