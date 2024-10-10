@@ -97,7 +97,7 @@ By following these steps, you ensure that your CLI can be run from any location 
 
 Here are the main commands available in Arch-CLI:
 
-### Initialize a new project
+### Initialize Arch Network
 
 ```sh
 arch-cli init
@@ -105,7 +105,7 @@ arch-cli init
 
 This command sets up a new Arch Network project with the necessary folder structure, boilerplate code, and Docker configurations.
 
-### Manage the development server
+### Manage the local development server (Docker)
 
 ```sh
 arch-cli server start
@@ -125,7 +125,7 @@ arch-cli deploy [--directory <path>] [--program-key <path>] [--folder <folder>]
 
 Compiles and deploys the specified program to the Arch Network.
 
-### Manage the project
+### Manage a project
 
 ```sh
 arch-cli project create [--name <project_name>]
@@ -151,6 +151,8 @@ Sends the specified amount of coins to the given address on the Bitcoin Regtest 
 
 ### Manage the demo application
 
+Arch Network comes bundled with a block explorer and graffiti wall demonstration application. These commands manage that application.
+
 ```sh
 arch-cli demo start
 arch-cli demo stop
@@ -166,7 +168,7 @@ arch-cli account list
 arch-cli account delete <account_id_or_name>
 ```
 
-Creates, lists, or deletes accounts for the dApp.
+Creates, lists, or deletes accounts for your dapps.
 
 ### Manage configuration
 
@@ -189,6 +191,8 @@ arch-cli indexer clean
 Starts, stops, or cleans the arch-indexer using Docker Compose.
 
 ### Manage the validator
+
+The validator is a lightweight server that only serves as an RPC for developers to get up and running quickly with the least amount of overhead.
 
 ```sh
 arch-cli validator start [options]
@@ -216,10 +220,7 @@ To quickly set up and run the demo application, follow these steps:
    arch-cli deploy
    ```
 
-4. Create an account for your dApp:
-   ```
-   arch-cli account create --name myaccount
-   ```
+   Choose the demo application to deploy. When asked to create a key, do so.
 
 5. Start the demo application:
    ```
