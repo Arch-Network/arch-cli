@@ -1999,8 +1999,23 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
 async fn deploy_program_txs(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
     println!("    Deploying program transactions...");
 
-    // Look in deploy_folder/program/target/sbf-solana-solana/release/ for the .so file and the file name
-    let so_file = format!("{}/app/program/target/sbf-solana-solana/release/arch_network_app.so", deploy_folder.unwrap());
+    let so_folder = deploy_folder
+        .ok_or_else(|| anyhow!("No deploy folder specified"))?
+        .to_string();
+    let so_folder = format!("{}/app/program/target/sbf-solana-solana/release", so_folder);
+
+    // Scan the deploy_folder for the .so file in the folder and set so_file to that
+    let so_file = {
+        let mut so_file = None;
+        for file in fs::read_dir(&so_folder)? {
+            let path = file?.path();
+            if path.is_file() && path.extension().unwrap_or_default() == "so" {
+                so_file = path.to_str().map(|s| s.to_string());
+                break;
+            }
+        }
+        so_file.ok_or_else(|| anyhow!("No .so file found in the specified folder"))?
+    };
 
     deploy_program_txs_async(
         *program_keypair,
@@ -2011,8 +2026,7 @@ async fn deploy_program_txs(program_keypair: &Keypair, _program_pubkey: &Pubkey,
     Ok(())
 }
 
-async fn create_program_account(
-    program_keypair: &Keypair,
+async fn create_program_account(    program_keypair: &Keypair,
     program_pubkey: &Pubkey,
     txid: &str,
     vout: u32,
