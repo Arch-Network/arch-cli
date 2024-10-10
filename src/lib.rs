@@ -14,6 +14,7 @@ use colored::*;
 use common::constants::*;
 use common::helper::*;
 use config::{Config, Environment, File};
+use dialoguer::theme::ColorfulTheme;
 use rand::rngs::OsRng;
 use secp256k1::Keypair;
 use secp256k1::{Secp256k1, SecretKey};
@@ -165,6 +166,10 @@ pub enum IndexerCommands {
     /// Stop the indexer
     #[clap(long_about = "Stops the arch-indexer using Docker Compose.")]
     Stop,
+
+    /// Clean the indexer
+    #[clap(long_about = "Removes the indexer data and configuration files.")]
+    Clean,
 }
 
 #[derive(Subcommand)]
@@ -2678,6 +2683,59 @@ pub async fn indexer_stop(config: &Config) -> Result<()> {
     }
 
     println!("{}", "arch-indexer stopped successfully!".bold().green());
+    Ok(())
+}
+
+// Remove the docker containers and associated volumes
+pub async fn indexer_clean(config: &Config) -> Result<()> {
+    println!("{}", "Cleaning up the arch-indexer...".bold().yellow());
+
+    // Confirmation prompt
+    let proceed = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("This will remove all arch-indexer containers, data, and volumes. Are you sure you want to proceed?")
+        .default(false)
+        .interact()?;
+
+    if !proceed {
+        println!("  {} Operation cancelled.", "ℹ".bold().blue());
+        return Ok(());
+    }
+
+    set_env_vars(config)?;
+
+    // Stop and remove containers
+    let output = Command::new("docker-compose")
+        .arg("-f")
+        .arg("arch-indexer/docker-compose.yml")
+        .arg("down")
+        .arg("-v")  // This will also remove named volumes declared in the "volumes" section
+        .output()
+        .context("Failed to stop and remove arch-indexer containers")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to stop and remove arch-indexer containers: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    // Remove the pgdata volume explicitly
+    let output = Command::new("docker")
+        .args(&["volume", "rm", "arch-indexer_pgdata"])
+        .output()
+        .context("Failed to remove arch-indexer_pgdata volume")?;
+
+    if !output.status.success() {
+        println!(
+            "  {} Warning: Failed to remove arch-indexer_pgdata volume. It may not exist or may be in use.",
+            "⚠".bold().yellow()
+        );
+    }
+
+    println!(
+        "{}",
+        "Arch-indexer cleaned up successfully!".bold().green()
+    );
     Ok(())
 }
 

@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
         Commands::Stop => server_stop().await,
         Commands::Indexer(IndexerCommands::Start) => indexer_start(&config).await,
         Commands::Indexer(IndexerCommands::Stop) => indexer_stop(&config).await,
+        Commands::Indexer(IndexerCommands::Clean) => indexer_clean(&config).await,
         Commands::Validator(ValidatorCommands::Start(args)) => validator_start(args).await,
         Commands::Validator(ValidatorCommands::Stop) => validator_stop().await,
     };
