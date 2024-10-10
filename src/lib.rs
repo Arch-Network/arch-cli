@@ -1778,6 +1778,7 @@ fn select_existing_key(keys: &Value) -> Result<(secp256k1::Keypair, Pubkey)> {
     let selection = Select::new()
         .with_prompt("Select a key to use as the program key")
         .items(&account_names)
+        .default(0)
         .interact()?;
 
     let selected_account = &keys[&account_names[selection]];
