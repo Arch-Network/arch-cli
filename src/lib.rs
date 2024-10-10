@@ -1387,6 +1387,8 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
         }
     }
 
+    tokio::time::sleep(Duration::from_secs(25)).await;
+
     // Attempt to start the DKG process
     loop {
         // Send the RPC request
@@ -1483,6 +1485,36 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn get_connected_peer_count(client: &reqwest::Client, rpc_endpoint: &str) -> Result<usize> {
+    let rpc_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "get_connected_peer_count",
+        "params": [],
+        "id": 1
+    });
+
+    let response = client
+        .post(rpc_endpoint)
+        .json(&rpc_request)
+        .send()
+        .await
+        .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response
+            .json()
+            .await
+            .context("Failed to parse JSON response")?;
+
+        result["result"]
+            .as_u64()
+            .map(|count| count as usize)
+            .ok_or_else(|| anyhow!("Invalid peer count response"))
+    } else {
+        Err(anyhow!("Failed to get connected peer count"))
+    }
 }
 
 pub fn start_arch_nodes() -> Result<()> {
