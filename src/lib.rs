@@ -14,9 +14,11 @@ use colored::*;
 use common::constants::*;
 use common::helper::*;
 use config::{Config, Environment, File};
+use dialoguer::theme::ColorfulTheme;
 use rand::rngs::OsRng;
 use secp256k1::Keypair;
 use secp256k1::{Secp256k1, SecretKey};
+use dialoguer::{Select, Input, Confirm};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::env;
@@ -31,6 +33,8 @@ use std::process::Command as ShellCommand;
 use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
+use dirs::home_dir;
+use toml_edit::{Document, Item, value};
 
 use common::wallet_manager::*;
 
@@ -144,13 +148,17 @@ pub enum ServerCommands {
         #[clap(default_value = "all")]
         service: String,
     },
+
+    /// Clean the project
+    #[clap(long_about = "Removes the src/app directory, cleaning the project structure.")]
+    Clean,
 }
 
 #[derive(Subcommand)]
 pub enum ProjectCommands {
-    /// Clean the project
-    #[clap(long_about = "Removes the src/app directory, cleaning the project structure.")]
-    Clean,
+    /// Create a new project
+    #[clap(long_about = "Creates a new project with a specified name.")]
+    Create(CreateProjectArgs),
 }
 
 #[derive(Subcommand)]
@@ -162,6 +170,10 @@ pub enum IndexerCommands {
     /// Stop the indexer
     #[clap(long_about = "Stops the arch-indexer using Docker Compose.")]
     Stop,
+
+    /// Clean the indexer
+    #[clap(long_about = "Removes the indexer data and configuration files.")]
+    Clean,
 }
 
 #[derive(Subcommand)]
@@ -249,6 +261,13 @@ pub struct DeleteAccountArgs {
 }
 
 #[derive(Args)]
+pub struct CreateProjectArgs {
+    /// Name of the project
+    #[clap(short, long)]
+    pub name: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
 pub struct DeployArgs {
     /// Directory of your program
     #[clap(
@@ -263,7 +282,15 @@ pub struct DeployArgs {
         help = "Specifies the path to the program's key file for deployment"
     )]
     program_key: Option<String>,
+
+    /// Folder within the project directory to deploy
+    #[clap(
+        long,
+        help = "Specifies the folder within the project directory to deploy"
+    )]
+    folder: Option<String>,
 }
+
 
 #[derive(Args)]
 pub struct SendCoinsArgs {
@@ -287,6 +314,47 @@ pub async fn init() -> Result<()> {
 
     // Check dependencies
     check_dependencies()?;
+
+    // Store the current directory
+    let cli_dir = std::env::current_dir()?;
+
+    // Get the default project directory based on the OS
+    let default_dir = get_default_project_dir();
+
+    // Ask the user where they want to create the project
+    let mut project_dir = prompt_for_project_dir(&default_dir)?;
+
+    // Ensure the project directory is empty or create it
+    loop {
+        if !project_dir.exists() {
+            println!(
+                "  {} Directory does not exist. Do you want to create it? (Y/n)",
+                "ℹ".bold().blue()
+            );
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            if input.trim().to_lowercase() != "n" {
+                fs::create_dir_all(&project_dir)?;
+                println!("  {} Directory created successfully", "✓".bold().green());
+                break;
+            } else {
+                project_dir = prompt_for_project_dir(&default_dir)?;
+            }
+        } else if is_directory_empty(&project_dir)? {
+            break;
+        } else {
+            println!(
+                "  {} Directory is not empty. Please choose an empty directory.",
+                "⚠".bold().yellow()
+            );
+            project_dir = prompt_for_project_dir(&default_dir)?;
+        }
+    }
+
+    // Create the 'demo' folder within the project directory
+    let demo_dir = project_dir.join("demo");
+    fs::create_dir_all(&demo_dir)?;
+    println!("  {} Created demo directory at {:?}", "✓".bold().green(), demo_dir);
 
     // Get the configuration file path
     let config_path = get_config_path()?;
@@ -312,6 +380,9 @@ pub async fn init() -> Result<()> {
             "✓".bold().green(),
             dest_path
         );
+
+        // Update config.toml with project directory
+        update_config_with_project_dir(&dest_path, &project_dir)?;
     } else {
         println!(
             "  {} Warning: config.default.toml not found",
@@ -319,85 +390,163 @@ pub async fn init() -> Result<()> {
         );
     }
 
-    // Navigate to the program folder and run `cargo build-sbf`
-    println!("{}", "Building Arch Network program...".bold().blue());
-    ShellCommand::new("cargo")
-        .current_dir("program")
-        .arg("build-sbf")
-        .output()
-        .expect("Failed to build Arch Network program");
+    // Create the 'demo' folder within the project directory
+    let demo_dir = project_dir.join("demo");
+    fs::create_dir_all(&demo_dir)?;
+    println!("  {} Created demo directory at {:?}", "✓".bold().green(), demo_dir);
 
-    // // Create project structure
-    // println!("{}", "Creating project structure...".bold().blue());
-    // let dirs = ["src/app/backend", "src/app/keys"];
-    // for dir in dirs.iter() {
-    //     fs::create_dir_all(dir)
-    //         .with_context(|| format!("Failed to create directory: {}", dir.yellow()))?;
-    // }
+    // Change to the CLI project directory
+    std::env::set_current_dir(&cli_dir)?;
 
-    // // Create boilerplate files
-    // println!("{}", "Creating boilerplate files...".bold().blue());
-    // let files = [
-    //     ("src/app/backend/index.ts", include_str!("../templates/backend_index.ts")),
-    //     ("src/app/backend/package.json", include_str!("../templates/backend_package.json")),
-    // ];
-
-    // for (file_path, content) in files.iter() {
-    //     if !Path::new(file_path).exists() {
-    //         fs::write(file_path, content)
-    //             .with_context(|| format!("Failed to write file: {}", file_path))?;
-    //     } else {
-    //         println!("  {} File already exists, skipping: {}", "ℹ".bold().blue(), file_path);
-    //     }
-    // }
-
-    // Check if program and frontend directories exist
-    let program_dir = Path::new("src/app/program");
-    // let frontend_dir = Path::new("src/app/frontend");
-
-    if !program_dir.exists() {
-        println!("  {} Creating default program directory", "→".bold().blue());
-        fs::create_dir_all(program_dir.join("src"))?;
-        fs::write(
-            program_dir.join("src/lib.rs"),
-            include_str!("../templates/program_lib.rs"),
-        )?;
-        fs::write(
-            program_dir.join("Cargo.toml"),
-            include_str!("../templates/program_cargo.toml"),
-        )?;
-
-        println!("  {} Default program files created", "✓".bold().green());
+    // Copy everything from ./src to the demo folder
+    println!("{}", "Copying project files...".bold().blue());
+    println!(" Current directory: {:?}", std::env::current_dir()?);
+    let src_dir = cli_dir.join("src");
+    if src_dir.exists() {
+        copy_dir_all(&src_dir, &demo_dir)?;
+        println!("  {} Copied project files to demo directory", "✓".bold().green());
     } else {
-        println!(
-            "  {} Existing program directory found, preserving it",
-            "ℹ".bold().blue()
-        );
+        println!("  {} Warning: ./src directory not found", "⚠".bold().yellow());
     }
 
-    // if !frontend_dir.exists() {
-    //     println!("  {} Creating default frontend directory", "→".bold().blue());
-    //     fs::create_dir_all(frontend_dir)?;
-    //     fs::write(
-    //         frontend_dir.join("index.html"),
-    //         include_str!("../templates/frontend_index.html")
-    //     )?;
-    //     fs::write(
-    //         frontend_dir.join("index.js"),
-    //         include_str!("../templates/frontend_index.js")
-    //     )?;
-    //     fs::write(
-    //         frontend_dir.join("package.json"),
-    //         include_str!("../templates/frontend_package.json")
-    //     )?;
-    // } else {
-    //     println!("  {} Existing frontend directory found, preserving it", "ℹ".bold().blue());
-    // }
+    // Copy the whole program folder to the demo folder
+    println!("{}", "Copying program folder...".bold().blue());
+    let program_dir = cli_dir.join("program");
+    if program_dir.exists() {
+        let program_dir_in_demo = demo_dir.join("program");
+        fs::create_dir_all(&program_dir_in_demo)?;
+        copy_dir_all(&program_dir, &program_dir_in_demo)?;
+        println!("  {} Copied program folder to demo directory", "✓".bold().green());
+    } else {
+        println!("  {} Warning: ./program directory not found", "⚠".bold().yellow());
+    }
+
+    // Change to the demo directory
+    std::env::set_current_dir(&demo_dir)?;
+
+    // Build the program
+    println!("{}", "Building Arch Network program...".bold().blue());
+    let build_result = ShellCommand::new("cargo")
+        .current_dir("program")
+        .arg("build-sbf")
+        .output();
+
+    match build_result {
+        Ok(output) if output.status.success() => {
+            println!("  {} Arch Network program built successfully", "✓".bold().green());
+        }
+        Ok(output) => {
+            println!(
+                "  {} Warning: Failed to build Arch Network program: {}",
+                "⚠".bold().yellow(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Err(e) => {
+            println!(
+                "  {} Warning: Failed to build Arch Network program: {}",
+                "⚠".bold().yellow(),
+                e
+            );
+        }
+    }
 
     println!(
         "  {} New Arch Network app initialized successfully!",
         "✓".bold().green()
     );
+    Ok(())
+}
+
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
+    fs::create_dir_all(&dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+fn update_config_with_project_dir(config_path: &Path, project_dir: &Path) -> Result<()> {
+    let config_content = fs::read_to_string(config_path)?;
+    let mut doc = config_content.parse::<Document>()?;
+
+    // Add a new [project] section if it doesn't exist
+    if doc.get("project").is_none() {
+        doc["project"] = toml_edit::table();
+    }
+
+    // Update the directory in the [project] section
+    doc["project"]["directory"] = value(project_dir.to_str().unwrap());
+
+    // Write the updated config back to the file
+    fs::write(config_path, doc.to_string())?;
+
+    println!(
+        "  {} Updated configuration with project directory",
+        "✓".bold().green()
+    );
+
+    Ok(())
+}
+
+fn is_directory_empty(path: &Path) -> Result<bool> {
+    Ok(fs::read_dir(path)?.next().is_none())
+}
+
+fn get_default_project_dir() -> PathBuf {
+    let mut path = home_dir().unwrap_or_else(|| PathBuf::from("."));
+    if cfg!(windows) {
+        path.push("Projects");
+    } else if cfg!(target_os = "macos") {
+        path.push("Documents");
+    }
+    path.push("ArchNetwork");
+    path
+}
+
+fn prompt_for_project_dir(default_dir: &Path) -> Result<PathBuf> {
+    println!("Where would you like to create your Arch Network project?");
+    println!("Default: {}", default_dir.display());
+    print!("Project directory (press Enter for default): ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    if input.is_empty() {
+        Ok(default_dir.to_path_buf())
+    } else {
+        Ok(PathBuf::from(shellexpand::tilde(input).into_owned()))
+    }
+}
+
+fn create_project_dir(project_dir: &Path) -> Result<()> {
+    if !project_dir.exists() {
+        println!(
+            "  {} Directory does not exist. Creating it now...",
+            "ℹ".bold().blue()
+        );
+        match fs::create_dir_all(project_dir) {
+            Ok(_) => println!(
+                "  {} Directory created successfully",
+                "✓".bold().green()
+            ),
+            Err(e) => {
+                return Err(anyhow!(
+                    "Failed to create directory '{}': {}",
+                    project_dir.display(),
+                    e
+                ))
+            }
+        }
+    }
     Ok(())
 }
 
@@ -680,8 +829,68 @@ pub async fn server_start(config: &Config) -> Result<()> {
 pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
 
+    // Get the project directory from the config
+    let project_dir = PathBuf::from(config.get_string("project.directory")
+        .context("Failed to get project directory from config")?);
+
+    // Determine the deploy folder
+    let deploy_folder = if let Some(folder) = &args.folder {
+        project_dir.join(folder)
+    } else {
+        // List all folders in the project directory
+        let folders = fs::read_dir(&project_dir)?
+            .filter_map(|entry| {
+                entry.ok().and_then(|e| {
+                    if e.file_type().ok()?.is_dir() {
+                        Some(e.file_name().to_string_lossy().into_owned())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect::<Vec<String>>();
+
+        if folders.is_empty() {
+            return Err(anyhow!("No folders found in the project directory"));
+        }
+
+        println!("Available folders to deploy:");
+        for (i, folder) in folders.iter().enumerate() {
+            println!("  {}. {}", i + 1, folder);
+        }
+
+        let selected_folder = loop {
+            let mut input = String::new();
+            print!("Enter the number of the folder you want to deploy (or 'q' to quit): ");
+            io::stdout().flush()?;
+            io::stdin().read_line(&mut input)?;
+
+            let input = input.trim();
+            if input.eq_ignore_ascii_case("q") {
+                return Ok(());
+            }
+
+            if let Ok(choice) = input.parse::<usize>() {
+                if choice > 0 && choice <= folders.len() {
+                    break folders[choice - 1].clone();
+                }
+            }
+            println!("Invalid selection. Please try again.");
+        };
+
+        project_dir.join(selected_folder)
+    };
+
+    println!("Deploying from folder: {:?}", deploy_folder);
+
+    // Create a new DeployArgs with the updated folder
+    let updated_args = DeployArgs {
+        folder: Some(deploy_folder.to_str().unwrap().to_string()),
+        ..args.clone()
+    };
+
     // Build the program
-    build_program(args)?;
+    build_program(&updated_args)?;
 
     // Ensure the keys directory exists and load/generate the program keypair
     let (program_keypair, program_pubkey) = prepare_program_keys()?;
@@ -698,7 +907,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
-    deploy_program_with_tx_info(&program_keypair, &program_pubkey, tx_info).await?;
+    deploy_program_with_tx_info(&program_keypair, &program_pubkey, tx_info, deploy_folder.to_str().map(String::from)).await?;
 
     wallet_manager.close_wallet()?;
 
@@ -710,9 +919,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
 
     Ok(())
 }
-
-pub async fn server_stop() -> Result<()> {
-    println!("{}", "Stopping development server...".bold().yellow());
+pub async fn server_stop() -> Result<()> {    println!("{}", "Stopping development server...".bold().yellow());
 
     stop_all_related_containers()?;
 
@@ -1074,38 +1281,93 @@ pub fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()
     Ok(())
 }
 
-pub async fn clean() -> Result<()> {
+pub async fn server_clean() -> Result<()> {
     println!("{}", "Cleaning up the project...".bold().yellow());
     let config = load_config()?;
     let arch_data_dir = get_arch_data_dir(&config)?;
+    let config_dir = get_config_dir()?;
+    let keys_file = config_dir.join("keys.json");
+    let config_file = config_dir.join("config.toml");
+
+    // Ask user if they want to delete the keys.json file
+    let delete_keys = dialoguer::Confirm::new()
+        .with_prompt("Do you want to delete the keys.json file? This action cannot be undone.")
+        .default(false)
+        .interact()?;
+
+    // Ask user if they want to delete the config.toml file
+    let delete_config = dialoguer::Confirm::new()
+        .with_prompt("Do you want to delete the config.toml file? This action cannot be undone.")
+        .default(false)
+        .interact()?;
+
     if arch_data_dir.exists() {
         fs::remove_dir_all(&arch_data_dir)?;
         println!("  {} Removed arch-data directory", "✓".bold().green());
     }
-    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
-    // Stop and remove Docker containers
-    Command::new(docker_compose_cmd)
-        .args(docker_compose_args)
-        .args([
-            "-f",
-            &config
-                .get_string("bitcoin.docker_compose_file")
-                .unwrap_or_default(),
-            "down",
-            "-v",
-        ])
-        .status()?;
-    Command::new(docker_compose_cmd)
-        .args(docker_compose_args)
-        .args([
-            "-f",
-            &config
-                .get_string("arch.docker_compose_file")
-                .unwrap_or_default(),
-            "down",
-            "-v",
-        ])
-        .status()?;
+
+    if keys_file.exists() {
+        if delete_keys {
+            fs::remove_file(&keys_file)?;
+            println!("  {} Removed keys.json file", "✓".bold().green());
+        } else {
+            println!("  {} Preserved keys.json file", "ℹ".bold().blue());
+        }
+    } else {
+        println!("  {} No keys.json file found", "ℹ".bold().blue());
+    }
+
+    if config_file.exists() {
+        if delete_config {
+            fs::remove_file(&config_file)?;
+            println!("  {} Removed config.toml file", "✓".bold().green());
+        } else {
+            println!("  {} Preserved config.toml file", "ℹ".bold().blue());
+        }
+    } else {
+        println!("  {} No config.toml file found", "ℹ".bold().blue());
+    }
+
+    // Stop and remove Docker containers for Bitcoin
+    let bitcoin_compose_file = config.get_string("bitcoin.docker_compose_file").unwrap_or_default();
+    if !bitcoin_compose_file.is_empty() {
+        let status = Command::new("docker-compose")
+            .args(["-f", &bitcoin_compose_file, "down", "--volumes"])
+            .env("BITCOIN_RPC_USER", "")
+            .env("ORD_PORT", "")
+            .env("ELECTRS_REST_API_PORT", "")
+            .env("ELECTRS_ELECTRUM_PORT", "")
+            .env("BTC_RPC_EXPLORER_PORT", "")
+            .status()
+            .context("Failed to stop Bitcoin containers")?;
+
+        if status.success() {
+            println!("  {} Stopped and removed Bitcoin containers", "✓".bold().green());
+        } else {
+            println!("  {} Failed to stop Bitcoin containers", "✗".bold().red());
+        }
+    }
+
+    // Stop and remove Docker containers for Arch
+    let arch_compose_file = config.get_string("arch.docker_compose_file").unwrap_or_default();
+    if !arch_compose_file.is_empty() {
+        let status = Command::new("docker-compose")
+            .args(["-f", &arch_compose_file, "down", "--volumes"])
+            .env("BITCOIN_RPC_USER", "")
+            .env("ORD_PORT", "")
+            .env("ELECTRS_REST_API_PORT", "")
+            .env("ELECTRS_ELECTRUM_PORT", "")
+            .env("BTC_RPC_EXPLORER_PORT", "")
+            .status()
+            .context("Failed to stop Arch containers")?;
+
+        if status.success() {
+            println!("  {} Stopped and removed Arch containers", "✓".bold().green());
+        } else {
+            println!("  {} Failed to stop Arch containers", "✗".bold().red());
+        }
+    }
+
     println!("  {} Project cleaned up successfully", "✓".bold().green());
     Ok(())
 }
@@ -1190,6 +1452,8 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
             }
         }
     }
+
+    tokio::time::sleep(Duration::from_secs(25)).await;
 
     // Attempt to start the DKG process
     loop {
@@ -1287,6 +1551,36 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn get_connected_peer_count(client: &reqwest::Client, rpc_endpoint: &str) -> Result<usize> {
+    let rpc_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "get_connected_peer_count",
+        "params": [],
+        "id": 1
+    });
+
+    let response = client
+        .post(rpc_endpoint)
+        .json(&rpc_request)
+        .send()
+        .await
+        .map_err(|e| anyhow!("Failed to send RPC request: {:?}", e))?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response
+            .json()
+            .await
+            .context("Failed to parse JSON response")?;
+
+        result["result"]
+            .as_u64()
+            .map(|count| count as usize)
+            .ok_or_else(|| anyhow!("Invalid peer count response"))
+    } else {
+        Err(anyhow!("Failed to get connected peer count"))
+    }
 }
 
 pub fn start_arch_nodes() -> Result<()> {
@@ -1494,7 +1788,7 @@ fn get_program_path(args: &DeployArgs) -> PathBuf {
     let mut path = PathBuf::from(
         args.directory
             .clone()
-            .unwrap_or_else(|| "src/app/program".to_string()),
+            .unwrap_or_else(|| "program".to_string()),
     );
     path.push("Cargo.toml");
     path
@@ -1503,13 +1797,19 @@ fn get_program_path(args: &DeployArgs) -> PathBuf {
 fn build_program(args: &DeployArgs) -> Result<()> {
     println!("  ℹ Building program...");
 
-    let path = get_program_path(args);
-    if !std::path::Path::new(&path).exists() {
-        return Err(anyhow!("Cargo.toml not found at: {}", path.display()));
-    }
+    // Print out the path to the Cargo.toml file
+    println!("  ℹ Cargo.toml found at: {}", args.folder.clone().unwrap());
+
+    // Change to the program directory
+    let program_dir = args.folder.clone().unwrap();
+    std::env::set_current_dir(&program_dir)
+        .context("Failed to change to program directory")?;
+
+    // Print out the current working directory
+    println!("  ℹ Current working directory: {}", std::env::current_dir().unwrap().display());
 
     let output = std::process::Command::new("cargo")
-        .args(["build-sbf", "--manifest-path", path.to_str().unwrap()])
+        .args(["build-sbf", "--manifest-path", "app/program/Cargo.toml"])
         .output()
         .context("Failed to execute cargo build-sbf")?;
 
@@ -1522,8 +1822,7 @@ fn build_program(args: &DeployArgs) -> Result<()> {
 
     println!("  ✓ Program built successfully");
     Ok(())
-}
-fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
+}fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
     Ok(args.program_key.clone().unwrap_or_else(|| {
         config
             .get_string("program.key_path")
@@ -1535,6 +1834,7 @@ async fn deploy_program_with_tx_info(
     program_keypair: &bitcoin::secp256k1::Keypair,
     program_pubkey: &arch_program::pubkey::Pubkey,
     tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>,
+    deploy_folder: Option<String>,
 ) -> Result<()> {
     if let Some(info) = tx_info {
         deploy_program(
@@ -1542,6 +1842,7 @@ async fn deploy_program_with_tx_info(
             program_pubkey,
             &info.info.txid.to_string(),
             0,
+            deploy_folder
         )
         .await?;
         println!("  {} Program deployed successfully", "✓".bold().green());
@@ -1556,10 +1857,92 @@ async fn deploy_program_with_tx_info(
     }
 }
 
-fn prepare_program_keys() -> Result<(Keypair, Pubkey)> {
-    let keys_dir = ensure_keys_dir()?;
-    let program_key_path = keys_dir.join("program.json");
-    with_secret_key_file(program_key_path.to_str().unwrap())
+pub fn prepare_program_keys() -> Result<(secp256k1::Keypair, Pubkey)> {
+    let config_dir = get_config_dir()?;
+    let keys_file = config_dir.join("keys.json");
+
+    if keys_file.exists() {
+        let keys = load_keys(&keys_file)?;
+        if !keys.as_object().map_or(true, |obj| obj.is_empty()) {
+            return select_existing_key(&keys);
+        }
+    }
+
+    create_new_key(&keys_file)
+}
+
+fn load_keys(keys_file: &PathBuf) -> Result<Value> {
+    let keys_content = fs::read_to_string(keys_file)?;
+    Ok(serde_json::from_str(&keys_content)?)
+}
+
+fn select_existing_key(keys: &Value) -> Result<(secp256k1::Keypair, Pubkey)> {
+    let account_names: Vec<String> = keys.as_object().unwrap().keys().cloned().collect();
+    let selection = Select::new()
+        .with_prompt("Select a key to use as the program key")
+        .items(&account_names)
+        .default(0)
+        .interact()?;
+
+    let selected_account = &keys[&account_names[selection]];
+    let secret_key = selected_account["secret_key"].as_str().unwrap();
+    with_secret_key(secret_key)
+}
+
+fn create_new_key(keys_file: &PathBuf) -> Result<(secp256k1::Keypair, Pubkey)> {
+    println!("No existing keys found or keys.json is empty.");
+    if Confirm::new().with_prompt("Do you want to create a new key?").interact()? {
+        let name = Input::<String>::new()
+            .with_prompt("Enter a name for the new key")
+            .interact_text()?;
+
+        let secp = Secp256k1::new();
+        let (secret_key, public_key) = secp.generate_keypair(&mut OsRng);
+        let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+        let pubkey = Pubkey::from_slice(&public_key.serialize()[1..33]); // Use only the 32-byte compressed public key
+
+        save_keypair_to_json(keys_file, &keypair, &pubkey, &name)?;
+
+        println!("New key created and saved as '{}'", name);
+        Ok((keypair, pubkey))
+    } else {
+        Err(anyhow!("No key selected or created"))
+    }
+}
+
+fn with_secret_key(secret_key_hex: &str) -> Result<(secp256k1::Keypair, Pubkey)> {
+    let secp = Secp256k1::new();
+    let secret_key = SecretKey::from_str(secret_key_hex)?;
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+    let public_key = keypair.public_key();
+    let pubkey = Pubkey::from_slice(&public_key.serialize()[1..33]); // Use only the 32-byte compressed public key
+    Ok((keypair, pubkey))
+}
+
+fn save_keypair_to_json(file_path: &PathBuf, keypair: &Keypair, pubkey: &Pubkey, name: &str) -> Result<()> {
+    let mut keys: Value = if file_path.exists() {
+        serde_json::from_str(&fs::read_to_string(file_path)?)?
+    } else {
+        json!({})
+    };
+
+    let account_info = json!({
+        "public_key": hex::encode(pubkey.serialize()),
+        "secret_key": hex::encode(keypair.secret_key().secret_bytes()),
+    });
+
+    keys[name] = account_info;
+
+    fs::write(file_path, serde_json::to_string_pretty(&keys)?)?;
+    Ok(())
+}
+
+fn generate_new_keypair() -> Result<(secp256k1::Keypair, Pubkey)> {
+    let secp = Secp256k1::new();
+    let (secret_key, _) = secp.generate_keypair(&mut OsRng);
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+    let pubkey = Pubkey::from_slice(&keypair.public_key().serialize());
+    Ok((keypair, pubkey))
 }
 
 fn display_program_id(program_pubkey: &Pubkey) {
@@ -1684,12 +2067,13 @@ async fn deploy_program(
     program_pubkey: &Pubkey,
     txid: &str,
     vout: u32,
+    deploy_folder: Option<String>,
 ) -> Result<()> {
     // Create a new account for the program
     create_program_account(program_keypair, program_pubkey, txid, vout).await?;
 
     // Deploy the program transactions
-    deploy_program_txs(program_keypair, program_pubkey).await?;
+    deploy_program_txs(program_keypair, program_pubkey, deploy_folder).await?;
 
     // Make program executable
     make_program_executable(program_keypair, program_pubkey).await?;
@@ -1717,18 +2101,37 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
     println!("    Program made executable successfully");
     Ok(())
 }
-async fn deploy_program_txs(program_keypair: &Keypair, _program_pubkey: &Pubkey) -> Result<()> {
+async fn deploy_program_txs(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
     println!("    Deploying program transactions...");
+
+    let so_folder = deploy_folder
+        .ok_or_else(|| anyhow!("No deploy folder specified"))?
+        .to_string();
+    let so_folder = format!("{}/app/program/target/sbf-solana-solana/release", so_folder);
+
+    // Scan the deploy_folder for the .so file in the folder and set so_file to that
+    let so_file = {
+        let mut so_file = None;
+        for file in fs::read_dir(&so_folder)? {
+            let path = file?.path();
+            if path.is_file() && path.extension().unwrap_or_default() == "so" {
+                so_file = path.to_str().map(|s| s.to_string());
+                break;
+            }
+        }
+        so_file.ok_or_else(|| anyhow!("No .so file found in the specified folder"))?
+    };
+
     deploy_program_txs_async(
         *program_keypair,
-        "src/app/program/target/sbf-solana-solana/release/arch_network_app.so",
+        &so_file,
     )
     .await?;
     println!("    Program transactions deployed successfully");
     Ok(())
 }
-async fn create_program_account(
-    program_keypair: &Keypair,
+
+async fn create_program_account(    program_keypair: &Keypair,
     program_pubkey: &Pubkey,
     txid: &str,
     vout: u32,
@@ -1752,11 +2155,21 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
 
     set_env_vars(config)?;
+
+    // Get the project directory from the config
+    let project_dir = config.get_string("project.directory")
+        .context("Failed to get project directory from config")?;
+
+    // Change to the demo directory
+    let demo_dir = PathBuf::from(project_dir).join("demo");
+    std::env::set_current_dir(&demo_dir)
+        .context("Failed to change to demo directory")?;
+
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
-        .arg("demo-docker-compose.yml")
-        .arg("--build")
+        .arg("app/demo-docker-compose.yml")
         .arg("up")
+        .arg("--build")
         .arg("-d")
         .output()
         .context("Failed to start the demo application using Docker Compose")?;
@@ -1779,6 +2192,15 @@ pub async fn demo_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the demo application...".bold().green());
 
     set_env_vars(config)?;
+
+    // Get the project directory from the config
+    let project_dir = config.get_string("project.directory")
+        .context("Failed to get project directory from config")?;
+
+    // Change to the demo directory
+    let demo_dir = PathBuf::from(project_dir).join("demo");
+    std::env::set_current_dir(&demo_dir)
+        .context("Failed to change to demo directory")?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
@@ -1928,11 +2350,11 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     println!("{}", "Creating account for dApp...".bold().green());
 
     // Get the keys directory
-    let keys_dir = ensure_keys_dir()?;
-    let accounts_file = keys_dir.join("accounts.json");
+    let keys_dir = get_config_dir()?;
+    let keys_file = keys_dir.join("keys.json");
 
     // Check if an account with the same name already exists
-    if account_name_exists(&accounts_file, &args.name)? {
+    if key_name_exists(&keys_file, &args.name)? {
         return Err(anyhow!(
             "An account with the name '{}' already exists. Please choose a different name.",
             args.name
@@ -2001,8 +2423,8 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     // Transfer ownership to the program
     transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id).await?;
 
-    // Save the account information to accounts.json
-    save_account_to_file(&accounts_file, &secret_key, &public_key, &args.name)?;
+    // Save the account information to keys.json
+    save_keypair_to_json(&keys_file, &caller_keypair, &caller_pubkey, &args.name)?;
 
     // Output the private key to the user
     let private_key_hex = hex::encode(secret_key.secret_bytes());
@@ -2094,26 +2516,23 @@ fn save_account_to_file(
 
 // Add a new function to list accounts
 pub async fn list_accounts() -> Result<()> {
-    let keys_dir = ensure_keys_dir()?;
-    let accounts_file = keys_dir.join("accounts.json");
+    let keys_dir = get_config_dir()?;
+    let keys_file = keys_dir.join("keys.json");
 
-    if !accounts_file.exists() {
+    if !keys_file.exists() {
         println!("  {} No accounts found", "ℹ".bold().blue());
         return Ok(());
     }
 
-    let file = OpenOptions::new().read(true).open(accounts_file)?;
-    let reader = BufReader::new(file);
-    let accounts: Value = serde_json::from_reader(reader)?;
+    let keys = load_keys(&keys_file)?;
 
     println!("{}", "Stored accounts:".bold().green());
-    for (account_id, account_info) in accounts.as_object().unwrap() {
+    for (name, account_info) in keys.as_object().unwrap() {
         println!(
             "  {} Account: {}",
             "→".bold().blue(),
-            account_info["name"].as_str().unwrap().yellow()
+            name.yellow()
         );
-        println!("    ID: {}", account_id);
         println!(
             "    Public Key: {}",
             account_info["public_key"].as_str().unwrap()
@@ -2122,6 +2541,18 @@ pub async fn list_accounts() -> Result<()> {
 
     Ok(())
 }
+
+fn key_name_exists(keys_file: &PathBuf, name: &str) -> Result<bool> {
+    if !keys_file.exists() {
+        return Ok(false);
+    }
+
+    let keys = load_keys(keys_file)?;
+
+    Ok(keys.as_object().unwrap().contains_key(name))
+}
+
+
 
 pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
     let keys_dir = ensure_keys_dir()?;
@@ -2353,6 +2784,59 @@ pub async fn indexer_stop(config: &Config) -> Result<()> {
     Ok(())
 }
 
+// Remove the docker containers and associated volumes
+pub async fn indexer_clean(config: &Config) -> Result<()> {
+    println!("{}", "Cleaning up the arch-indexer...".bold().yellow());
+
+    // Confirmation prompt
+    let proceed = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("This will remove all arch-indexer containers, data, and volumes. Are you sure you want to proceed?")
+        .default(false)
+        .interact()?;
+
+    if !proceed {
+        println!("  {} Operation cancelled.", "ℹ".bold().blue());
+        return Ok(());
+    }
+
+    set_env_vars(config)?;
+
+    // Stop and remove containers
+    let output = Command::new("docker-compose")
+        .arg("-f")
+        .arg("arch-indexer/docker-compose.yml")
+        .arg("down")
+        .arg("-v")  // This will also remove named volumes declared in the "volumes" section
+        .output()
+        .context("Failed to stop and remove arch-indexer containers")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to stop and remove arch-indexer containers: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    // Remove the pgdata volume explicitly
+    let output = Command::new("docker")
+        .args(&["volume", "rm", "arch-indexer_pgdata"])
+        .output()
+        .context("Failed to remove arch-indexer_pgdata volume")?;
+
+    if !output.status.success() {
+        println!(
+            "  {} Warning: Failed to remove arch-indexer_pgdata volume. It may not exist or may be in use.",
+            "⚠".bold().yellow()
+        );
+    }
+
+    println!(
+        "{}",
+        "Arch-indexer cleaned up successfully!".bold().green()
+    );
+    Ok(())
+}
+
 pub async fn validator_start(args: &ValidatorStartArgs) -> Result<()> {
     println!("{}", "Starting the local validator...".bold().green());
 
@@ -2444,5 +2928,90 @@ pub async fn validator_stop() -> Result<()> {
     }
 
     println!("{}", "Local validator stopped successfully!".bold().green());
+    Ok(())
+}
+
+pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result<()> {
+    println!("{}", "Creating a new project...".bold().green());
+
+    // Get the project directory from the config
+    let project_dir = PathBuf::from(config.get_string("project.directory")
+        .context("Failed to get project directory from config")?);
+
+    // Get project name, either from args or by asking the user
+    let mut project_name = args.name.clone().unwrap_or_default();
+    if project_name.is_empty() {
+        project_name = Input::<String>::new()
+            .with_prompt("Enter a name for your project")
+            .interact()?;
+    }
+
+    // Create the new project folder
+    let mut new_project_dir = project_dir.join(&project_name);
+
+    // Check if the folder already exists and ask for a new name if it does
+    while new_project_dir.exists() {
+        println!("  {} A project with this name already exists.", "⚠".bold().yellow());
+        let use_existing = Confirm::new()
+            .with_prompt("Do you want to use the existing project?")
+            .default(false)
+            .interact()?;
+
+        if use_existing {
+            println!("  {} Using existing project directory.", "ℹ".bold().blue());
+            break;
+        } else {
+            project_name = Input::<String>::new()
+                .with_prompt("Enter a new name for your project")
+                .interact()?;
+            new_project_dir = project_dir.join(&project_name);
+        }
+    }
+
+    // Create the project directory if it doesn't exist
+    if !new_project_dir.exists() {
+        fs::create_dir_all(&new_project_dir)
+            .context(format!("Failed to create project directory: {:?}", new_project_dir))?;
+        println!("  {} Created project directory at {:?}", "✓".bold().green(), new_project_dir);
+    }
+
+    // Get the CLI directory (where the template files are located)
+    let cli_dir = std::env::current_dir()?;
+
+    // Copy the dummy program folder to the new project directory
+    let src_program_dir = cli_dir.join("src/app/program");
+    let dest_program_dir = new_project_dir.join("app/program");
+    copy_dir_all(&src_program_dir, &dest_program_dir)
+        .context("Failed to copy program folder")?;
+
+    println!("  {} Copied program template to {:?}", "✓".bold().green(), dest_program_dir);
+
+    // Copy the program folder to the new project directory
+    let src_program_dir = cli_dir.join("program");
+    let dest_program_dir = new_project_dir.join("program");
+    copy_dir_all(&src_program_dir, &dest_program_dir)
+        .context("Failed to copy program folder")?;
+
+    println!("  {} Copied program to {:?}", "✓".bold().green(), dest_program_dir);
+
+    // Copy the src/common folder over to the proejct directory
+    let src_common_dir = cli_dir.join("src/common");
+    let dest_common_dir = new_project_dir.join("common");
+    copy_dir_all(&src_common_dir, &dest_common_dir)
+        .context("Failed to copy common folder")?;
+
+    println!("  {} Copied common libraries to {:?}", "✓".bold().green(), dest_common_dir);
+
+    // Create a basic README.md file
+    let readme_content = format!("# {}\n\nThis is a new Arch Network project.", project_name);
+    fs::write(new_project_dir.join("README.md"), readme_content)
+        .context("Failed to create README.md")?;
+
+    println!("  {} Created README.md", "✓".bold().green());
+
+    println!("{}", "New project created successfully!".bold().green());
+    println!("  {} Project location: {:?}", "ℹ".bold().blue(), new_project_dir);
+    // println!("  {} To get started, navigate to the project directory and run 'arch-cli init'", "ℹ".bold().blue());
+
     Ok(())
 }

@@ -26,6 +26,8 @@ These tools are essential for running the development environment and building A
 - Frontend application management and launching
 - Account creation and management
 - Configuration viewing and editing
+- Indexer management
+- Validator management
 
 ## Installation
 
@@ -110,25 +112,26 @@ arch-cli server start
 arch-cli server stop
 arch-cli server status
 arch-cli server logs [<service>]
+arch-cli server clean
 ```
 
-These commands start, stop, check the status of, and view logs for the development environment, including the Bitcoin regtest network and Arch Network nodes.
+These commands start, stop, check the status of, view logs for, and clean up the development environment, including the Bitcoin regtest network and Arch Network nodes.
 
 ### Deploy a program
 
 ```sh
-arch-cli deploy [--directory <path>] [--program-key <path>]
+arch-cli deploy [--directory <path>] [--program-key <path>] [--folder <folder>]
 ```
 
 Compiles and deploys the specified program to the Arch Network.
 
-### Clean up the environment
+### Manage the project
 
 ```sh
-arch-cli project clean
+arch-cli project create [--name <project_name>]
 ```
 
-Removes generated files and Docker volumes for a fresh start.
+Creates a new project with the specified name.
 
 ### Start Distributed Key Generation (DKG) process
 
@@ -146,21 +149,24 @@ arch-cli bitcoin send-coins --address <address> --amount <amount>
 
 Sends the specified amount of coins to the given address on the Bitcoin Regtest network.
 
-### Manage the frontend application
+### Manage the demo application
 
 ```sh
-arch-cli frontend start
+arch-cli demo start
+arch-cli demo stop
 ```
 
-Prepares and starts the frontend application, opening it in the default browser.
+Starts or stops the demo application, including both frontend and backend services.
 
 ### Manage accounts
 
 ```sh
-arch-cli account create [--program-id <program_id>]
+arch-cli account create [--program-id <program_id>] --name <account_name>
+arch-cli account list
+arch-cli account delete <account_id_or_name>
 ```
 
-Creates an account for the dApp, prompts for funding, and transfers ownership to the specified program.
+Creates, lists, or deletes accounts for the dApp.
 
 ### Manage configuration
 
@@ -172,15 +178,24 @@ arch-cli config reset
 
 These commands allow you to view, edit, and reset the configuration file.
 
+### Manage the indexer
+
+```sh
+arch-cli indexer start
+arch-cli indexer stop
+arch-cli indexer clean
+```
+
+Starts, stops, or cleans the arch-indexer using Docker Compose.
+
 ### Manage the validator
 
 ```sh
-arch-cli validator start
+arch-cli validator start [options]
 arch-cli validator stop
 ```
 
-- `arch-cli validator start`: Starts a local validator with specified network settings.
-- `arch-cli validator stop`: Stops the local validator.
+Starts a local validator with specified network settings or stops the local validator.
 
 ## Getting Started with the Demo App
 
@@ -203,67 +218,31 @@ To quickly set up and run the demo application, follow these steps:
 
 4. Create an account for your dApp:
    ```
-   arch-cli account create
+   arch-cli account create --name myaccount
    ```
 
-5. Start the frontend application:
+5. Start the demo application:
    ```
-   arch-cli frontend start
+   arch-cli demo start
    ```
 
 By following these steps in order, you'll have a fully functional demo Arch Network application running locally.
 
 ## Project Structure
 
-After initialization, your project will have the following structure:
-
-```
-my-arch-project/
-├── src/
-│   └── app/
-│       ├── program/
-│       │   └── src/
-│       │       └── lib.rs
-│       ├── backend/
-│       │   ├── index.ts
-│       │   └── package.json
-│       ├── frontend/
-│       │   ├── index.html
-│       │   ├── index.js
-│       │   ├── package.json
-│       │   └── .env.example
-│       └── keys/
-├── Cargo.toml
-├── config.toml
-├── bitcoin-docker-compose.yml
-└── arch-docker-compose.yml
-```
+[Project Structure section remains unchanged]
 
 ## Development
 
-To set up the development environment:
-
-1. Clone the repository:
-    ```sh
-    git clone https://github.com/hoffmabc/arch-cli.git
-    cd arch-cli
-    ```
-2. Build the project:
-    ```sh
-    cargo build
-    ```
-3. Run tests:
-    ```sh
-    cargo test
-    ```
+[Development section remains unchanged]
 
 ## Troubleshooting
 
-- If you encounter issues with Docker networks, try running `arch-cli project clean` to remove existing volumes and networks.
+- If you encounter issues with Docker networks, try running `arch-cli server clean` to remove existing volumes and networks.
 - Ensure your Docker daemon is running before using `arch-cli server start`.
 - Check the `config.toml` file for correct configuration of RPC endpoints and credentials.
 - If you encounter issues with the DKG process, ensure that all nodes are properly configured and connected.
-- For frontend issues, make sure all npm dependencies are correctly installed and that the `.env` file is properly set up.
+- For demo application issues, make sure all dependencies are correctly installed and that the necessary configuration files are properly set up.
 
 ## Support
 

@@ -28,8 +28,8 @@ async fn main() -> Result<()> {
         Commands::Server(ServerCommands::Stop) => server_stop().await,
         Commands::Server(ServerCommands::Status) => server_status(&config).await,
         Commands::Server(ServerCommands::Logs { service }) => server_logs(service, &config).await,
+        Commands::Server(ServerCommands::Clean) => server_clean().await,
         Commands::Deploy(args) => deploy(args, &config).await,
-        Commands::Project(ProjectCommands::Clean) => clean().await,
         Commands::Dkg(DkgCommands::Start) => start_dkg(&config).await,
         Commands::Bitcoin(BitcoinCommands::SendCoins(args)) => send_coins(args, &config).await,
         Commands::Demo(DemoCommands::Start) => demo_start(&config).await,
@@ -44,6 +44,8 @@ async fn main() -> Result<()> {
         Commands::Stop => server_stop().await,
         Commands::Indexer(IndexerCommands::Start) => indexer_start(&config).await,
         Commands::Indexer(IndexerCommands::Stop) => indexer_stop(&config).await,
+        Commands::Indexer(IndexerCommands::Clean) => indexer_clean(&config).await,
+        Commands::Project(ProjectCommands::Create(args)) => project_create(args, &config).await,
         Commands::Validator(ValidatorCommands::Start(args)) => validator_start(args).await,
         Commands::Validator(ValidatorCommands::Stop) => validator_stop().await,
     };

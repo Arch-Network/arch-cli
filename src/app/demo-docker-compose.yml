@@ -1,7 +1,7 @@
 services:
   backend:
     build: 
-      context: ./src/app/backend
+      context: ./backend
       args:
         DEMO_FRONTEND_PORT: ${DEMO_BACKEND_PORT}
     ports:
@@ -11,7 +11,7 @@ services:
 
   frontend:
     build: 
-      context: ./src/app/frontend
+      context: ./frontend
       args:
         DEMO_FRONTEND_PORT: ${DEMO_FRONTEND_PORT}
         DEMO_BACKEND_PORT: ${DEMO_BACKEND_PORT}

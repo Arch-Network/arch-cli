@@ -7,6 +7,8 @@ const app = express();
 app.use(cors());
 
 const port = process.env.INDEXER_PORT || 3003;
+const MAX_RETRIES = 10;
+const RETRY_DELAY = 5000; // 5 seconds
 
 const pool = new Pool({
   user: process.env.DB_USER,
@@ -263,11 +265,28 @@ async function storeBlock(block) {
     return `${hours}h ${minutes}m ${remainingSeconds}s`;
   }
   
-  
+  async function connectWithRetry() {
+    let retries = 0;
+    while (retries < MAX_RETRIES) {
+      try {
+        await pool.connect();
+        console.log('Successfully connected to the database');
+        return;
+      } catch (err) {
+        retries++;
+        console.error(`Failed to connect to the database. Attempt ${retries}/${MAX_RETRIES}. Retrying in ${RETRY_DELAY / 1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      }
+    }
+    console.error('Failed to connect to the database after maximum retries. Exiting...');
+    process.exit(1);
+  }
+
   // Initialize currentBlockHeight before starting the sync process
   app.listen(port, '0.0.0.0', async () => {
     console.log(`Indexer API listening at http://localhost:${port}`);
     try {
+      await connectWithRetry();
       const result = await pool.query('SELECT MAX(height) as max_height FROM blocks');
       currentBlockHeight = result.rows[0].max_height || 0;
       console.log(`Starting sync from block height: ${currentBlockHeight}`);
