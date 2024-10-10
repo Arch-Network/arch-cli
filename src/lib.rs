@@ -2398,7 +2398,7 @@ pub async fn validator_start(args: &ValidatorStartArgs) -> Result<()> {
         .arg(format!("RUST_LOG={}", rust_log))
         .arg("-p")
         .arg(format!("{}:{}", rpc_bind_port, rpc_bind_port))
-        .arg("ghcr.io/arch-network/local_validator:pr-282")
+        .arg("ghcr.io/arch-network/local_validator:pr-268")
         .arg("/usr/bin/local_validator")
         .arg("--rpc-bind-ip")
         .arg(rpc_bind_ip)
