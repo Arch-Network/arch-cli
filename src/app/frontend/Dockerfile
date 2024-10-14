@@ -18,4 +18,4 @@ ENV INDEXER_PORT=${INDEXER_PORT}
 
 EXPOSE ${DEMO_FRONTEND_PORT}
 
-CMD ["npm", "start"]
+CMD ["npm", "run", "dev"]
