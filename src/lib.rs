@@ -1631,11 +1631,10 @@ pub fn load_config() -> Result<Config> {
         );
     } else {
         println!(
-            "  {} Warning: {} not found. Using default configuration.",
+            "  {} Warning: {} not found. Please run the 'init' command to initialize the configuration.",
             "⚠".bold().yellow(),
             config_path.display().to_string().yellow()
-        );
-        // You might want to create a default config here
+        );        
     }
 
     builder = builder.add_source(Environment::with_prefix("ARCH_CLI"));
@@ -2204,7 +2203,7 @@ pub async fn demo_stop(config: &Config) -> Result<()> {
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
-        .arg("demo-docker-compose.yml")
+        .arg("app/demo-docker-compose.yml")
         .arg("down")
         .output()
         .context("Failed to stop the demo application using Docker Compose")?;
@@ -3015,3 +3014,4 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
 
     Ok(())
 }
+
