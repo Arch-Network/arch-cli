@@ -412,7 +412,8 @@ pub async fn init() -> Result<()> {
         println!(" Current directory: {:?}", std::env::current_dir()?);
         let src_dir = cli_dir.join("src");
         if src_dir.exists() {
-            copy_dir_all(&src_dir, &demo_dir)?;
+            let exclude_files = &["lib.rs", "main.rs"];
+            copy_dir_excluding(&src_dir, &demo_dir, exclude_files)?;
             println!("  {} Copied project files to demo directory", "✓".bold().green());
         } else {
             println!("  {} Warning: ./src directory not found", "⚠".bold().yellow());
@@ -475,6 +476,27 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
         let ty = entry.file_type()?;
         if ty.is_dir() {
             copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_excluding(src: impl AsRef<Path>, dst: impl AsRef<Path>, exclude: &[&str]) -> Result<()> {
+    fs::create_dir_all(&dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let filename = entry.file_name();
+
+        // Skip excluded files
+        if exclude.contains(&filename.to_str().unwrap_or("")) {
+            continue;
+        }
+
+        if ty.is_dir() {
+            copy_dir_excluding(entry.path(), dst.as_ref().join(entry.file_name()), exclude)?;
         } else {
             fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
         }
