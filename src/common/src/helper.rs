@@ -29,7 +29,7 @@ use crate::constants::{
     GET_ACCOUNT_ADDRESS, GET_BEST_BLOCK_HASH, GET_BLOCK, GET_PROCESSED_TRANSACTION, GET_PROGRAM,
     NODE1_ADDRESS, READ_ACCOUNT_INFO, TRANSACTION_NOT_FOUND_CODE,
 };
-use crate::models::{CallerInfo};
+use crate::models::CallerInfo;
 use crate::runtime_transaction::RuntimeTransaction;
 use crate::signature::Signature;
 use arch_program::instruction::Instruction;
@@ -464,7 +464,7 @@ pub async fn deploy_program_txs_async(
     spinner.set_style(
         ProgressStyle::default_spinner()
             .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-            .template("{spinner:.green} {msg}")?
+            .template("{spinner:.green} {msg}")?,
     );
     spinner.set_message("Sending transactions...");
     spinner.enable_steady_tick(Duration::from_millis(100));
@@ -506,7 +506,10 @@ pub async fn deploy_program_txs_async(
     let mut confirmed_txs = 0;
     while confirmed_txs < txids.len() {
         for txid in &txids {
-            if get_processed_transaction_async(NODE1_ADDRESS.to_owned(), txid.clone()).await.is_ok() {
+            if get_processed_transaction_async(NODE1_ADDRESS.to_owned(), txid.clone())
+                .await
+                .is_ok()
+            {
                 confirmed_txs += 1;
                 pb.inc(1);
             }
