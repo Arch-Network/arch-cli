@@ -349,17 +349,19 @@ pub async fn init() -> Result<()> {
             break;
         } else {
             println!(
-                "  {} Directory is not empty. Please choose an empty directory.",
+                "  {} Directory is not empty. Do you want to use this existing project folder? (y/N)",
                 "⚠".bold().yellow()
             );
-            project_dir = prompt_for_project_dir(&default_dir)?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            if input.trim().to_lowercase() == "y" {
+                println!("  {} Using existing project folder", "✓".bold().green());
+                break;
+            } else {
+                project_dir = prompt_for_project_dir(&default_dir)?;
+            }
         }
     }
-
-    // Create the 'demo' folder within the project directory
-    let demo_dir = project_dir.join("demo");
-    fs::create_dir_all(&demo_dir)?;
-    println!("  {} Created demo directory at {:?}", "✓".bold().green(), demo_dir);
 
     // Get the configuration file path
     let config_path = get_config_path()?;
@@ -395,64 +397,67 @@ pub async fn init() -> Result<()> {
         );
     }
 
-    // Create the 'demo' folder within the project directory
+    // Create the 'demo' folder within the project directory if it doesn't exist
     let demo_dir = project_dir.join("demo");
-    fs::create_dir_all(&demo_dir)?;
-    println!("  {} Created demo directory at {:?}", "✓".bold().green(), demo_dir);
+    if !demo_dir.exists() {
+        // Create the 'demo' folder within the project directory
+        fs::create_dir_all(&demo_dir)?;
+        println!("  {} Created demo directory at {:?}", "✓".bold().green(), demo_dir);
 
-    // Change to the CLI project directory
-    std::env::set_current_dir(&cli_dir)?;
+        // Change to the CLI project directory
+        std::env::set_current_dir(&cli_dir)?;
 
-    // Copy everything from ./src to the demo folder
-    println!("{}", "Copying project files...".bold().blue());
-    println!(" Current directory: {:?}", std::env::current_dir()?);
-    let src_dir = cli_dir.join("src");
-    if src_dir.exists() {
-        copy_dir_all(&src_dir, &demo_dir)?;
-        println!("  {} Copied project files to demo directory", "✓".bold().green());
-    } else {
-        println!("  {} Warning: ./src directory not found", "⚠".bold().yellow());
-    }
-
-    // Copy the whole program folder to the demo folder
-    println!("{}", "Copying program folder...".bold().blue());
-    let program_dir = cli_dir.join("program");
-    if program_dir.exists() {
-        let program_dir_in_demo = demo_dir.join("program");
-        fs::create_dir_all(&program_dir_in_demo)?;
-        copy_dir_all(&program_dir, &program_dir_in_demo)?;
-        println!("  {} Copied program folder to demo directory", "✓".bold().green());
-    } else {
-        println!("  {} Warning: ./program directory not found", "⚠".bold().yellow());
-    }
-
-    // Change to the demo directory
-    std::env::set_current_dir(&demo_dir)?;
-
-    // Build the program
-    println!("{}", "Building Arch Network program...".bold().blue());
-    let build_result = ShellCommand::new("cargo")
-        .current_dir("program")
-        .arg("build-sbf")
-        .output();
-
-    match build_result {
-        Ok(output) if output.status.success() => {
-            println!("  {} Arch Network program built successfully", "✓".bold().green());
+        // Copy everything from ./src to the demo folder
+        println!("{}", "Copying project files...".bold().blue());
+        println!(" Current directory: {:?}", std::env::current_dir()?);
+        let src_dir = cli_dir.join("src");
+        if src_dir.exists() {
+            copy_dir_all(&src_dir, &demo_dir)?;
+            println!("  {} Copied project files to demo directory", "✓".bold().green());
+        } else {
+            println!("  {} Warning: ./src directory not found", "⚠".bold().yellow());
         }
-        Ok(output) => {
-            println!(
-                "  {} Warning: Failed to build Arch Network program: {}",
-                "⚠".bold().yellow(),
-                String::from_utf8_lossy(&output.stderr)
-            );
+
+        // Copy the whole program folder to the demo folder
+        println!("{}", "Copying program folder...".bold().blue());
+        let program_dir = cli_dir.join("program");
+        if program_dir.exists() {
+            let program_dir_in_demo = demo_dir.join("program");
+            fs::create_dir_all(&program_dir_in_demo)?;
+            copy_dir_all(&program_dir, &program_dir_in_demo)?;
+            println!("  {} Copied program folder to demo directory", "✓".bold().green());
+        } else {
+            println!("  {} Warning: ./program directory not found", "⚠".bold().yellow());
         }
-        Err(e) => {
-            println!(
-                "  {} Warning: Failed to build Arch Network program: {}",
-                "⚠".bold().yellow(),
-                e
-            );
+
+        // Change to the demo directory
+        std::env::set_current_dir(&demo_dir)?;
+
+        // Build the program
+        println!("{}", "Building Arch Network program...".bold().blue());
+        let build_result = ShellCommand::new("cargo")
+            .current_dir("program")
+            .arg("build-sbf")
+            .output();
+
+        match build_result {
+            Ok(output) if output.status.success() => {
+                println!("  {} Arch Network program built successfully", "✓".bold().green());
+            }
+            Ok(output) => {
+                println!(
+                    "  {} Warning: Failed to build Arch Network program: {}",
+                    "⚠".bold().yellow(),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            Err(e) => {
+                println!(
+                    "  {} Warning: Failed to build Arch Network program: {}",
+                    "⚠".bold().yellow(),
+                    e
+                );
+            }
         }
     }
 
