@@ -1321,17 +1321,35 @@ pub async fn server_clean() -> Result<()> {
     let keys_file = config_dir.join("keys.json");
     let config_file = config_dir.join("config.toml");
 
+    // Ask user if they want to clean the indexer
+    let clean_indexer = dialoguer::Confirm::new()
+        .with_prompt("Do you want to clean the indexer? This will remove all indexer containers and data.")
+        .default(false)
+        .interact()?;
+
+    if clean_indexer {
+        println!("  {} Cleaning indexer...", "→".bold().blue());
+        indexer_clean(&config).await?;
+    } else {
+        println!("  {} Indexer will be preserved", "ℹ".bold().blue());
+    }
+
     // Ask user if they want to delete the keys.json file
     let delete_keys = dialoguer::Confirm::new()
         .with_prompt("Do you want to delete the keys.json file? This action cannot be undone.")
         .default(false)
         .interact()?;
 
-    // Ask user if they want to delete the config.toml file
-    let delete_config = dialoguer::Confirm::new()
-        .with_prompt("Do you want to delete the config.toml file? This action cannot be undone.")
-        .default(false)
-        .interact()?;
+    // Only ask about config.toml if indexer was cleaned
+    let delete_config = if clean_indexer {
+        dialoguer::Confirm::new()
+            .with_prompt("Do you want to delete the config.toml file? This action cannot be undone.")
+            .default(false)
+            .interact()?
+    } else {
+        println!("  {} config.toml will be preserved as indexer was not cleaned", "ℹ".bold().blue());
+        false
+    };
 
     if arch_data_dir.exists() {
         fs::remove_dir_all(&arch_data_dir)?;
@@ -1350,7 +1368,7 @@ pub async fn server_clean() -> Result<()> {
     }
 
     if config_file.exists() {
-        if delete_config {
+        if clean_indexer && delete_config {
             fs::remove_file(&config_file)?;
             println!("  {} Removed config.toml file", "✓".bold().green());
         } else {
