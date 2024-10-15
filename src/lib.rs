@@ -3097,9 +3097,24 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
 
     println!("{}", "Creating a new project...".bold().green());
 
-    // Get the project directory from the config
-    let project_dir = PathBuf::from(config.get_string("project.directory")
-        .context("Failed to get project directory from config")?);
+    // Get the project directory from the config or prompt the user
+    let project_dir = match config.get_string("project.directory") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => {
+            let default_dir = get_default_project_dir();
+            prompt_for_project_dir(&default_dir)?
+        }
+    };
+
+    // Ensure the project directory exists
+    if !project_dir.exists() {
+        fs::create_dir_all(&project_dir)
+            .context(format!("Failed to create project directory: {:?}", project_dir))?;
+        println!("  {} Created project directory at {:?}", "✓".bold().green(), project_dir);
+    }
+
+    // Update the config with the new project directory
+    update_config_with_project_dir(&get_config_path()?, &project_dir)?;
 
     // Get project name, either from args or by asking the user
     let mut project_name = args.name.clone().unwrap_or_default();
@@ -3109,27 +3124,27 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
             .interact()?;
     }
 
-    // Create the new project folder
-    let mut new_project_dir = project_dir.join(&project_name);
+     // Create the new project folder
+     let mut new_project_dir = project_dir.join(&project_name);
 
-    // Check if the folder already exists and ask for a new name if it does
-    while new_project_dir.exists() {
-        println!("  {} A project with this name already exists.", "⚠".bold().yellow());
-        let use_existing = Confirm::new()
-            .with_prompt("Do you want to use the existing project?")
-            .default(false)
-            .interact()?;
+     // Check if the folder already exists and ask for a new name if it does
+     while new_project_dir.exists() {
+         println!("  {} A project with this name already exists.", "⚠".bold().yellow());
+         let use_existing = Confirm::new()
+             .with_prompt("Do you want to use the existing project?")
+             .default(false)
+             .interact()?;
 
-        if use_existing {
-            println!("  {} Using existing project directory.", "ℹ".bold().blue());
-            break;
-        } else {
-            project_name = Input::<String>::new()
-                .with_prompt("Enter a new name for your project")
-                .interact()?;
-            new_project_dir = project_dir.join(&project_name);
-        }
-    }
+         if use_existing {
+             println!("  {} Using existing project directory.", "ℹ".bold().blue());
+             break;
+         } else {
+             project_name = Input::<String>::new()
+                 .with_prompt("Enter a new name for your project")
+                 .interact()?;
+             new_project_dir = project_dir.join(&project_name);
+         }
+     }
 
     // Create the project directory if it doesn't exist
     if !new_project_dir.exists() {
