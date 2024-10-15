@@ -320,6 +320,9 @@ pub async fn init() -> Result<()> {
     // Check dependencies
     check_dependencies()?;
 
+    // Ensure default config exists
+    ensure_default_config()?;
+
     // Store the current directory
     let cli_dir = std::env::current_dir()?;
 
@@ -1681,7 +1684,7 @@ pub fn load_config() -> Result<Config> {
         );
     } else {
         println!(
-            "  {} Warning: {} not found. Please run the 'init' command to initialize the configuration.",
+            "  {} Warning: {} not found.",
             "⚠".bold().yellow(),
             config_path.display().to_string().yellow()
         );        
@@ -3074,6 +3077,24 @@ pub async fn validator_stop() -> Result<()> {
 }
 
 pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result<()> {
+    let config_dir = get_config_dir()?;
+    if !config_dir.exists() {
+        println!("{}", "Config directory not found. It seems the 'init' command hasn't been run yet.".bold().yellow());
+        let run_init = Confirm::new()
+            .with_prompt("Do you want to run the 'init' command now?")
+            .default(true)
+            .interact()?;
+
+        if run_init {
+            init().await?;
+        } else {
+            return Err(anyhow!("Please run 'arch-cli init' before creating a project."));
+        }
+    } else {
+        // Ensure the config file exists even if the directory does
+        ensure_default_config()?;
+    }
+
     println!("{}", "Creating a new project...".bold().green());
 
     // Get the project directory from the config
@@ -3158,3 +3179,38 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     Ok(())
 }
 
+fn ensure_default_config() -> Result<()> {
+    let config_path = get_config_path()?;
+    let config_dir = config_path.parent().unwrap();
+
+    if !config_path.exists() {
+        // Create the arch-data directory if it doesn't exist
+        let arch_data_dir = config_dir.join("arch-data");
+        fs::create_dir_all(&arch_data_dir)?;
+        println!(
+            "  {} Created arch-data directory at {:?}",
+            "✓".bold().green(),
+            arch_data_dir
+        );
+
+        // Copy config.default.toml to the config directory
+        let default_config_path = Path::new("config.default.toml");
+        if default_config_path.exists() {
+            fs::copy(default_config_path, &config_path)
+                .with_context(|| format!("Failed to copy default config to {:?}", config_path))?;
+            println!(
+                "  {} Copied default configuration to {:?}",
+                "✓".bold().green(),
+                config_path
+            );
+        } else {
+            println!(
+                "  {} Warning: config.default.toml not found",
+                "⚠".bold().yellow()
+            );
+            return Err(anyhow!("Default configuration file not found"));
+        }
+    }
+
+    Ok(())
+}
