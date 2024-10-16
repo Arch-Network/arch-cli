@@ -3019,7 +3019,6 @@ pub async fn validator_start(args: &ValidatorStartArgs) -> Result<()> {
         .arg("run")
         .arg("--platform")
         .arg("linux/amd64")
-        .arg("--rm")
         .arg("-d")
         .arg("--name")
         .arg("local_validator")
