@@ -1,6 +1,6 @@
 //! This module contains helper methods for interacting with the HelloWorld program
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use bip322::sign_simple;
 use bitcoin::{
     absolute::LockTime,
@@ -13,15 +13,15 @@ use bitcoin::{
     Witness,
 };
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
+use arch_program::instruction::Instruction;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, error, info, warn};
-use crate::processed_transaction::ProcessedTransaction;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{from_str, json, Value};
+use std::fs;
 use std::str::FromStr;
-use std::{fs, time::Duration};
-use tokio;
+
+use crate::processed_transaction::ProcessedTransaction;
 
 use crate::constants::{
     BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, CALLER_FILE_PATH,
@@ -33,6 +33,10 @@ use arch_program::message::Message;
 use arch_program::pubkey::Pubkey;
 use crate::runtime_transaction::RuntimeTransaction;
 use crate::signature::Signature;
+use crate::helper::secp256k1::SecretKey;
+use bitcoin::key::UntweakedKeypair;
+use bitcoin::XOnlyPublicKey;
+use rand_core::OsRng;
 
 pub fn process_result(response: String) -> Result<Value> {
     let result = from_str::<Value>(&response).expect("result should be Value parseable");
@@ -109,10 +113,7 @@ fn _get_trader(trader_id: u64) -> Result<CallerInfo> {
     CallerInfo::with_secret_key_file(file_path)
 }
 
-use crate::helper::secp256k1::SecretKey;
-use bitcoin::key::UntweakedKeypair;
-use bitcoin::XOnlyPublicKey;
-use rand_core::OsRng;
+
 
 pub fn with_secret_key_file(file_path: &str) -> Result<(UntweakedKeypair, Pubkey)> {
     let secp = Secp256k1::new();
@@ -222,62 +223,6 @@ pub fn sign_and_send_instruction(
     Ok((result, hashed_instruction))
 }
 
-pub async fn sign_and_send_instruction_async(
-    instruction: Instruction,
-    signers: Vec<UntweakedKeypair>,
-) -> Result<(String, String)> {
-    let pubkeys = signers
-        .iter()
-        .map(|signer| Pubkey::from_slice(&XOnlyPublicKey::from_keypair(signer).0.serialize()))
-        .collect::<Vec<Pubkey>>();
-
-    let message = Message {
-        signers: pubkeys,
-        instructions: vec![instruction.clone()],
-    };
-
-    let digest_slice = hex::decode(message.hash())?;
-
-    let signatures = signers
-        .iter()
-        .map(|signer| {
-            let signature = sign_message_bip322(signer, &digest_slice).to_vec();
-            Signature(signature)
-        })
-        .collect::<Vec<Signature>>();
-
-    let params = RuntimeTransaction {
-        version: 0,
-        signatures,
-        message,
-    };
-
-    let client = reqwest::Client::new();
-    let response = client
-        .post(NODE1_ADDRESS)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": "curlycurl",
-            "method": "send_transaction",
-            "params": params
-        }))
-        .send()
-        .await?;
-
-    let result = response.text().await?;
-    let result_value: serde_json::Value = serde_json::from_str(&result)?;
-    let result_str = result_value["result"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Failed to extract result as string"))?
-        .to_string();
-
-    let hashed_instruction = instruction.hash();
-
-    Ok((result_str, hashed_instruction))
-}
-
-use arch_program::instruction::Instruction;
-
 pub fn sign_and_send_transaction(
     instructions: Vec<Instruction>,
     signers: Vec<UntweakedKeypair>,
@@ -292,13 +237,9 @@ pub fn sign_and_send_transaction(
         instructions,
     };
     let digest_slice = hex::decode(message.hash()).expect("hashed message should be decodable");
-
     let signatures = signers
         .iter()
-        .map(|signer| {
-            let signature = sign_message_bip322(signer, &digest_slice).to_vec();
-            Signature(signature)
-        })
+        .map(|signer| Signature(sign_message_bip322(signer, &digest_slice).to_vec()))
         .collect::<Vec<Signature>>();
 
     let params = RuntimeTransaction {
@@ -385,7 +326,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
     pb.set_message("Successfully Processed Deployment Transactions :");
 
     for txid in txids {
-        let _processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
         pb.inc(1);
         pb.set_message("Successfully Processed Deployment Transactions :");
@@ -415,87 +356,6 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
     // }
 }
 
-pub async fn deploy_program_txs_async(
-    program_keypair: UntweakedKeypair,
-    elf_path: &str,
-) -> Result<Vec<String>> {
-    let program_pubkey =
-        Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&program_keypair).0.serialize());
-
-    let elf = fs::read(elf_path).expect("elf path should be available");
-
-    //println!("Program size is : {} Bytes", elf.len());
-
-    let txs = elf
-        .chunks(extend_bytes_max_len())
-        .enumerate()
-        .map(|(i, chunk)| {
-            let mut bytes = vec![];
-
-            let offset: u32 = (i * extend_bytes_max_len()) as u32;
-            let len: u32 = chunk.len() as u32;
-
-            bytes.extend(offset.to_le_bytes());
-            bytes.extend(len.to_le_bytes());
-            bytes.extend(chunk);
-
-            let message = Message {
-                signers: vec![program_pubkey],
-                instructions: vec![SystemInstruction::new_extend_bytes_instruction(
-                    bytes,
-                    program_pubkey,
-                )],
-            };
-
-            let digest_slice =
-                hex::decode(message.hash()).expect("hashed message should be decodable");
-
-            RuntimeTransaction {
-                version: 0,
-                signatures: vec![Signature(
-                    sign_message_bip322(&program_keypair, &digest_slice).to_vec(),
-                )],
-                message,
-            }
-        })
-        .collect::<Vec<RuntimeTransaction>>();
-
-    /*println!(
-        "Program deployment split into {} Chunks, sending {} runtime transactions",
-        txs.len(),
-        txs.len()
-    );
-     */
-    let txids = process_result(post_data(NODE1_ADDRESS, "send_transactions", txs))
-        .expect("send_transaction should not fail")
-        .as_array()
-        .expect("cannot convert result to array")
-        .iter()
-        .map(|r| {
-            r.as_str()
-                .expect("cannot convert object to string")
-                .to_string()
-        })
-        .collect::<Vec<String>>();
-
-    let pb = ProgressBar::new(txids.len() as u64);
-
-    pb.set_style(ProgressStyle::default_bar()
-    .progress_chars("#>-")
-    .template("{spinner:.green}[{elapsed_precise:.blue}] {msg:.blue} [{bar:100.green/blue}] {pos}/{len} ({eta})").unwrap());
-
-    pb.set_message("Successfully Processed Deployment Transactions :");
-
-    for txid in &txids {
-        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
-            .expect("get processed transaction should not fail");
-        pb.inc(1);
-        pb.set_message("Successfully Processed Deployment Transactions :");
-    }
-
-    pb.finish();
-    Ok(txids)
-}
 /// Starts Key Exchange by calling the RPC method
 pub fn start_key_exchange() {
     match process_result(post(NODE1_ADDRESS, "start_key_exchange")) {
@@ -636,54 +496,6 @@ pub fn get_processed_transaction<'a>(url: &str, tx_id: String) -> Result<Process
     Ok(serde_json::from_value(processed_tx?).unwrap())
 }
 
-pub async fn get_processed_transaction_async(
-    url: String,
-    tx_id: String,
-) -> Result<ProcessedTransaction> {
-    let mut wait_time = 10;
-    let mut total_wait = 0;
-
-    let value = tx_id.clone();
-    loop {
-        let url_clone = url.clone();
-        let value_clone = value.clone();
-        let processed_tx = tokio::task::spawn_blocking(move || {
-            process_get_transaction_result(post_data(
-                &url_clone,
-                GET_PROCESSED_TRANSACTION,
-                value_clone,
-            ))
-        })
-        .await?;
-
-        match processed_tx {
-            Ok(Value::Null) => {
-                if total_wait >= 60 {
-                    error!("Failed to retrieve processed transaction after 60 seconds");
-                    return Err(anyhow!("Timeout: Failed to retrieve processed transaction"));
-                }
-                debug!(
-                    "Transaction not yet processed. Retrying in {} seconds...",
-                    wait_time
-                );
-                tokio::time::sleep(Duration::from_secs(wait_time)).await;
-                total_wait += wait_time;
-                wait_time += 10;
-            }
-            Ok(value) => {
-                info!(
-                    "Successfully retrieved and processed transaction: {}",
-                    tx_id
-                );
-                return Ok(serde_json::from_value(value)?);
-            }
-            Err(e) => {
-                return Err(anyhow!("{}", e));
-            }
-        }
-    }
-}
-
 pub fn prepare_fees() -> String {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
@@ -809,61 +621,6 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
     (txid.to_string(), vout)
 }
 
-pub async fn send_utxo_async(
-    _rpc: &Client,
-    pubkey: Pubkey,
-) -> Result<(String, u32), anyhow::Error> {
-    let address = get_account_address_async(pubkey).await?;
-    let _account_address = Address::from_str(&address)
-        .context("Failed to parse address")?
-        .require_network(bitcoin::Network::Regtest)
-        .context("Invalid network for address")?;
-
-    println!("Sending UTXO to account address: {}", address);
-    let txid = "".to_string();
-    let vout = 0;
-
-    // Create a new RPC client and send the transaction in a blocking task
-    // let txid = task
-    //     ::spawn_blocking(move || {
-    //         let rpc = rpc.clone();
-    //         rpc.send_to_address(
-    //             &account_address,
-    //             Amount::from_sat(3000),
-    //                 None,
-    //                 None,
-    //                 None,
-    //                 None,
-    //                 None,
-    //                 None
-    //             ).map_err(anyhow::Error::from)
-    //         }
-    //     }).await
-    //     .context("Task panicked")??;
-
-    // // Create another RPC client and get the raw transaction in a blocking task
-    // let sent_tx = task
-    //     ::spawn_blocking({
-    //         let rpc = rpc.clone();
-    //         move || { rpc.get_raw_transaction(&txid, None).map_err(anyhow::Error::from) }
-    //     }).await
-    //     .context("Task panicked")??;
-
-    // println!("Sent transaction: {:?}", sent_tx);
-
-    // let mut vout = 0;
-    // for (index, output) in sent_tx.output.iter().enumerate() {
-    //     if output.script_pubkey == account_address.script_pubkey() {
-    //         vout = index as u32;
-    //         println!("Found a matching UTXO");
-    //     }
-    // }
-
-    // println!("UTXO sent successfully. Transaction ID: {}, Output Index: {}", txid, vout);
-    // Ok((txid.to_string(), vout))
-    Ok((txid.to_string(), vout))
-}
-
 pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
@@ -920,28 +677,6 @@ fn get_account_address(pubkey: Pubkey) -> String {
     .as_str()
     .expect("cannot convert result to string")
     .to_string()
-}
-
-pub async fn get_account_address_async(pubkey: Pubkey) -> Result<String> {
-    let client = reqwest::Client::new();
-    let response = client
-        .post(NODE1_ADDRESS)
-        .json(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": "curlycurl",
-            "method": GET_ACCOUNT_ADDRESS,
-            "params": pubkey,
-        }))
-        .send()
-        .await?;
-
-    let result: Value = response.json().await?;
-    process_result(result.to_string()).map(|value| {
-        value
-            .as_str()
-            .expect("cannot convert result to string")
-            .to_string()
-    })
 }
 
 fn _get_address_utxos(rpc: &Client, address: String) -> Vec<Value> {
