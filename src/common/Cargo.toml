@@ -20,13 +20,14 @@ sha256 = "1.5.0"
 anyhow = "1.0.82"
 borsh = { version = "1.4.0", features = ["derive"] }
 hex = "0.4.3"
-log = "0.4"
 env_logger = "0.10"
-tokio = { version = "1.x", features = ["rt-multi-thread", "macros"] }
 futures = "0.3.30"
 colored = "2.0"
 config = "0.13"
-indicatif = "0.17.0"
+indicatif = "0.17.8"
+bip322 = "0.0.7"
+tokio = { version = "1.32.0", features = ["full"] }
+log = "0.4.22"
 
 [dev-dependencies]
 serial_test = "3.1.1"

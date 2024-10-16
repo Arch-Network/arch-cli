@@ -1,6 +1,8 @@
 //! This module represents states for the running processes
 
+use crate::signature::Signature;
 use anyhow::{anyhow, Result};
+use arch_program::pubkey::Pubkey;
 use bitcoin::{
     self,
     address::Address,
@@ -8,8 +10,6 @@ use bitcoin::{
     secp256k1::{Secp256k1, SecretKey},
 };
 use rand_core::OsRng;
-//use sdk::arch_program::pubkey::Pubkey;
-//use sdk::signature::Signature;
 use serde::{Deserialize, Serialize};
 use serde_json::to_string;
 use sha256::digest;
@@ -46,23 +46,21 @@ pub struct Utxo {
 pub struct AuthorityMessage {
     pub utxo: Utxo,
     pub data: Vec<u8>,
-
-    pub authority: bitcoin::secp256k1::PublicKey,
+    pub authority: Pubkey,
 }
+
 impl AuthorityMessage {
     pub fn hash(&self) -> Result<String> {
         Ok(digest(digest(match to_string(self) {
             Ok(d) => d,
-            Err(err) => {
-                return Err(anyhow!("{:?}", err));
-            }
+            Err(err) => return Err(anyhow!("{:?}", err)),
         })))
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AssignAuthorityParams {
-    pub signature: bitcoin::ecdsa::Signature,
+    pub signature: Signature,
     pub message: AuthorityMessage,
 }
 
@@ -84,7 +82,7 @@ impl CallerInfo {
             Ok(key) => SecretKey::from_str(&key).unwrap(),
             Err(_) => {
                 let (key, _) = secp.generate_keypair(&mut OsRng);
-                fs::write(file_path, &key.display_secret().to_string())
+                fs::write(file_path, key.display_secret().to_string())
                     .map_err(|_| anyhow!("Unable to write file"))?;
                 key
             }

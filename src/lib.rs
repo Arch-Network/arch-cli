@@ -4,7 +4,8 @@ use arch_program::account::AccountMeta;
 use arch_program::instruction::Instruction;
 use arch_program::pubkey::Pubkey;
 use arch_program::system_instruction::SystemInstruction;
-use bitcoin::Address;
+use bitcoin::key::UntweakedKeypair;
+use bitcoin::{Address, XOnlyPublicKey};
 use bitcoin::Amount;
 use bitcoin::Network;
 use bitcoincore_rpc::jsonrpc::serde_json;
@@ -13,6 +14,7 @@ use clap::{Args, Parser, Subcommand};
 use colored::*;
 use common::constants::*;
 use common::helper::*;
+use common::runtime_transaction::RuntimeTransaction;
 use config::{Config, Environment, File};
 use dialoguer::theme::ColorfulTheme;
 use rand::rngs::OsRng;
@@ -31,10 +33,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command as ShellCommand;
 use std::process::Command;
+use arch_program::message::Message;
 use std::str::FromStr;
 use std::time::Duration;
 use dirs::home_dir;
 use toml_edit::{Document, Item, value};
+use indicatif::{ProgressBar, ProgressStyle};
+use common::helper::*;
 
 use common::wallet_manager::*;
 
@@ -903,7 +908,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     ensure_wallet_balance(&wallet_manager.client).await?;
 
     // Get account address and fund it
-    let account_address = get_account_address_async(program_pubkey).await?;
+    let account_address = get_account_address(program_pubkey);
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
@@ -1453,7 +1458,7 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
         }
     }
 
-    tokio::time::sleep(Duration::from_secs(25)).await;
+    // tokio::time::sleep(Duration::from_secs(25)).await;
 
     // Attempt to start the DKG process
     loop {
@@ -2069,20 +2074,20 @@ async fn deploy_program(
     deploy_folder: Option<String>,
 ) -> Result<()> {
     // Create a new account for the program
-    create_program_account(program_keypair, program_pubkey, txid, vout).await?;
+    create_program_account(program_keypair, program_pubkey, txid, vout);
 
     // Deploy the program transactions
-    deploy_program_txs(program_keypair, program_pubkey, deploy_folder).await?;
+    deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder);
 
     // Make program executable
-    make_program_executable(program_keypair, program_pubkey).await?;
+    make_program_executable(program_keypair, program_pubkey);
 
     Ok(())
 }
 
-async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
+fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
     println!("    Making program executable...");
-    let (txid, _) = sign_and_send_instruction_async(
+    let (txid, _) = sign_and_send_instruction(
         Instruction {
             program_id: Pubkey::system_program(),
             accounts: vec![AccountMeta {
@@ -2093,14 +2098,113 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
             data: vec![2],
         },
         vec![*program_keypair],
-    )
-    .await?;
+    )?;
     println!("    Transaction sent: {}", txid.clone());
-    get_processed_transaction_async(NODE1_ADDRESS.to_string(), txid.clone()).await?;
+    get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())?;
     println!("    Program made executable successfully");
     Ok(())
 }
-async fn deploy_program_txs(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
+
+pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
+    let program_pubkey =
+        Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&program_keypair).0.serialize());
+
+    let elf = fs::read(elf_path).expect("elf path should be available");
+
+    //println!("Program size is : {} Bytes", elf.len());
+
+    let txs = elf
+        .chunks(extend_bytes_max_len())
+        .enumerate()
+        .map(|(i, chunk)| {
+            let mut bytes = vec![];
+
+            let offset: u32 = (i * extend_bytes_max_len()) as u32;
+            let len: u32 = chunk.len() as u32;
+
+            bytes.extend(offset.to_le_bytes());
+            bytes.extend(len.to_le_bytes());
+            bytes.extend(chunk);
+
+            let message = Message {
+                signers: vec![program_pubkey],
+                instructions: vec![SystemInstruction::new_extend_bytes_instruction(
+                    bytes,
+                    program_pubkey,
+                )],
+            };
+
+            let digest_slice =
+                hex::decode(message.hash()).expect("hashed message should be decodable");
+
+            RuntimeTransaction {
+                version: 0,
+                signatures: vec![common::signature::Signature(
+                    sign_message_bip322(&program_keypair, &digest_slice).to_vec(),
+                )],
+                message,
+            }
+        })
+        .collect::<Vec<RuntimeTransaction>>();
+
+    /*println!(
+        "Program deployment split into {} Chunks, sending {} runtime transactions",
+        txs.len(),
+        txs.len()
+    );
+     */
+    let txids = process_result(post_data(NODE1_ADDRESS, "send_transactions", txs))
+        .expect("send_transaction should not fail")
+        .as_array()
+        .expect("cannot convert result to array")
+        .iter()
+        .map(|r| {
+            r.as_str()
+                .expect("cannot convert object to string")
+                .to_string()
+        })
+        .collect::<Vec<String>>();
+
+    let pb = ProgressBar::new(txids.len() as u64);
+
+    pb.set_style(ProgressStyle::default_bar()
+        .progress_chars("#>-")
+        .template("{spinner:.green}[{elapsed_precise:.blue}] {msg:.blue} [{bar:100.green/blue}] {pos}/{len} ({eta})").unwrap());
+
+    pb.set_message("Successfully Processed Deployment Transactions :");
+
+    for txid in txids {
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+            .expect("get processed transaction should not fail");
+        pb.inc(1);
+        pb.set_message("Successfully Processed Deployment Transactions :");
+    }
+
+    pb.finish();
+
+    // for tx_batch in txs.chunks(12) {
+    //     let mut txids = vec![];
+    //     for tx in tx_batch {
+    //         let txid = process_result(post_data(NODE1_ADDRESS, "send_transaction", tx))
+    //             .expect("send_transaction should not fail")
+    //             .as_str()
+    //             .expect("cannot convert result to string")
+    //             .to_string();
+
+    //         println!("sent tx {:?}", txid);
+    //         txids.push(txid);
+    //     };
+
+    //     for txid in txids {
+    //         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+    //             .expect("get processed transaction should not fail");
+
+    //         println!("{:?}", read_account_info(NODE1_ADDRESS, program_pubkey.clone()));
+    //     }
+    // }
+}
+
+async fn deploy_program_txs_with_folder(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
     println!("    Deploying program transactions...");
 
     let so_folder = deploy_folder
@@ -2121,11 +2225,10 @@ async fn deploy_program_txs(program_keypair: &Keypair, _program_pubkey: &Pubkey,
         so_file.ok_or_else(|| anyhow!("No .so file found in the specified folder"))?
     };
 
-    deploy_program_txs_async(
+    deploy_program_txs(
         *program_keypair,
         &so_file,
-    )
-    .await?;
+    );
     println!("    Program transactions deployed successfully");
     Ok(())
 }
@@ -2136,16 +2239,15 @@ async fn create_program_account(    program_keypair: &Keypair,
     vout: u32,
 ) -> Result<()> {
     println!("    Creating program account...");
-    let (txid, _) = sign_and_send_instruction_async(
+    let (txid, _) = sign_and_send_instruction(
         SystemInstruction::new_create_account_instruction(
             hex::decode(txid).unwrap().try_into().unwrap(),
             vout,
             *program_pubkey,
         ),
         vec![*program_keypair],
-    )
-    .await?;
-    get_processed_transaction_async(NODE1_ADDRESS.to_string(), txid.clone()).await?;
+    )?;
+    get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone());
     println!("    Program account created successfully");
     Ok(())
 }
@@ -2634,9 +2736,7 @@ pub fn ensure_keys_dir() -> Result<PathBuf> {
 
 async fn generate_account_address(caller_pubkey: Pubkey) -> Result<String> {
     // Get program account address from network
-    let account_address = get_account_address_async(caller_pubkey)
-        .await
-        .context("Failed to get account address")?;
+    let account_address = get_account_address(caller_pubkey);
     // println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
 
     Ok(account_address)
@@ -2673,7 +2773,7 @@ async fn create_arch_account(
     // println!("  {} Transaction info: {:?}", "ℹ".bold().blue(), tx_info);
 
     if let Some(info) = tx_info {
-        let (txid, _) = sign_and_send_instruction_async(
+        let (txid, _) = sign_and_send_instruction(
             SystemInstruction::new_create_account_instruction(
                 hex::decode(&info.info.txid.to_string())
                     .unwrap()
@@ -2684,7 +2784,6 @@ async fn create_arch_account(
             ),
             vec![*caller_keypair],
         )
-        .await
         .expect("signing and sending a transaction should not fail");
 
         println!(
@@ -2717,7 +2816,7 @@ async fn transfer_account_ownership(
         hex::encode(account_pubkey.serialize())
     );
 
-    let (_txid, _) = sign_and_send_instruction_async(
+    let (_txid, _) = sign_and_send_instruction(
         Instruction {
             program_id: Pubkey::system_program(),
             accounts: vec![AccountMeta {
@@ -2729,7 +2828,6 @@ async fn transfer_account_ownership(
         },
         vec![*caller_keypair],
     )
-    .await
     .expect("signing and sending a transaction should not fail");
 
     Ok(())
