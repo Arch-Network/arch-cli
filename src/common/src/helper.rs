@@ -134,7 +134,7 @@ pub fn with_secret_key_file(file_path: &str) -> Result<(UntweakedKeypair, Pubkey
 use arch_program::system_instruction::SystemInstruction;
 use crate::runtime_transaction::RUNTIME_TX_SIZE_LIMIT;
 
-fn extend_bytes_max_len() -> usize {
+pub fn extend_bytes_max_len() -> usize {
     let message = Message {
         signers: vec![Pubkey::system_program()],
         instructions: vec![SystemInstruction::new_extend_bytes_instruction(
@@ -667,7 +667,7 @@ pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
     (txid, vout)
 }
 
-fn get_account_address(pubkey: Pubkey) -> String {
+pub fn get_account_address(pubkey: Pubkey) -> String {
     process_result(post_data(
         NODE1_ADDRESS,
         GET_ACCOUNT_ADDRESS,

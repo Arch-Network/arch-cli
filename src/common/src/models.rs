@@ -1,6 +1,8 @@
 //! This module represents states for the running processes
 
+use crate::signature::Signature;
 use anyhow::{anyhow, Result};
+use arch_program::pubkey::Pubkey;
 use bitcoin::{
     self,
     address::Address,
@@ -8,8 +10,6 @@ use bitcoin::{
     secp256k1::{Secp256k1, SecretKey},
 };
 use rand_core::OsRng;
-use arch_program::pubkey::Pubkey;
-use crate::signature::Signature;
 use serde::{Deserialize, Serialize};
 use serde_json::to_string;
 use sha256::digest;
