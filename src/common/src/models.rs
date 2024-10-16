@@ -8,8 +8,8 @@ use bitcoin::{
     secp256k1::{Secp256k1, SecretKey},
 };
 use rand_core::OsRng;
-use sdk::arch_program::pubkey::Pubkey;
-use sdk::signature::Signature;
+use arch_program::pubkey::Pubkey;
+use crate::signature::Signature;
 use serde::{Deserialize, Serialize};
 use serde_json::to_string;
 use sha256::digest;

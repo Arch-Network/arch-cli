@@ -15,7 +15,7 @@ use bitcoin::{
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info, warn};
-use sdk::processed_transaction::ProcessedTransaction;
+use crate::processed_transaction::ProcessedTransaction;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{from_str, json, Value};
@@ -29,10 +29,10 @@ use crate::constants::{
     NODE1_ADDRESS, READ_ACCOUNT_INFO, TRANSACTION_NOT_FOUND_CODE,
 };
 use crate::models::CallerInfo;
-use sdk::arch_program::message::Message;
-use sdk::arch_program::pubkey::Pubkey;
-use sdk::runtime_transaction::RuntimeTransaction;
-use sdk::signature::Signature;
+use arch_program::message::Message;
+use arch_program::pubkey::Pubkey;
+use crate::runtime_transaction::RuntimeTransaction;
+use crate::signature::Signature;
 
 pub fn process_result(response: String) -> Result<Value> {
     let result = from_str::<Value>(&response).expect("result should be Value parseable");
@@ -130,8 +130,8 @@ pub fn with_secret_key_file(file_path: &str) -> Result<(UntweakedKeypair, Pubkey
     Ok((keypair, pubkey))
 }
 
-use sdk::arch_program::system_instruction::SystemInstruction;
-use sdk::runtime_transaction::RUNTIME_TX_SIZE_LIMIT;
+use arch_program::system_instruction::SystemInstruction;
+use crate::runtime_transaction::RUNTIME_TX_SIZE_LIMIT;
 
 fn extend_bytes_max_len() -> usize {
     let message = Message {
@@ -276,7 +276,7 @@ pub async fn sign_and_send_instruction_async(
     Ok((result_str, hashed_instruction))
 }
 
-use sdk::arch_program::instruction::Instruction;
+use arch_program::instruction::Instruction;
 
 pub fn sign_and_send_transaction(
     instructions: Vec<Instruction>,
