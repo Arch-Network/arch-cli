@@ -2224,7 +2224,7 @@ fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()> {
+async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()> {
     println!("  ℹ Deploying program...");
 
     // Prepare program keys
@@ -2240,7 +2240,7 @@ fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()
         Some(program_dir.to_str().unwrap().to_string()),
     );
 
-    println!("deploy_result: {:?}", deploy_result);
+    println!("deploy_result: {:?}", deploy_result.await);
 
     println!("  ✓ Program deployed successfully");
     display_program_id(&program_pubkey);
@@ -2305,7 +2305,6 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str) -> Re
         })
         .collect::<Vec<RuntimeTransaction>>();
 
-    println!("txs: {:?}", txs);
 
     let txids: Vec<String> = {
         let node_address = NODE1_ADDRESS.to_string();
@@ -2323,7 +2322,6 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str) -> Re
             .collect()
     };
 
-    println!("txids: {:?}", txids);
 
     let pb = ProgressBar::new(txids.len() as u64);
 
@@ -2334,7 +2332,7 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str) -> Re
     pb.set_message("Successfully Processed Deployment Transactions :");
 
     for txid in txids {
-        let _processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone());
+        let _processed_tx = task::spawn_blocking(move || get_processed_transaction(NODE1_ADDRESS, txid.clone())).await;
         pb.inc(1);
         pb.set_message("Successfully Processed Deployment Transactions :");
     }
@@ -3368,7 +3366,7 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     Ok(())
 }
 
-pub fn project_deploy(config: &Config) -> Result<()> {
+pub async fn project_deploy(config: &Config) -> Result<()> {
     println!("{}", "Deploying a project...".bold().green());
 
     // Get the project directory from the config
@@ -3406,7 +3404,7 @@ pub fn project_deploy(config: &Config) -> Result<()> {
 
     // Here, call your existing deploy function with the program_dir
     // You may need to modify your existing deploy function to accept a PathBuf instead of DeployArgs
-    if let Err(e) = deploy_program_from_path(&program_dir, config) {
+    if let Err(e) = deploy_program_from_path(&program_dir, config).await {
         println!("Failed to deploy program: {}", e);
         return Err(e);
     }
