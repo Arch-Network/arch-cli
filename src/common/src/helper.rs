@@ -1,6 +1,7 @@
 //! This module contains helper methods for interacting with the HelloWorld program
 
 use anyhow::{anyhow, Result};
+use arch_program::instruction::Instruction;
 use bip322::sign_simple;
 use bitcoin::{
     absolute::LockTime,
@@ -13,7 +14,6 @@ use bitcoin::{
     Witness,
 };
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
-use arch_program::instruction::Instruction;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use serde::Serialize;
@@ -28,12 +28,12 @@ use crate::constants::{
     GET_ACCOUNT_ADDRESS, GET_BEST_BLOCK_HASH, GET_BLOCK, GET_PROCESSED_TRANSACTION, GET_PROGRAM,
     NODE1_ADDRESS, READ_ACCOUNT_INFO, TRANSACTION_NOT_FOUND_CODE,
 };
+use crate::helper::secp256k1::SecretKey;
 use crate::models::CallerInfo;
-use arch_program::message::Message;
-use arch_program::pubkey::Pubkey;
 use crate::runtime_transaction::RuntimeTransaction;
 use crate::signature::Signature;
-use crate::helper::secp256k1::SecretKey;
+use arch_program::message::Message;
+use arch_program::pubkey::Pubkey;
 use bitcoin::key::UntweakedKeypair;
 use bitcoin::XOnlyPublicKey;
 use rand_core::OsRng;
@@ -113,8 +113,6 @@ fn _get_trader(trader_id: u64) -> Result<CallerInfo> {
     CallerInfo::with_secret_key_file(file_path)
 }
 
-
-
 pub fn with_secret_key_file(file_path: &str) -> Result<(UntweakedKeypair, Pubkey)> {
     let secp = Secp256k1::new();
     let secret_key = match fs::read_to_string(file_path) {
@@ -131,8 +129,8 @@ pub fn with_secret_key_file(file_path: &str) -> Result<(UntweakedKeypair, Pubkey
     Ok((keypair, pubkey))
 }
 
-use arch_program::system_instruction::SystemInstruction;
 use crate::runtime_transaction::RUNTIME_TX_SIZE_LIMIT;
+use arch_program::system_instruction::SystemInstruction;
 
 pub fn extend_bytes_max_len() -> usize {
     let message = Message {
