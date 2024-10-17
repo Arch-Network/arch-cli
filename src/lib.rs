@@ -165,6 +165,10 @@ pub enum ProjectCommands {
     /// Create a new project
     #[clap(long_about = "Creates a new project with a specified name.")]
     Create(CreateProjectArgs),
+
+    /// Deploy a project
+    #[clap(long_about = "Deploys the specified project.")]
+    Deploy,
 }
 
 #[derive(Subcommand)]
@@ -2136,6 +2140,51 @@ async fn deploy_program(
     Ok(())
 }
 
+fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
+    println!("  ℹ Building program...");
+
+    // Change to the program directory
+    std::env::set_current_dir(program_dir)
+        .context("Failed to change to program directory")?;
+
+    let output = Command::new("cargo")
+        .args(["build-sbf", "--manifest-path", "Cargo.toml"])
+        .output()
+        .context("Failed to execute cargo build-sbf")?;
+
+    if !output.status.success() {
+        let error_message = String::from_utf8_lossy(&output.stderr);
+        println!("Build process encountered an error:");
+        println!("{}", error_message);
+        return Err(anyhow!("Build failed"));
+    }
+
+    println!("  ✓ Program built successfully");
+    Ok(())
+}
+
+fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()> {
+    println!("  ℹ Deploying program...");
+
+    // Prepare program keys
+    let (program_keypair, program_pubkey) = prepare_program_keys()?;
+
+    // Build-sbf the program (make .so file) in src folder
+    build_program_from_path(program_dir)?;
+
+    // Deploy the program
+    let deploy_result = deploy_program_txs_with_folder(&program_keypair, &program_pubkey, Some(program_dir.to_str().unwrap().to_string()));
+
+    match deploy_result {
+        Ok(_) => {
+            println!("  ✓ Program deployed successfully");
+            display_program_id(&program_pubkey);
+            Ok(())
+        },
+        Err(e) => Err(anyhow!("Failed to deploy program: {}", e)),
+    }
+}
+
 fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
     println!("    Making program executable...");
     let (txid, _) = sign_and_send_instruction(
@@ -2156,7 +2205,7 @@ fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -
     Ok(())
 }
 
-pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
+pub async fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
     let program_pubkey =
         Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&program_keypair).0.serialize());
 
@@ -2204,17 +2253,19 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
         txs.len()
     );
      */
-    let txids = process_result(post_data(NODE1_ADDRESS, "send_transactions", txs))
-        .expect("send_transaction should not fail")
-        .as_array()
-        .expect("cannot convert result to array")
-        .iter()
-        .map(|r| {
-            r.as_str()
-                .expect("cannot convert object to string")
-                .to_string()
-        })
-        .collect::<Vec<String>>();
+    let txids = task::spawn_blocking(move || {
+        process_result(post_data(NODE1_ADDRESS, "send_transactions", txs))
+            .expect("send_transaction should not fail")
+            .as_array()
+            .expect("cannot convert result to array")
+            .iter()
+            .map(|r| {
+                r.as_str()
+                    .expect("cannot convert object to string")
+                    .to_string()
+            })
+            .collect::<Vec<String>>()
+    }).await.expect("Task panicked");
 
     let pb = ProgressBar::new(txids.len() as u64);
 
@@ -2255,13 +2306,13 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
     // }
 }
 
-async fn deploy_program_txs_with_folder(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
+fn deploy_program_txs_with_folder(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
     println!("    Deploying program transactions...");
 
     let so_folder = deploy_folder
         .ok_or_else(|| anyhow!("No deploy folder specified"))?
         .to_string();
-    let so_folder = format!("{}/app/program/target/sbf-solana-solana/release", so_folder);
+    let so_folder = format!("{}/target/sbf-solana-solana/release", so_folder);
 
     // Scan the deploy_folder for the .so file in the folder and set so_file to that
     let so_file = {
@@ -2324,6 +2375,13 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         let src_demo_dir = cli_dir.join("src/app");
         copy_dir_all(&src_demo_dir, &demo_dir)
             .context("Failed to copy demo folder")?;
+
+        // Copy /program folder to the demo directory as /arch_program
+        let src_program_dir = cli_dir.join("program");
+        let program_dir = PathBuf::from(&demo_dir).join("arch_program");
+        copy_dir_all(&src_program_dir, &program_dir)
+            .context("Failed to copy program folder")?;
+
         println!("  {} Copied demo template to {:?}", "✓".bold().green(), demo_dir);
     }
 
@@ -3227,6 +3285,52 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     Ok(())
 }
 
+pub fn project_deploy(config: &Config) -> Result<()> {
+    println!("{}", "Deploying a project...".bold().green());
+
+    // Get the project directory from the config
+    let project_dir = PathBuf::from(config.get_string("project.directory")?);
+
+    // Get list of projects
+    let projects: Vec<_> = fs::read_dir(&project_dir)?
+        .filter_map(|entry| {
+            entry.ok().and_then(|e| {
+                let path = e.path();
+                if path.is_dir() && path.join("program").exists() {
+                    Some(path.file_name().unwrap().to_string_lossy().into_owned())
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    if projects.is_empty() {
+        println!("No deployable projects found. Make sure your projects have a 'program' folder.");
+        return Ok(());
+    }
+
+    // Ask user to select a project
+    let selection = Select::new()
+        .with_prompt("Select a project to deploy")
+        .items(&projects)
+        .interact()?;
+
+    let selected_project = &projects[selection];
+    let program_dir = project_dir.join(selected_project).join("program");
+
+    println!("Deploying project: {}", selected_project.yellow());
+
+    // Here, call your existing deploy function with the program_dir
+    // You may need to modify your existing deploy function to accept a PathBuf instead of DeployArgs
+    if let Err(e) = deploy_program_from_path(&program_dir, config) {
+        println!("Failed to deploy program: {}", e);
+        return Err(e);
+    }
+
+    println!("{}", "Project deployed successfully!".bold().green());
+    Ok(())
+}
 fn ensure_default_config() -> Result<()> {
     let config_path = get_config_path()?;
     let config_dir = config_path.parent().unwrap();
