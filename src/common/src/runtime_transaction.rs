@@ -6,7 +6,7 @@ use sha256::digest;
 
 use crate::signature::Signature;
 
-pub const RUNTIME_TX_SIZE_LIMIT: usize = 1024;
+pub const RUNTIME_TX_SIZE_LIMIT: usize = 10240;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct RuntimeTransaction {
@@ -67,5 +67,50 @@ impl RuntimeTransaction {
         } else {
             Ok(())
         }
+    }
+}
+
+use arch_program::instruction::Instruction;
+use arch_program::pubkey::Pubkey;
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn fuzz_serialize_deserialize_runtime_transaction(
+        version in any::<u32>(),
+        signatures in prop::collection::vec(prop::collection::vec(any::<u8>(), 64), 0..10),
+        signers in prop::collection::vec(any::<[u8; 32]>(), 0..10),
+        instructions in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..100), 0..10)
+    ) {
+        let signatures: Vec<Signature> = signatures.into_iter()
+            .map(|sig_bytes| Signature::from_slice(&sig_bytes))
+            .collect();
+
+        let signers: Vec<Pubkey> = signers.into_iter()
+            .map(Pubkey::from)
+            .collect();
+
+        let instructions: Vec<Instruction> = instructions.into_iter()
+            .map(|data| Instruction {
+                program_id: Pubkey::system_program(),
+                accounts: vec![],
+                data,
+            })
+            .collect();
+
+        let message = Message {
+            signers,
+            instructions,
+        };
+
+        let transaction = RuntimeTransaction {
+            version,
+            signatures,
+            message,
+        };
+
+        let serialized = transaction.serialize();
+        let deserialized = RuntimeTransaction::from_slice(&serialized).unwrap();
+        assert_eq!(transaction, deserialized);
     }
 }

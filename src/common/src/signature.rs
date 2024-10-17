@@ -13,3 +13,15 @@ impl Signature {
         Self(data[..64].to_vec())
     }
 }
+
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn fuzz_serialize_deserialize_signature(signature_bytes in prop::collection::vec(any::<u8>(), 64..128)) {
+        let signature = Signature::from_slice(&signature_bytes);
+        let serialized = signature.serialize();
+        let deserialized = Signature::from_slice(&serialized);
+        assert_eq!(signature, deserialized);
+    }
+}
