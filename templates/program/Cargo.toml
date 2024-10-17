@@ -1,0 +1,15 @@
+[workspace]
+[package]
+name = "helloworldprogram"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+arch_program = { path = "../../program" }
+borsh = { version = "1.5.1", features = ["derive"] }
+bitcoin = { version = "0.31.0", features = ["serde"] }
+
+[lib]
+crate-type = ["cdylib", "lib"]

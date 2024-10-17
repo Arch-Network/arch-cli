@@ -91,4 +91,49 @@ mod tests {
 
         assert_eq!(message, Message::from_slice(&message.serialize()));
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn fuzz_serialize_deserialize_message(
+            signers in prop::collection::vec(prop::array::uniform32(any::<u8>()), 0..10),
+            program_ids in prop::collection::vec(prop::array::uniform32(any::<u8>()), 0..10),
+            account_pubkeys in prop::collection::vec(prop::array::uniform32(any::<u8>()), 0..10),
+            is_signer_flags in prop::collection::vec(any::<bool>(), 0..10),
+            is_writable_flags in prop::collection::vec(any::<bool>(), 0..10),
+            instruction_data in prop::collection::vec(any::<u8>(), 0..1024)
+        ) {
+            let instructions: Vec<Instruction> = program_ids.into_iter()
+                .zip(account_pubkeys.into_iter())
+                .zip(is_signer_flags.into_iter())
+                .zip(is_writable_flags.into_iter())
+                .map(|(((program_id, pubkey), is_signer), is_writable)| {
+                    Instruction {
+                        program_id: Pubkey::from(program_id),
+                        accounts: vec![AccountMeta {
+                            pubkey: Pubkey::from(pubkey),
+                            is_signer,
+                            is_writable,
+                        }],
+                        data: instruction_data.clone(),
+                    }
+                })
+                .collect();
+
+            let signers: Vec<Pubkey> = signers.into_iter()
+                .map(Pubkey::from)
+                .collect();
+
+            let message = Message {
+                signers,
+                instructions,
+            };
+
+            let serialized = message.serialize();
+            let deserialized = Message::from_slice(&serialized);
+
+            assert_eq!(message, deserialized);
+        }
+    }
 }

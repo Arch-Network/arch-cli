@@ -20,6 +20,7 @@ use serde::Serialize;
 use serde_json::{from_str, json, Value};
 use std::fs;
 use std::str::FromStr;
+use tokio::task;
 
 use crate::processed_transaction::ProcessedTransaction;
 
@@ -255,13 +256,11 @@ pub fn sign_and_send_transaction(
 }
 
 /// Deploys the HelloWorld program using the compiled ELF
-pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
+pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> Result<()> {
     let program_pubkey =
         Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&program_keypair).0.serialize());
 
     let elf = fs::read(elf_path).expect("elf path should be available");
-
-    //println!("Program size is : {} Bytes", elf.len());
 
     let txs = elf
         .chunks(extend_bytes_max_len())
@@ -297,22 +296,17 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
         })
         .collect::<Vec<RuntimeTransaction>>();
 
-    /*println!(
-        "Program deployment split into {} Chunks, sending {} runtime transactions",
-        txs.len(),
-        txs.len()
+    let response = post_data(
+        &NODE1_ADDRESS.to_string(),
+        &"send_transactions".to_string(),
+        txs.clone(),
     );
-     */
-    let txids = process_result(post_data(NODE1_ADDRESS, "send_transactions", txs))
-        .expect("send_transaction should not fail")
+
+    let txids = process_result(response)?
         .as_array()
-        .expect("cannot convert result to array")
+        .ok_or_else(|| anyhow!("Invalid response format"))?
         .iter()
-        .map(|r| {
-            r.as_str()
-                .expect("cannot convert object to string")
-                .to_string()
-        })
+        .map(|r| r.as_str().unwrap_or_default().to_string())
         .collect::<Vec<String>>();
 
     let pb = ProgressBar::new(txids.len() as u64);
@@ -332,26 +326,14 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
 
     pb.finish();
 
-    // for tx_batch in txs.chunks(12) {
-    //     let mut txids = vec![];
-    //     for tx in tx_batch {
-    //         let txid = process_result(post_data(NODE1_ADDRESS, "send_transaction", tx))
-    //             .expect("send_transaction should not fail")
-    //             .as_str()
-    //             .expect("cannot convert result to string")
-    //             .to_string();
-
-    //         println!("sent tx {:?}", txid);
-    //         txids.push(txid);
-    //     };
-
-    //     for txid in txids {
-    //         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
-    //             .expect("get processed transaction should not fail");
-
-    //         println!("{:?}", read_account_info(NODE1_ADDRESS, program_pubkey.clone()));
-    //     }
-    // }
+    Ok(())
+}
+async fn async_post_data<T: Serialize + std::fmt::Debug + Send + 'static>(
+    url: String,
+    method: String,
+    params: T,
+) -> Result<String> {
+    Ok(task::spawn_blocking(move || post_data(&url, &method, params)).await?)
 }
 
 /// Starts Key Exchange by calling the RPC method

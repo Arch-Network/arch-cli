@@ -162,13 +162,8 @@ macro_rules! entrypoint {
             let (program_id, utxos, instruction_data) =
                 unsafe { $crate::entrypoint::deserialize(input) };
             match $process_instruction(&program_id, &utxos, &instruction_data) {
-                Ok(()) => {
-                    return 0;
-                }
-                Err(e) => {
-                    $crate::msg!("program return an error {:?}", e);
-                    return 1;
-                }
+                Ok(()) => $crate::entrypoint::SUCCESS,
+                Err(error) => error.into(),
             }
         }
         $crate::custom_heap_default!();

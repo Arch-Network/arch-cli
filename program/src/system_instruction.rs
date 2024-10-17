@@ -68,28 +68,37 @@ impl SystemInstruction {
 
 #[cfg(test)]
 mod tests {
-    use crate::utxo::UtxoMeta;
-
     use super::SystemInstruction;
+    use crate::utxo::UtxoMeta;
+    use proptest::prelude::*;
 
-    #[test]
-    fn test_serialize_and_back() {
-        let system_instruction = SystemInstruction::CreateAccount(UtxoMeta::from(
-            hex::decode("b6fd4863c8603414e137d4ccb80297cfb7e88a56070cf03b2cb05a07f50e0c02")
-                .unwrap()
-                .try_into()
-                .unwrap(),
-            0,
-        ));
-        assert_eq!(
-            system_instruction,
-            SystemInstruction::from_slice(&system_instruction.serialise())
-        );
+    proptest! {
+        #[test]
+        fn fuzz_serialize_deserialize_system_instruction_create_account(
+            txid in any::<[u8; 32]>(),
+            vout in any::<u32>(),
+            random_bytes in prop::collection::vec(any::<u8>(), 0..1024),
+        ) {
+            let instruction = SystemInstruction::CreateAccount(UtxoMeta::from(txid, vout));
 
-        let system_instruction = SystemInstruction::ExtendBytes(vec![0, 4, 5, 5, 8, 9]);
-        assert_eq!(
-            system_instruction,
-            SystemInstruction::from_slice(&system_instruction.serialise())
-        );
+            let serialized = instruction.serialise();
+            let deserialized = SystemInstruction::from_slice(&serialized);
+
+            assert_eq!(instruction, deserialized);
+        }
+
+        #[test]
+        fn fuzz_serialize_deserialize_system_instruction_extend_bytes(
+            txid in any::<[u8; 32]>(),
+            vout in any::<u32>(),
+            random_bytes in prop::collection::vec(any::<u8>(), 0..1024),
+        ) {
+            let instruction = SystemInstruction::ExtendBytes(random_bytes.clone());
+
+            let serialized = instruction.serialise();
+            let deserialized = SystemInstruction::from_slice(&serialized);
+
+            assert_eq!(instruction, deserialized);
+        }
     }
 }

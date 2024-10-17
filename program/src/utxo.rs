@@ -1,3 +1,5 @@
+use borsh::{BorshDeserialize, BorshSerialize};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct UtxoMeta([u8; 36]);
@@ -74,6 +76,7 @@ fn test_outpoint() {
 }
 
 use core::fmt;
+use std::io::{Read, Result, Write};
 use std::str::FromStr;
 
 use bitcoin::OutPoint;
@@ -102,5 +105,44 @@ impl AsMut<[u8]> for UtxoMeta {
 impl From<[u8; 36]> for UtxoMeta {
     fn from(value: [u8; 36]) -> Self {
         UtxoMeta(value)
+    }
+}
+
+impl BorshSerialize for UtxoMeta {
+    #[inline]
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<()> {
+        self.0.serialize(writer)
+    }
+}
+
+impl BorshDeserialize for UtxoMeta {
+    #[inline]
+    fn deserialize_reader<R: Read>(reader: &mut R) -> Result<Self> {
+        if let Some(vec_bytes) = u8::vec_from_reader(36, reader)? {
+            Ok(UtxoMeta::from_slice(&vec_bytes))
+        } else {
+            // TODO(16): return capacity allocation when we can safely do that.
+            let mut result = Vec::with_capacity(36);
+            for _ in 0..36 {
+                result.push(u8::deserialize_reader(reader)?);
+            }
+            Ok(UtxoMeta::from_slice(&result))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::utxo::UtxoMeta;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn fuzz_serialize_deserialize_utxo_meta(txid in any::<[u8; 32]>(), vout in any::<u32>()) {
+            let original = UtxoMeta::from(txid, vout);
+            let serialized = borsh::to_vec(&original).unwrap();
+            let deserialized: UtxoMeta = borsh::from_slice(&serialized).unwrap();
+            assert_eq!(original, deserialized);
+        }
     }
 }

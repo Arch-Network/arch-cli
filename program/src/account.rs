@@ -212,3 +212,31 @@ impl<'a> AccountInfo<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{account::AccountMeta, pubkey::Pubkey};
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn fuzz_serialize_deserialize_account_meta(
+            pubkey_bytes in any::<[u8; 32]>(),
+            is_signer in any::<bool>(),
+            is_writable in any::<bool>()
+        ) {
+            let pubkey = Pubkey::from(pubkey_bytes);
+            let account_meta = AccountMeta {
+                pubkey,
+                is_signer,
+                is_writable,
+            };
+
+            let serialized = account_meta.serialize();
+            let deserialized = AccountMeta::from_slice(&serialized);
+
+            assert_eq!(account_meta, deserialized);
+        }
+    }
+}

@@ -36,3 +36,43 @@ mod implementation {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AtomicU64;
+
+    #[test]
+    fn test_atomic_u64_initialization() {
+        let atomic = AtomicU64::new(10);
+        assert_eq!(atomic.fetch_add(0), 10);
+    }
+
+    #[test]
+    fn test_atomic_u64_fetch_add() {
+        let atomic = AtomicU64::new(5);
+        assert_eq!(atomic.fetch_add(3), 5);
+        assert_eq!(atomic.fetch_add(2), 8);
+    }
+
+    #[test]
+    fn test_atomic_u64_concurrent_add() {
+        let atomic = std::sync::Arc::new(AtomicU64::new(0));
+
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let atomic_clone = atomic.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..100 {
+                        atomic_clone.fetch_add(1);
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(atomic.fetch_add(0), 1000);
+    }
+}

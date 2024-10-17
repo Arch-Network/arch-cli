@@ -98,3 +98,19 @@ impl From<[u8; 32]> for Pubkey {
         Pubkey(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::pubkey::Pubkey;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn fuzz_serialize_deserialize_pubkey(data in any::<[u8; 32]>()) {
+            let pubkey = Pubkey::from(data);
+            let serialized = pubkey.serialize();
+            let deserialized = Pubkey::from_slice(&serialized);
+            assert_eq!(pubkey, deserialized);
+        }
+    }
+}

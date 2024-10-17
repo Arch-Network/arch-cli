@@ -4,13 +4,12 @@ use crate::instruction::Instruction;
 use crate::program_error::ProgramError;
 #[cfg(target_os = "solana")]
 use crate::stable_layout::stable_ins::StableInstruction;
-use crate::{msg, MAX_BTC_TX_SIZE};
+use crate::MAX_BTC_TX_SIZE;
 
+use crate::clock::Clock;
 use crate::transaction_to_sign::TransactionToSign;
 use crate::utxo::UtxoMeta;
 use crate::{account::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
-
-use crate::clock::Clock;
 
 pub fn invoke(instruction: &Instruction, account_infos: &[AccountInfo]) -> ProgramResult {
     #[cfg(target_os = "solana")]
@@ -76,25 +75,17 @@ pub fn set_transaction_to_sign(
         crate::entrypoint::SUCCESS => {
             let tx: Transaction = bitcoin::consensus::deserialize(transaction_to_sign.tx_bytes)
                 .expect("failed to deserialize tx_bytes");
-            for (index, account) in accounts
-                .iter()
-                .filter(|account| account.is_writable)
-                .enumerate()
-            {
-                msg!("tx {}", hex::encode(bitcoin::consensus::serialize(&tx)));
-                msg!("txid1 {}", tx.txid().to_string());
-                msg!(
-                    "txid2 {}",
-                    hex::encode(bitcoin::consensus::serialize(&tx.txid()))
-                );
-
-                account.set_utxo(&UtxoMeta::from(
-                    hex::decode(tx.txid().to_string())
-                        .expect("failed to decode_hex")
-                        .try_into()
-                        .expect("failed to try_into"),
-                    index as u32,
-                ));
+            for input in transaction_to_sign.inputs_to_sign {
+                if let Some(account) = accounts.iter().find(|account| *account.key == input.signer)
+                {
+                    account.set_utxo(&UtxoMeta::from(
+                        hex::decode(tx.txid().to_string())
+                            .expect("failed to decode_hex")
+                            .try_into()
+                            .expect("failed to try_into"),
+                        input.index,
+                    ));
+                }
             }
             Ok(())
         }

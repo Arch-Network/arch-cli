@@ -2,28 +2,31 @@ use anyhow::anyhow;
 use anyhow::{Context, Result};
 use arch_program::account::AccountMeta;
 use arch_program::instruction::Instruction;
+use arch_program::message::Message;
 use arch_program::pubkey::Pubkey;
 use arch_program::system_instruction::SystemInstruction;
 use bitcoin::key::UntweakedKeypair;
-use bitcoin::{Address, XOnlyPublicKey};
 use bitcoin::Amount;
 use bitcoin::Network;
+use bitcoin::{Address, XOnlyPublicKey};
 use bitcoincore_rpc::jsonrpc::serde_json;
 use bitcoincore_rpc::{Client, RpcApi};
 use clap::{Args, Parser, Subcommand};
 use colored::*;
 use common::constants::*;
 use common::helper::*;
+use common::helper::*;
 use common::runtime_transaction::RuntimeTransaction;
 use config::{Config, Environment, File};
 use dialoguer::theme::ColorfulTheme;
+use dialoguer::{Confirm, Input, Select};
+use dirs::home_dir;
+use indicatif::{ProgressBar, ProgressStyle};
 use rand::rngs::OsRng;
 use secp256k1::Keypair;
 use secp256k1::{Secp256k1, SecretKey};
-use dialoguer::{Select, Input, Confirm};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::task;
 use std::env;
 use std::fs;
 use std::fs::OpenOptions;
@@ -34,13 +37,10 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command as ShellCommand;
 use std::process::Command;
-use arch_program::message::Message;
 use std::str::FromStr;
 use std::time::Duration;
-use dirs::home_dir;
-use toml_edit::{Document, Item, value};
-use indicatif::{ProgressBar, ProgressStyle};
-use common::helper::*;
+use tokio::task;
+use toml_edit::{value, Document, Item};
 
 use common::wallet_manager::*;
 
@@ -301,7 +301,6 @@ pub struct DeployArgs {
     folder: Option<String>,
 }
 
-
 #[derive(Args)]
 pub struct SendCoinsArgs {
     /// Address to send coins to
@@ -315,7 +314,11 @@ pub struct SendCoinsArgs {
 #[derive(Args)]
 pub struct ValidatorStartArgs {
     /// Network to use (testnet or mainnet)
-    #[clap(long, default_value = "testnet", help = "Specifies the network to use: testnet or mainnet")]
+    #[clap(
+        long,
+        default_value = "testnet",
+        help = "Specifies the network to use: testnet or mainnet"
+    )]
     network: String,
 }
 
@@ -410,7 +413,11 @@ pub async fn init() -> Result<()> {
     if !demo_dir.exists() {
         // Create the 'demo' folder within the project directory
         fs::create_dir_all(&demo_dir)?;
-        println!("  {} Created demo directory at {:?}", "✓".bold().green(), demo_dir);
+        println!(
+            "  {} Created demo directory at {:?}",
+            "✓".bold().green(),
+            demo_dir
+        );
 
         // Change to the CLI project directory
         std::env::set_current_dir(&cli_dir)?;
@@ -422,9 +429,15 @@ pub async fn init() -> Result<()> {
         if src_dir.exists() {
             let exclude_files = &["lib.rs", "main.rs"];
             copy_dir_excluding(&src_dir, &demo_dir, exclude_files)?;
-            println!("  {} Copied project files to demo directory", "✓".bold().green());
+            println!(
+                "  {} Copied project files to demo directory",
+                "✓".bold().green()
+            );
         } else {
-            println!("  {} Warning: ./src directory not found", "⚠".bold().yellow());
+            println!(
+                "  {} Warning: ./src directory not found",
+                "⚠".bold().yellow()
+            );
         }
 
         // Copy the whole program folder to the demo folder
@@ -434,9 +447,15 @@ pub async fn init() -> Result<()> {
             let program_dir_in_demo = demo_dir.join("program");
             fs::create_dir_all(&program_dir_in_demo)?;
             copy_dir_all(&program_dir, &program_dir_in_demo)?;
-            println!("  {} Copied program folder to demo directory", "✓".bold().green());
+            println!(
+                "  {} Copied program folder to demo directory",
+                "✓".bold().green()
+            );
         } else {
-            println!("  {} Warning: ./program directory not found", "⚠".bold().yellow());
+            println!(
+                "  {} Warning: ./program directory not found",
+                "⚠".bold().yellow()
+            );
         }
 
         // Change to the demo directory
@@ -451,7 +470,10 @@ pub async fn init() -> Result<()> {
 
         match build_result {
             Ok(output) if output.status.success() => {
-                println!("  {} Arch Network program built successfully", "✓".bold().green());
+                println!(
+                    "  {} Arch Network program built successfully",
+                    "✓".bold().green()
+                );
             }
             Ok(output) => {
                 println!(
@@ -491,7 +513,11 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
     Ok(())
 }
 
-fn copy_dir_excluding(src: impl AsRef<Path>, dst: impl AsRef<Path>, exclude: &[&str]) -> Result<()> {
+fn copy_dir_excluding(
+    src: impl AsRef<Path>,
+    dst: impl AsRef<Path>,
+    exclude: &[&str],
+) -> Result<()> {
     fs::create_dir_all(&dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -574,10 +600,7 @@ fn create_project_dir(project_dir: &Path) -> Result<()> {
             "ℹ".bold().blue()
         );
         match fs::create_dir_all(project_dir) {
-            Ok(_) => println!(
-                "  {} Directory created successfully",
-                "✓".bold().green()
-            ),
+            Ok(_) => println!("  {} Directory created successfully", "✓".bold().green()),
             Err(e) => {
                 return Err(anyhow!(
                     "Failed to create directory '{}': {}",
@@ -870,8 +893,11 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
 
     // Get the project directory from the config
-    let project_dir = PathBuf::from(config.get_string("project.directory")
-        .context("Failed to get project directory from config")?);
+    let project_dir = PathBuf::from(
+        config
+            .get_string("project.directory")
+            .context("Failed to get project directory from config")?,
+    );
 
     // Determine the deploy folder
     let deploy_folder = if let Some(folder) = &args.folder {
@@ -943,13 +969,18 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     ensure_wallet_balance(&wallet_manager.client).await?;
 
     // Get account address and fund it
-    let account_address = task::spawn_blocking(move || {
-        get_account_address(program_pubkey.clone())
-    }).await?;
+    let account_address =
+        task::spawn_blocking(move || get_account_address(program_pubkey.clone())).await?;
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
-    deploy_program_with_tx_info(&program_keypair, &program_pubkey, tx_info, deploy_folder.to_str().map(String::from)).await?;
+    deploy_program_with_tx_info(
+        &program_keypair,
+        &program_pubkey,
+        tx_info,
+        deploy_folder.to_str().map(String::from),
+    )
+    .await?;
 
     wallet_manager.close_wallet()?;
 
@@ -961,7 +992,8 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
 
     Ok(())
 }
-pub async fn server_stop() -> Result<()> {    println!("{}", "Stopping development server...".bold().yellow());
+pub async fn server_stop() -> Result<()> {
+    println!("{}", "Stopping development server...".bold().yellow());
 
     stop_all_related_containers()?;
 
@@ -1333,7 +1365,9 @@ pub async fn server_clean() -> Result<()> {
 
     // Ask user if they want to clean the indexer
     let clean_indexer = dialoguer::Confirm::new()
-        .with_prompt("Do you want to clean the indexer? This will remove all indexer containers and data.")
+        .with_prompt(
+            "Do you want to clean the indexer? This will remove all indexer containers and data.",
+        )
         .default(false)
         .interact()?;
 
@@ -1353,11 +1387,16 @@ pub async fn server_clean() -> Result<()> {
     // Only ask about config.toml if indexer was cleaned
     let delete_config = if clean_indexer {
         dialoguer::Confirm::new()
-            .with_prompt("Do you want to delete the config.toml file? This action cannot be undone.")
+            .with_prompt(
+                "Do you want to delete the config.toml file? This action cannot be undone.",
+            )
             .default(false)
             .interact()?
     } else {
-        println!("  {} config.toml will be preserved as indexer was not cleaned", "ℹ".bold().blue());
+        println!(
+            "  {} config.toml will be preserved as indexer was not cleaned",
+            "ℹ".bold().blue()
+        );
         false
     };
 
@@ -1389,7 +1428,9 @@ pub async fn server_clean() -> Result<()> {
     }
 
     // Stop and remove Docker containers for Bitcoin
-    let bitcoin_compose_file = config.get_string("bitcoin.docker_compose_file").unwrap_or_default();
+    let bitcoin_compose_file = config
+        .get_string("bitcoin.docker_compose_file")
+        .unwrap_or_default();
     if !bitcoin_compose_file.is_empty() {
         let status = Command::new("docker-compose")
             .args(["-f", &bitcoin_compose_file, "down", "--volumes"])
@@ -1402,14 +1443,19 @@ pub async fn server_clean() -> Result<()> {
             .context("Failed to stop Bitcoin containers")?;
 
         if status.success() {
-            println!("  {} Stopped and removed Bitcoin containers", "✓".bold().green());
+            println!(
+                "  {} Stopped and removed Bitcoin containers",
+                "✓".bold().green()
+            );
         } else {
             println!("  {} Failed to stop Bitcoin containers", "✗".bold().red());
         }
     }
 
     // Stop and remove Docker containers for Arch
-    let arch_compose_file = config.get_string("arch.docker_compose_file").unwrap_or_default();
+    let arch_compose_file = config
+        .get_string("arch.docker_compose_file")
+        .unwrap_or_default();
     if !arch_compose_file.is_empty() {
         let status = Command::new("docker-compose")
             .args(["-f", &arch_compose_file, "down", "--volumes"])
@@ -1422,7 +1468,10 @@ pub async fn server_clean() -> Result<()> {
             .context("Failed to stop Arch containers")?;
 
         if status.success() {
-            println!("  {} Stopped and removed Arch containers", "✓".bold().green());
+            println!(
+                "  {} Stopped and removed Arch containers",
+                "✓".bold().green()
+            );
         } else {
             println!("  {} Failed to stop Arch containers", "✗".bold().red());
         }
@@ -1694,7 +1743,7 @@ pub fn load_config() -> Result<Config> {
             "  {} Warning: {} not found.",
             "⚠".bold().yellow(),
             config_path.display().to_string().yellow()
-        );        
+        );
     }
 
     builder = builder.add_source(Environment::with_prefix("ARCH_CLI"));
@@ -1861,11 +1910,13 @@ fn build_program(args: &DeployArgs) -> Result<()> {
 
     // Change to the program directory
     let program_dir = args.folder.clone().unwrap();
-    std::env::set_current_dir(&program_dir)
-        .context("Failed to change to program directory")?;
+    std::env::set_current_dir(&program_dir).context("Failed to change to program directory")?;
 
     // Print out the current working directory
-    println!("  ℹ Current working directory: {}", std::env::current_dir().unwrap().display());
+    println!(
+        "  ℹ Current working directory: {}",
+        std::env::current_dir().unwrap().display()
+    );
 
     let output = std::process::Command::new("cargo")
         .args(["build-sbf", "--manifest-path", "app/program/Cargo.toml"])
@@ -1881,7 +1932,8 @@ fn build_program(args: &DeployArgs) -> Result<()> {
 
     println!("  ✓ Program built successfully");
     Ok(())
-}fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
+}
+fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
     Ok(args.program_key.clone().unwrap_or_else(|| {
         config
             .get_string("program.key_path")
@@ -1901,7 +1953,7 @@ async fn deploy_program_with_tx_info(
             program_pubkey,
             &info.info.txid.to_string(),
             0,
-            deploy_folder
+            deploy_folder,
         )
         .await?;
         println!("  {} Program deployed successfully", "✓".bold().green());
@@ -1950,7 +2002,10 @@ fn select_existing_key(keys: &Value) -> Result<(secp256k1::Keypair, Pubkey)> {
 
 fn create_new_key(keys_file: &PathBuf) -> Result<(secp256k1::Keypair, Pubkey)> {
     println!("No existing keys found or keys.json is empty.");
-    if Confirm::new().with_prompt("Do you want to create a new key?").interact()? {
+    if Confirm::new()
+        .with_prompt("Do you want to create a new key?")
+        .interact()?
+    {
         let name = Input::<String>::new()
             .with_prompt("Enter a name for the new key")
             .interact_text()?;
@@ -1978,7 +2033,12 @@ fn with_secret_key(secret_key_hex: &str) -> Result<(secp256k1::Keypair, Pubkey)>
     Ok((keypair, pubkey))
 }
 
-fn save_keypair_to_json(file_path: &PathBuf, keypair: &Keypair, pubkey: &Pubkey, name: &str) -> Result<()> {
+fn save_keypair_to_json(
+    file_path: &PathBuf,
+    keypair: &Keypair,
+    pubkey: &Pubkey,
+    name: &str,
+) -> Result<()> {
     let mut keys: Value = if file_path.exists() {
         serde_json::from_str(&fs::read_to_string(file_path)?)?
     } else {
@@ -2146,8 +2206,7 @@ fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
     println!("program_dir: {:?}", program_dir);
 
     // Change to the program directory
-    std::env::set_current_dir(program_dir)
-        .context("Failed to change to program directory")?;
+    std::env::set_current_dir(program_dir).context("Failed to change to program directory")?;
 
     let output = Command::new("cargo")
         .args(["build-sbf", "--manifest-path", "Cargo.toml"])
@@ -2165,7 +2224,7 @@ fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()> {
+fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()> {
     println!("  ℹ Deploying program...");
 
     // Prepare program keys
@@ -2175,7 +2234,13 @@ async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Res
     build_program_from_path(program_dir)?;
 
     // Deploy the program
-    let deploy_result = deploy_program_txs_with_folder(&program_keypair, &program_pubkey, Some(program_dir.to_str().unwrap().to_string())).await?;
+    let deploy_result = deploy_program_txs_with_folder(
+        &program_keypair,
+        &program_pubkey,
+        Some(program_dir.to_str().unwrap().to_string()),
+    );
+
+    println!("deploy_result: {:?}", deploy_result);
 
     println!("  ✓ Program deployed successfully");
     display_program_id(&program_pubkey);
@@ -2201,13 +2266,10 @@ fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -
     Ok(())
 }
 
-pub async fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
-    let program_pubkey =
-        Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&program_keypair).0.serialize());
+pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str) -> Result<()> {
+    let program_pubkey = Pubkey::from_slice(&program_keypair.public_key().serialize()[1..33]);
 
     let elf = fs::read(elf_path).expect("elf path should be available");
-
-    //println!("Program size is : {} Bytes", elf.len());
 
     let txs = elf
         .chunks(extend_bytes_max_len())
@@ -2236,32 +2298,32 @@ pub async fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &st
             RuntimeTransaction {
                 version: 0,
                 signatures: vec![common::signature::Signature(
-                    sign_message_bip322(&program_keypair, &digest_slice).to_vec(),
+                    sign_message_bip322(program_keypair, &digest_slice).to_vec(),
                 )],
                 message,
             }
         })
         .collect::<Vec<RuntimeTransaction>>();
 
-    /*println!(
-        "Program deployment split into {} Chunks, sending {} runtime transactions",
-        txs.len(),
-        txs.len()
-    );
-     */
-    let txids = task::spawn_blocking(move || {
-        process_result(post_data(NODE1_ADDRESS, "send_transactions", txs))
-            .expect("send_transaction should not fail")
+    println!("txs: {:?}", txs);
+
+    let txids: Vec<String> = {
+        let node_address = NODE1_ADDRESS.to_string();
+        let txs_clone = txs.clone(); // Clone if necessary
+        let response = task::spawn_blocking(move || {
+            post_data(&node_address, "send_transactions", txs_clone)
+        }).await.expect("Task panicked");
+
+        process_result(response)
+            .map_err(|e| anyhow!("Failed to process result: {}", e))?
             .as_array()
-            .expect("cannot convert result to array")
+            .ok_or_else(|| anyhow!("Result is not an array"))?
             .iter()
-            .map(|r| {
-                r.as_str()
-                    .expect("cannot convert object to string")
-                    .to_string()
-            })
-            .collect::<Vec<String>>()
-    }).await.expect("Task panicked");
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect()
+    };
+
+    println!("txids: {:?}", txids);
 
     let pb = ProgressBar::new(txids.len() as u64);
 
@@ -2272,37 +2334,21 @@ pub async fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &st
     pb.set_message("Successfully Processed Deployment Transactions :");
 
     for txid in txids {
-        let _processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
-            .expect("get processed transaction should not fail");
+        let _processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone());
         pb.inc(1);
         pb.set_message("Successfully Processed Deployment Transactions :");
     }
 
     pb.finish();
 
-    // for tx_batch in txs.chunks(12) {
-    //     let mut txids = vec![];
-    //     for tx in tx_batch {
-    //         let txid = process_result(post_data(NODE1_ADDRESS, "send_transaction", tx))
-    //             .expect("send_transaction should not fail")
-    //             .as_str()
-    //             .expect("cannot convert result to string")
-    //             .to_string();
-
-    //         println!("sent tx {:?}", txid);
-    //         txids.push(txid);
-    //     };
-
-    //     for txid in txids {
-    //         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
-    //             .expect("get processed transaction should not fail");
-
-    //         println!("{:?}", read_account_info(NODE1_ADDRESS, program_pubkey.clone()));
-    //     }
-    // }
+    Ok(())
 }
 
-async fn deploy_program_txs_with_folder(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
+async fn deploy_program_txs_with_folder(
+    program_keypair: &Keypair,
+    _program_pubkey: &Pubkey,
+    deploy_folder: Option<String>,
+) -> Result<()> {
     println!("    Deploying program transactions...");
 
     println!("deploy_folder: {:?}", deploy_folder);
@@ -2325,15 +2371,15 @@ async fn deploy_program_txs_with_folder(program_keypair: &Keypair, _program_pubk
         so_file.ok_or_else(|| anyhow!("No .so file found in the specified folder"))?
     };
 
-    deploy_program_txs(
-        *program_keypair,
-        &so_file,
-    ).await;
+    if let Err(e) = deploy_program_txs(program_keypair, &so_file).await {
+        println!("Failed to deploy program transactions: {}", e);
+        return Err(e);
+    }
     println!("    Program transactions deployed successfully");
     Ok(())
 }
-
-async fn create_program_account(    program_keypair: &Keypair,
+async fn create_program_account(
+    program_keypair: &Keypair,
     program_pubkey: &Pubkey,
     txid: &str,
     vout: u32,
@@ -2358,7 +2404,8 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     set_env_vars(config)?;
 
     // Get the project directory from the config
-    let project_dir = config.get_string("project.directory")
+    let project_dir = config
+        .get_string("project.directory")
         .context("Failed to get project directory from config")?;
 
     // Get the CLI directory (where the template files are located)
@@ -2369,27 +2416,34 @@ pub async fn demo_start(config: &Config) -> Result<()> {
 
     // Check if the demo directory exists, if not, copy it from the CLI directory
     if !demo_dir.exists() {
-        println!("  {} Demo directory not found. Creating it...", "ℹ".bold().blue());
+        println!(
+            "  {} Demo directory not found. Creating it...",
+            "ℹ".bold().blue()
+        );
         let src_demo_dir = cli_dir.join("src/app");
         let dst_demo_dir = PathBuf::from(&demo_dir).join("app");
-        copy_dir_all(&src_demo_dir, &dst_demo_dir)
-            .context("Failed to copy demo folder")?;
+        copy_dir_all(&src_demo_dir, &dst_demo_dir).context("Failed to copy demo folder")?;
 
         // Copy /program folder to the demo directory as /arch_program
         let src_program_dir = cli_dir.join("program");
         let program_dir = PathBuf::from(&demo_dir).join("program");
-        copy_dir_all(&src_program_dir, &program_dir)
-            .context("Failed to copy program folder")?;
+        copy_dir_all(&src_program_dir, &program_dir).context("Failed to copy program folder")?;
 
-        println!("  {} Copied demo template to {:?}", "✓".bold().green(), demo_dir);
+        println!(
+            "  {} Copied demo template to {:?}",
+            "✓".bold().green(),
+            demo_dir
+        );
     }
 
     // Change to the demo directory
-    std::env::set_current_dir(&demo_dir)
-        .context("Failed to change to demo directory")?;
+    std::env::set_current_dir(&demo_dir).context("Failed to change to demo directory")?;
 
     // Stop existing demo containers
-    println!("  {} Stopping any existing demo containers...", "→".bold().blue());
+    println!(
+        "  {} Stopping any existing demo containers...",
+        "→".bold().blue()
+    );
     let stop_output = ShellCommand::new("docker-compose")
         .arg("-f")
         .arg("app/demo-docker-compose.yml")
@@ -2398,9 +2452,15 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         .context("Failed to stop existing demo containers")?;
 
     if !stop_output.status.success() {
-        println!("  {} Warning: Failed to stop existing demo containers. Proceeding anyway.", "⚠".bold().yellow());
+        println!(
+            "  {} Warning: Failed to stop existing demo containers. Proceeding anyway.",
+            "⚠".bold().yellow()
+        );
     } else {
-        println!("  {} Existing demo containers stopped successfully", "✓".bold().green());
+        println!(
+            "  {} Existing demo containers stopped successfully",
+            "✓".bold().green()
+        );
     }
 
     // Start the demo application
@@ -2434,13 +2494,13 @@ pub async fn demo_stop(config: &Config) -> Result<()> {
     set_env_vars(config)?;
 
     // Get the project directory from the config
-    let project_dir = config.get_string("project.directory")
+    let project_dir = config
+        .get_string("project.directory")
         .context("Failed to get project directory from config")?;
 
     // Change to the demo directory
     let demo_dir = PathBuf::from(project_dir).join("demo");
-    std::env::set_current_dir(&demo_dir)
-        .context("Failed to change to demo directory")?;
+    std::env::set_current_dir(&demo_dir).context("Failed to change to demo directory")?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
@@ -2768,11 +2828,7 @@ pub async fn list_accounts() -> Result<()> {
 
     println!("{}", "Stored accounts:".bold().green());
     for (name, account_info) in keys.as_object().unwrap() {
-        println!(
-            "  {} Account: {}",
-            "→".bold().blue(),
-            name.yellow()
-        );
+        println!("  {} Account: {}", "→".bold().blue(), name.yellow());
         println!(
             "    Public Key: {}",
             account_info["public_key"].as_str().unwrap()
@@ -2791,8 +2847,6 @@ fn key_name_exists(keys_file: &PathBuf, name: &str) -> Result<bool> {
 
     Ok(keys.as_object().unwrap().contains_key(name))
 }
-
-
 
 pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
     let keys_dir = ensure_keys_dir()?;
@@ -3042,7 +3096,7 @@ pub async fn indexer_clean(config: &Config) -> Result<()> {
         .arg("-f")
         .arg("arch-indexer/docker-compose.yml")
         .arg("down")
-        .arg("-v")  // This will also remove named volumes declared in the "volumes" section
+        .arg("-v") // This will also remove named volumes declared in the "volumes" section
         .output()
         .context("Failed to stop and remove arch-indexer containers")?;
 
@@ -3066,10 +3120,7 @@ pub async fn indexer_clean(config: &Config) -> Result<()> {
         );
     }
 
-    println!(
-        "{}",
-        "Arch-indexer cleaned up successfully!".bold().green()
-    );
+    println!("{}", "Arch-indexer cleaned up successfully!".bold().green());
     Ok(())
 }
 
@@ -3094,7 +3145,7 @@ pub async fn validator_start(args: &ValidatorStartArgs) -> Result<()> {
             .arg("{{.Names}}")
             .output()
             .context("Failed to check existing containers")?
-            .stdout
+            .stdout,
     )?
     .lines()
     .any(|name| name == container_name);
@@ -3107,32 +3158,32 @@ pub async fn validator_start(args: &ValidatorStartArgs) -> Result<()> {
             .context("Failed to start the existing local validator container")?
     } else {
         ShellCommand::new("docker")
-        .arg("run")
-        .arg("--platform")
-        .arg("linux/amd64")
-        .arg("-d")
-        .arg("--name")
-        .arg("local_validator")
-        .arg("-e")
-        .arg(format!("RUST_LOG={}", rust_log))
-        .arg("-p")
-        .arg(format!("{}:{}", rpc_bind_port, rpc_bind_port))
-        .arg("ghcr.io/arch-network/local_validator:latest")
-        .arg("/usr/bin/local_validator")
-        .arg("--rpc-bind-ip")
-        .arg(rpc_bind_ip)
-        .arg("--rpc-bind-port")
-        .arg(rpc_bind_port)
-        .arg("--bitcoin-rpc-endpoint")
-        .arg(bitcoin_rpc_endpoint)
-        .arg("--bitcoin-rpc-port")
-        .arg(bitcoin_rpc_port)
-        .arg("--bitcoin-rpc-username")
-        .arg(bitcoin_rpc_username)
-        .arg("--bitcoin-rpc-password")
-        .arg(bitcoin_rpc_password)
-        .output()
-        .context("Failed to start the local validator")?
+            .arg("run")
+            .arg("--platform")
+            .arg("linux/amd64")
+            .arg("-d")
+            .arg("--name")
+            .arg("local_validator")
+            .arg("-e")
+            .arg(format!("RUST_LOG={}", rust_log))
+            .arg("-p")
+            .arg(format!("{}:{}", rpc_bind_port, rpc_bind_port))
+            .arg("ghcr.io/arch-network/local_validator:latest")
+            .arg("/usr/bin/local_validator")
+            .arg("--rpc-bind-ip")
+            .arg(rpc_bind_ip)
+            .arg("--rpc-bind-port")
+            .arg(rpc_bind_port)
+            .arg("--bitcoin-rpc-endpoint")
+            .arg(bitcoin_rpc_endpoint)
+            .arg("--bitcoin-rpc-port")
+            .arg(bitcoin_rpc_port)
+            .arg("--bitcoin-rpc-username")
+            .arg(bitcoin_rpc_username)
+            .arg("--bitcoin-rpc-password")
+            .arg(bitcoin_rpc_password)
+            .output()
+            .context("Failed to start the local validator")?
     };
 
     if !output.status.success() {
@@ -3169,7 +3220,12 @@ pub async fn validator_stop() -> Result<()> {
 pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result<()> {
     let config_dir = get_config_dir()?;
     if !config_dir.exists() {
-        println!("{}", "Config directory not found. It seems the 'init' command hasn't been run yet.".bold().yellow());
+        println!(
+            "{}",
+            "Config directory not found. It seems the 'init' command hasn't been run yet."
+                .bold()
+                .yellow()
+        );
         let run_init = Confirm::new()
             .with_prompt("Do you want to run the 'init' command now?")
             .default(true)
@@ -3178,7 +3234,9 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
         if run_init {
             init().await?;
         } else {
-            return Err(anyhow!("Please run 'arch-cli init' before creating a project."));
+            return Err(anyhow!(
+                "Please run 'arch-cli init' before creating a project."
+            ));
         }
     } else {
         // Ensure the config file exists even if the directory does
@@ -3198,9 +3256,15 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
 
     // Ensure the project directory exists
     if !project_dir.exists() {
-        fs::create_dir_all(&project_dir)
-            .context(format!("Failed to create project directory: {:?}", project_dir))?;
-        println!("  {} Created project directory at {:?}", "✓".bold().green(), project_dir);
+        fs::create_dir_all(&project_dir).context(format!(
+            "Failed to create project directory: {:?}",
+            project_dir
+        ))?;
+        println!(
+            "  {} Created project directory at {:?}",
+            "✓".bold().green(),
+            project_dir
+        );
     }
 
     // Update the config with the new project directory
@@ -3219,9 +3283,15 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
 
     // Create the project directory if it doesn't exist
     if !new_project_dir.exists() {
-        fs::create_dir_all(&new_project_dir)
-            .context(format!("Failed to create project directory: {:?}", new_project_dir))?;
-        println!("  {} Created project directory at {:?}", "✓".bold().green(), new_project_dir);
+        fs::create_dir_all(&new_project_dir).context(format!(
+            "Failed to create project directory: {:?}",
+            new_project_dir
+        ))?;
+        println!(
+            "  {} Created project directory at {:?}",
+            "✓".bold().green(),
+            new_project_dir
+        );
     }
 
     // Get the CLI directory (where the template files are located)
@@ -3232,45 +3302,54 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     fs::create_dir_all(&app_dir)
         .context(format!("Failed to create app directory: {:?}", app_dir))?;
 
-    // Copy the backend folder to the app directory
-    let src_backend_dir = cli_dir.join("src/app/backend");
-    let dest_backend_dir = app_dir.join("backend");
-    copy_dir_all(&src_backend_dir, &dest_backend_dir)
-        .context("Failed to copy backend folder")?;
+    // // Copy the backend folder to the app directory
+    // let src_backend_dir = cli_dir.join("src/app/backend");
+    // let dest_backend_dir = app_dir.join("backend");
+    // copy_dir_all(&src_backend_dir, &dest_backend_dir)
+    //     .context("Failed to copy backend folder")?;
 
-    println!("  {} Copied backend to {:?}", "✓".bold().green(), dest_backend_dir);
+    // println!("  {} Copied backend to {:?}", "✓".bold().green(), dest_backend_dir);
 
-    // Copy the frontend folder to the app directory
-    let src_frontend_dir = cli_dir.join("src/app/frontend");
-    let dest_frontend_dir = app_dir.join("frontend");
-    copy_dir_all(&src_frontend_dir, &dest_frontend_dir)
-        .context("Failed to copy frontend folder")?;
+    // // Copy the frontend folder to the app directory
+    // let src_frontend_dir = cli_dir.join("src/app/frontend");
+    // let dest_frontend_dir = app_dir.join("frontend");
+    // copy_dir_all(&src_frontend_dir, &dest_frontend_dir)
+    //     .context("Failed to copy frontend folder")?;
 
-    println!("  {} Copied frontend to {:?}", "✓".bold().green(), dest_frontend_dir);
+    // println!("  {} Copied frontend to {:?}", "✓".bold().green(), dest_frontend_dir);
 
-    // Copy the program folder to the new project directory
-    let src_program_dir = cli_dir.join("src/app/program");
+    // Copy the hello world program folder to the new project directory
+    let src_program_dir = cli_dir.join("templates/program");
     let dest_program_dir = app_dir.join("program");
-    copy_dir_all(&src_program_dir, &dest_program_dir)
-        .context("Failed to copy program folder")?;
+    copy_dir_all(&src_program_dir, &dest_program_dir).context("Failed to copy program folder")?;
 
-    println!("  {} Copied program to {:?}", "✓".bold().green(), dest_program_dir);
+    println!(
+        "  {} Copied program to {:?}",
+        "✓".bold().green(),
+        dest_program_dir
+    );
 
     // Copy the src/common folder over to the project directory
     let src_common_dir = cli_dir.join("src/common");
     let dest_common_dir = new_project_dir.join("common");
-    copy_dir_all(&src_common_dir, &dest_common_dir)
-        .context("Failed to copy common folder")?;
+    copy_dir_all(&src_common_dir, &dest_common_dir).context("Failed to copy common folder")?;
 
-    println!("  {} Copied common libraries to {:?}", "✓".bold().green(), dest_common_dir);
+    println!(
+        "  {} Copied common libraries to {:?}",
+        "✓".bold().green(),
+        dest_common_dir
+    );
 
-    // Copy program over to the new project directory
+    // Copy arch program over to the new project directory
     let src_program_dir = cli_dir.join("program");
     let dest_program_dir = new_project_dir.join("program");
-    copy_dir_all(&src_program_dir, &dest_program_dir)
-        .context("Failed to copy program folder")?;
+    copy_dir_all(&src_program_dir, &dest_program_dir).context("Failed to copy program folder")?;
 
-    println!("  {} Copied program to {:?}", "✓".bold().green(), dest_program_dir);
+    println!(
+        "  {} Copied program to {:?}",
+        "✓".bold().green(),
+        dest_program_dir
+    );
 
     // Create a basic README.md file
     let readme_content = format!("# {}\n\nThis is a new Arch Network project.", project_name);
@@ -3280,12 +3359,16 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     println!("  {} Created README.md", "✓".bold().green());
 
     println!("{}", "New project created successfully!".bold().green());
-    println!("  {} Project location: {:?}", "ℹ".bold().blue(), new_project_dir);
+    println!(
+        "  {} Project location: {:?}",
+        "ℹ".bold().blue(),
+        new_project_dir
+    );
 
     Ok(())
 }
 
-pub async fn project_deploy(config: &Config) -> Result<()> {
+pub fn project_deploy(config: &Config) -> Result<()> {
     println!("{}", "Deploying a project...".bold().green());
 
     // Get the project directory from the config
@@ -3323,14 +3406,15 @@ pub async fn project_deploy(config: &Config) -> Result<()> {
 
     // Here, call your existing deploy function with the program_dir
     // You may need to modify your existing deploy function to accept a PathBuf instead of DeployArgs
-    if let Err(e) = deploy_program_from_path(&program_dir, config).await {
+    if let Err(e) = deploy_program_from_path(&program_dir, config) {
         println!("Failed to deploy program: {}", e);
         return Err(e);
     }
 
     println!("{}", "Project deployed successfully!".bold().green());
     Ok(())
-}fn ensure_default_config() -> Result<()> {
+}
+fn ensure_default_config() -> Result<()> {
     let config_path = get_config_path()?;
     let config_dir = config_path.parent().unwrap();
 

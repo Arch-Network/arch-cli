@@ -2,6 +2,7 @@ use std::mem::size_of;
 
 use thiserror::Error;
 
+use crate::program_error::*;
 use crate::pubkey::Pubkey;
 use crate::{account::AccountMeta, program_error::ProgramError};
 
@@ -54,42 +55,6 @@ impl Instruction {
 
     pub fn hash(&self) -> String {
         digest(digest(self.serialize()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{account::AccountMeta, pubkey::Pubkey};
-
-    use super::Instruction;
-
-    #[test]
-    fn test_serialize_deserialize() {
-        let instruction = Instruction {
-            program_id: Pubkey::system_program(),
-            accounts: vec![],
-            data: vec![],
-        };
-
-        assert_eq!(
-            instruction,
-            Instruction::from_slice(&instruction.serialize())
-        );
-
-        let instruction = Instruction {
-            program_id: Pubkey::system_program(),
-            accounts: vec![AccountMeta {
-                pubkey: Pubkey::system_program(),
-                is_signer: true,
-                is_writable: true,
-            }],
-            data: vec![10; 364],
-        };
-
-        assert_eq!(
-            instruction,
-            Instruction::from_slice(&instruction.serialize())
-        );
     }
 }
 
@@ -322,9 +287,130 @@ pub enum InstructionError {
     #[error("Vm failed while executing ebpf ncode {0}")]
     EbpfError(String),
 
-    /// Builtin programs must consume compute units
-    #[error("Builtin programs must consume compute units")]
+    /// Invalid transaction to sign
+    #[error("Invalid transaction to sign")]
     InvalidTxToSign,
     // Note: For any new error added here an equivalent ProgramError and its
     // conversions must also be added
+}
+
+#[allow(non_snake_case)]
+impl From<u64> for InstructionError {
+    fn from(value: u64) -> Self {
+        match value {
+            CUSTOM_ZERO => Self::Custom(0),
+            INVALID_ARGUMENT => Self::InvalidArgument,
+            INVALID_INSTRUCTION_DATA => Self::InvalidInstructionData,
+            INVALID_ACCOUNT_DATA => Self::InvalidAccountData,
+            ACCOUNT_DATA_TOO_SMALL => Self::AccountDataTooSmall,
+            INSUFFICIENT_FUNDS => Self::InsufficientFunds,
+            INCORRECT_PROGRAM_ID => Self::IncorrectProgramId,
+            MISSING_REQUIRED_SIGNATURES => Self::MissingRequiredSignature,
+            ACCOUNT_ALREADY_INITIALIZED => Self::AccountAlreadyInitialized,
+            UNINITIALIZED_ACCOUNT => Self::UninitializedAccount,
+            NOT_ENOUGH_ACCOUNT_KEYS => Self::NotEnoughAccountKeys,
+            ACCOUNT_BORROW_FAILED => Self::AccountBorrowFailed,
+            MAX_SEED_LENGTH_EXCEEDED => Self::MaxSeedLengthExceeded,
+            INVALID_SEEDS => Self::InvalidSeeds,
+            BORSH_IO_ERROR => Self::BorshIoError("Unknown".to_string()),
+            UNSUPPORTED_SYSVAR => Self::UnsupportedSysvar,
+            ILLEGAL_OWNER => Self::IllegalOwner,
+            MAX_ACCOUNTS_DATA_ALLOCATIONS_EXCEEDED => Self::MaxAccountsDataAllocationsExceeded,
+            INVALID_ACCOUNT_DATA_REALLOC => Self::InvalidRealloc,
+            MAX_INSTRUCTION_TRACE_LENGTH_EXCEEDED => Self::MaxInstructionTraceLengthExceeded,
+            BUILTIN_PROGRAMS_MUST_CONSUME_COMPUTE_UNITS => {
+                Self::BuiltinProgramsMustConsumeComputeUnits
+            }
+            INVALID_ACCOUNT_OWNER => Self::InvalidAccountOwner,
+            ARITHMETIC_OVERFLOW => Self::ArithmeticOverflow,
+            IMMUTABLE => Self::Immutable,
+            INCORRECT_AUTHORITY => Self::IncorrectAuthority,
+            _ => {
+                // A valid custom error has no bits set in the upper 32
+                if value >> BUILTIN_BIT_SHIFT == 0 {
+                    Self::Custom(value as u32)
+                } else {
+                    Self::InvalidError
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{account::AccountMeta, pubkey::Pubkey};
+
+    use super::Instruction;
+
+    #[test]
+    fn test_serialize_deserialize() {
+        let instruction = Instruction {
+            program_id: Pubkey::system_program(),
+            accounts: vec![],
+            data: vec![],
+        };
+
+        assert_eq!(
+            instruction,
+            Instruction::from_slice(&instruction.serialize())
+        );
+
+        let instruction = Instruction {
+            program_id: Pubkey::system_program(),
+            accounts: vec![AccountMeta {
+                pubkey: Pubkey::system_program(),
+                is_signer: true,
+                is_writable: true,
+            }],
+            data: vec![10; 364],
+        };
+
+        assert_eq!(
+            instruction,
+            Instruction::from_slice(&instruction.serialize())
+        );
+    }
+
+    #[test]
+    fn test_error_converion_to_u64() {
+        let error = UNINITIALIZED_ACCOUNT;
+        let instruction_error = InstructionError::from(error);
+        assert_eq!(instruction_error, InstructionError::UninitializedAccount);
+    }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn fuzz_serialize_deserialize_instruction(
+            program_id in prop::array::uniform32(any::<u8>()),
+            account_pubkeys in prop::collection::vec(prop::array::uniform32(any::<u8>()), 0..10),
+            is_signer_flags in prop::collection::vec(any::<bool>(), 0..10),
+            is_writable_flags in prop::collection::vec(any::<bool>(), 0..10),
+            data in prop::collection::vec(any::<u8>(), 0..1024)
+        ) {
+            let accounts: Vec<AccountMeta> = account_pubkeys.into_iter()
+                .zip(is_signer_flags.into_iter())
+                .zip(is_writable_flags.into_iter())
+                .map(|((pubkey, is_signer), is_writable)| AccountMeta {
+                    pubkey: Pubkey::from(pubkey),
+                    is_signer,
+                    is_writable,
+                })
+                .collect();
+
+            let instruction = Instruction {
+                program_id: Pubkey::from(program_id),
+                accounts,
+                data: data.clone(),
+            };
+
+            let serialized = instruction.serialize();
+            let deserialized = Instruction::from_slice(&serialized);
+
+            assert_eq!(instruction, deserialized);
+        }
+    }
 }
