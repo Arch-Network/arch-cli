@@ -2143,6 +2143,8 @@ async fn deploy_program(
 fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
     println!("  ℹ Building program...");
 
+    println!("program_dir: {:?}", program_dir);
+
     // Change to the program directory
     std::env::set_current_dir(program_dir)
         .context("Failed to change to program directory")?;
@@ -2163,7 +2165,7 @@ fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()> {
+async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()> {
     println!("  ℹ Deploying program...");
 
     // Prepare program keys
@@ -2173,18 +2175,12 @@ fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()
     build_program_from_path(program_dir)?;
 
     // Deploy the program
-    let deploy_result = deploy_program_txs_with_folder(&program_keypair, &program_pubkey, Some(program_dir.to_str().unwrap().to_string()));
+    let deploy_result = deploy_program_txs_with_folder(&program_keypair, &program_pubkey, Some(program_dir.to_str().unwrap().to_string())).await?;
 
-    match deploy_result {
-        Ok(_) => {
-            println!("  ✓ Program deployed successfully");
-            display_program_id(&program_pubkey);
-            Ok(())
-        },
-        Err(e) => Err(anyhow!("Failed to deploy program: {}", e)),
-    }
+    println!("  ✓ Program deployed successfully");
+    display_program_id(&program_pubkey);
+    Ok(())
 }
-
 fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
     println!("    Making program executable...");
     let (txid, _) = sign_and_send_instruction(
@@ -2276,7 +2272,7 @@ pub async fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &st
     pb.set_message("Successfully Processed Deployment Transactions :");
 
     for txid in txids {
-        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+        let _processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
         pb.inc(1);
         pb.set_message("Successfully Processed Deployment Transactions :");
@@ -2306,7 +2302,7 @@ pub async fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &st
     // }
 }
 
-fn deploy_program_txs_with_folder(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
+async fn deploy_program_txs_with_folder(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
     println!("    Deploying program transactions...");
 
     let so_folder = deploy_folder
@@ -2330,7 +2326,7 @@ fn deploy_program_txs_with_folder(program_keypair: &Keypair, _program_pubkey: &P
     deploy_program_txs(
         *program_keypair,
         &so_file,
-    );
+    ).await;
     println!("    Program transactions deployed successfully");
     Ok(())
 }
@@ -2373,12 +2369,13 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     if !demo_dir.exists() {
         println!("  {} Demo directory not found. Creating it...", "ℹ".bold().blue());
         let src_demo_dir = cli_dir.join("src/app");
-        copy_dir_all(&src_demo_dir, &demo_dir)
+        let dst_demo_dir = PathBuf::from(&demo_dir).join("app");
+        copy_dir_all(&src_demo_dir, &dst_demo_dir)
             .context("Failed to copy demo folder")?;
 
         // Copy /program folder to the demo directory as /arch_program
         let src_program_dir = cli_dir.join("program");
-        let program_dir = PathBuf::from(&demo_dir).join("arch_program");
+        let program_dir = PathBuf::from(&demo_dir).join("program");
         copy_dir_all(&src_program_dir, &program_dir)
             .context("Failed to copy program folder")?;
 
@@ -2393,7 +2390,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     println!("  {} Stopping any existing demo containers...", "→".bold().blue());
     let stop_output = ShellCommand::new("docker-compose")
         .arg("-f")
-        .arg("demo-docker-compose.yml")
+        .arg("app/demo-docker-compose.yml")
         .arg("down")
         .output()
         .context("Failed to stop existing demo containers")?;
@@ -2408,7 +2405,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     println!("  {} Starting demo containers...", "→".bold().blue());
     let start_output = ShellCommand::new("docker-compose")
         .arg("-f")
-        .arg("demo-docker-compose.yml")
+        .arg("app/demo-docker-compose.yml")
         .arg("up")
         .arg("--build")
         .arg("-d")
@@ -3215,27 +3212,8 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
             .interact()?;
     }
 
-     // Create the new project folder
-     let mut new_project_dir = project_dir.join(&project_name);
-
-     // Check if the folder already exists and ask for a new name if it does
-     while new_project_dir.exists() {
-         println!("  {} A project with this name already exists.", "⚠".bold().yellow());
-         let use_existing = Confirm::new()
-             .with_prompt("Do you want to use the existing project?")
-             .default(false)
-             .interact()?;
-
-         if use_existing {
-             println!("  {} Using existing project directory.", "ℹ".bold().blue());
-             break;
-         } else {
-             project_name = Input::<String>::new()
-                 .with_prompt("Enter a new name for your project")
-                 .interact()?;
-             new_project_dir = project_dir.join(&project_name);
-         }
-     }
+    // Create the new project folder
+    let new_project_dir = project_dir.join(&project_name);
 
     // Create the project directory if it doesn't exist
     if !new_project_dir.exists() {
@@ -3247,29 +3225,50 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     // Get the CLI directory (where the template files are located)
     let cli_dir = std::env::current_dir()?;
 
-    // Copy the dummy program folder to the new project directory
-    let src_program_dir = cli_dir.join("src/app/program");
-    let dest_program_dir = new_project_dir.join("app/program");
-    copy_dir_all(&src_program_dir, &dest_program_dir)
-        .context("Failed to copy program folder")?;
+    // Create the app folder
+    let app_dir = new_project_dir.join("app");
+    fs::create_dir_all(&app_dir)
+        .context(format!("Failed to create app directory: {:?}", app_dir))?;
 
-    println!("  {} Copied program template to {:?}", "✓".bold().green(), dest_program_dir);
+    // Copy the backend folder to the app directory
+    let src_backend_dir = cli_dir.join("src/app/backend");
+    let dest_backend_dir = app_dir.join("backend");
+    copy_dir_all(&src_backend_dir, &dest_backend_dir)
+        .context("Failed to copy backend folder")?;
+
+    println!("  {} Copied backend to {:?}", "✓".bold().green(), dest_backend_dir);
+
+    // Copy the frontend folder to the app directory
+    let src_frontend_dir = cli_dir.join("src/app/frontend");
+    let dest_frontend_dir = app_dir.join("frontend");
+    copy_dir_all(&src_frontend_dir, &dest_frontend_dir)
+        .context("Failed to copy frontend folder")?;
+
+    println!("  {} Copied frontend to {:?}", "✓".bold().green(), dest_frontend_dir);
 
     // Copy the program folder to the new project directory
-    let src_program_dir = cli_dir.join("program");
-    let dest_program_dir = new_project_dir.join("program");
+    let src_program_dir = cli_dir.join("src/app/program");
+    let dest_program_dir = app_dir.join("program");
     copy_dir_all(&src_program_dir, &dest_program_dir)
         .context("Failed to copy program folder")?;
 
     println!("  {} Copied program to {:?}", "✓".bold().green(), dest_program_dir);
 
-    // Copy the src/common folder over to the proejct directory
+    // Copy the src/common folder over to the project directory
     let src_common_dir = cli_dir.join("src/common");
     let dest_common_dir = new_project_dir.join("common");
     copy_dir_all(&src_common_dir, &dest_common_dir)
         .context("Failed to copy common folder")?;
 
     println!("  {} Copied common libraries to {:?}", "✓".bold().green(), dest_common_dir);
+
+    // Copy program over to the new project directory
+    let src_program_dir = cli_dir.join("program");
+    let dest_program_dir = new_project_dir.join("program");
+    copy_dir_all(&src_program_dir, &dest_program_dir)
+        .context("Failed to copy program folder")?;
+
+    println!("  {} Copied program to {:?}", "✓".bold().green(), dest_program_dir);
 
     // Create a basic README.md file
     let readme_content = format!("# {}\n\nThis is a new Arch Network project.", project_name);
@@ -3280,12 +3279,11 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
 
     println!("{}", "New project created successfully!".bold().green());
     println!("  {} Project location: {:?}", "ℹ".bold().blue(), new_project_dir);
-    // println!("  {} To get started, navigate to the project directory and run 'arch-cli init'", "ℹ".bold().blue());
 
     Ok(())
 }
 
-pub fn project_deploy(config: &Config) -> Result<()> {
+pub async fn project_deploy(config: &Config) -> Result<()> {
     println!("{}", "Deploying a project...".bold().green());
 
     // Get the project directory from the config
@@ -3323,15 +3321,14 @@ pub fn project_deploy(config: &Config) -> Result<()> {
 
     // Here, call your existing deploy function with the program_dir
     // You may need to modify your existing deploy function to accept a PathBuf instead of DeployArgs
-    if let Err(e) = deploy_program_from_path(&program_dir, config) {
+    if let Err(e) = deploy_program_from_path(&program_dir, config).await {
         println!("Failed to deploy program: {}", e);
         return Err(e);
     }
 
     println!("{}", "Project deployed successfully!".bold().green());
     Ok(())
-}
-fn ensure_default_config() -> Result<()> {
+}fn ensure_default_config() -> Result<()> {
     let config_path = get_config_path()?;
     let config_dir = config_path.parent().unwrap();
 
