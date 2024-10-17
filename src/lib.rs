@@ -23,6 +23,7 @@ use secp256k1::{Secp256k1, SecretKey};
 use dialoguer::{Select, Input, Confirm};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio::task;
 use std::env;
 use std::fs;
 use std::fs::OpenOptions;
@@ -938,7 +939,9 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     ensure_wallet_balance(&wallet_manager.client).await?;
 
     // Get account address and fund it
-    let account_address = get_account_address(program_pubkey);
+    let account_address = task::spawn_blocking(move || {
+        get_account_address(program_pubkey.clone())
+    }).await?;
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
