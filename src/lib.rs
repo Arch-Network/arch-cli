@@ -2305,6 +2305,8 @@ pub async fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &st
 async fn deploy_program_txs_with_folder(program_keypair: &Keypair, _program_pubkey: &Pubkey, deploy_folder: Option<String>) -> Result<()> {
     println!("    Deploying program transactions...");
 
+    println!("deploy_folder: {:?}", deploy_folder);
+
     let so_folder = deploy_folder
         .ok_or_else(|| anyhow!("No deploy folder specified"))?
         .to_string();
@@ -3315,7 +3317,7 @@ pub async fn project_deploy(config: &Config) -> Result<()> {
         .interact()?;
 
     let selected_project = &projects[selection];
-    let program_dir = project_dir.join(selected_project).join("program");
+    let program_dir = project_dir.join(selected_project).join("app/program");
 
     println!("Deploying project: {}", selected_project.yellow());
 
