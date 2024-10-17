@@ -2312,24 +2312,55 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     let project_dir = config.get_string("project.directory")
         .context("Failed to get project directory from config")?;
 
+    // Get the CLI directory (where the template files are located)
+    let cli_dir = std::env::current_dir()?;
+
+    // Define the demo directory in the project
+    let demo_dir = PathBuf::from(&project_dir).join("demo");
+
+    // Check if the demo directory exists, if not, copy it from the CLI directory
+    if !demo_dir.exists() {
+        println!("  {} Demo directory not found. Creating it...", "ℹ".bold().blue());
+        let src_demo_dir = cli_dir.join("src/app");
+        copy_dir_all(&src_demo_dir, &demo_dir)
+            .context("Failed to copy demo folder")?;
+        println!("  {} Copied demo template to {:?}", "✓".bold().green(), demo_dir);
+    }
+
     // Change to the demo directory
-    let demo_dir = PathBuf::from(project_dir).join("demo");
     std::env::set_current_dir(&demo_dir)
         .context("Failed to change to demo directory")?;
 
-    let output = ShellCommand::new("docker-compose")
+    // Stop existing demo containers
+    println!("  {} Stopping any existing demo containers...", "→".bold().blue());
+    let stop_output = ShellCommand::new("docker-compose")
         .arg("-f")
-        .arg("app/demo-docker-compose.yml")
+        .arg("demo-docker-compose.yml")
+        .arg("down")
+        .output()
+        .context("Failed to stop existing demo containers")?;
+
+    if !stop_output.status.success() {
+        println!("  {} Warning: Failed to stop existing demo containers. Proceeding anyway.", "⚠".bold().yellow());
+    } else {
+        println!("  {} Existing demo containers stopped successfully", "✓".bold().green());
+    }
+
+    // Start the demo application
+    println!("  {} Starting demo containers...", "→".bold().blue());
+    let start_output = ShellCommand::new("docker-compose")
+        .arg("-f")
+        .arg("demo-docker-compose.yml")
         .arg("up")
         .arg("--build")
         .arg("-d")
         .output()
         .context("Failed to start the demo application using Docker Compose")?;
 
-    if !output.status.success() {
+    if !start_output.status.success() {
         return Err(anyhow!(
             "Failed to start the demo application: {}",
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(&start_output.stderr)
         ));
     }
 
