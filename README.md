@@ -108,14 +108,18 @@ This command sets up a new Arch Network project with the necessary folder struct
 ### Manage the local development server (Docker)
 
 ```sh
-arch-cli server start
+arch-cli server start [--num-validators <number>] [--debug]
 arch-cli server stop
 arch-cli server status
-arch-cli server logs [<service>]
+arch-cli server logs [--service <service_name>]
 arch-cli server clean
 ```
 
 These commands start, stop, check the status of, view logs for, and clean up the development environment, including the Bitcoin regtest network and Arch Network nodes.
+
+- `--num-validators <number>`: Specify the number of validators to start (default is 2)
+- `--debug`: Start the server in debug mode
+- `--service <service_name>`: Specify which service to show logs for (e.g., 'bitcoin', 'arch', 'bootnode', 'leader', 'validator-1', 'validator-2')
 
 ### Deploy a program
 
@@ -183,23 +187,29 @@ These commands allow you to view, edit, and reset the configuration file.
 ### Manage the indexer
 
 ```sh
-arch-cli indexer start
+arch-cli indexer start [--arch-node-url <url>]
 arch-cli indexer stop
 arch-cli indexer clean
 ```
 
 Starts, stops, or cleans the arch-indexer using Docker Compose.
 
+- `--arch-node-url <url>`: Specify the URL of the Arch node to connect to
+
 ### Manage the validator
 
 The validator is a lightweight server that only serves as an RPC for developers to get up and running quickly with the least amount of overhead.
 
 ```sh
-arch-cli validator start [options]
+arch-cli validator start [--network <network>] [--rpc-port <port>] [--p2p-port <port>]
 arch-cli validator stop
 ```
 
 Starts a local validator with specified network settings or stops the local validator.
+
+- `--network <network>`: Specify the network to connect to (e.g., 'localnet', 'testnet', 'mainnet')
+- `--rpc-port <port>`: Specify the RPC port for the validator
+- `--p2p-port <port>`: Specify the P2P port for the validator
 
 ## Getting Started with the Demo App
 
