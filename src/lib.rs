@@ -66,6 +66,10 @@ pub struct Cli {
     /// Enable verbose output
     #[clap(short, long, global = true)]
     pub verbose: bool,
+
+    /// Specify the network to use (development, development2, testnet, mainnet)
+    #[clap(long, global = true, default_value = "development")]
+    pub network: String,
 }
 
 #[derive(Subcommand)]
@@ -1359,9 +1363,8 @@ pub fn stop_docker_services(compose_file: &str, service_name: &str) -> Result<()
     Ok(())
 }
 
-pub async fn server_clean() -> Result<()> {
+pub async fn server_clean(config: &Config) -> Result<()> {
     println!("{}", "Cleaning up the project...".bold().yellow());
-    let config = load_config()?;
     let arch_data_dir = get_arch_data_dir(&config)?;
     let config_dir = get_config_dir()?;
     let keys_file = config_dir.join("keys.json");
@@ -1728,12 +1731,13 @@ pub fn stop_arch_nodes() -> Result<()> {
     Ok(())
 }
 
-pub fn load_config() -> Result<Config> {
+pub fn load_config(network: &str) -> Result<Config> {
     let config_path = get_config_path()?;
     let config_dir = config_path.parent().unwrap().to_str().unwrap().to_string();
-
+    println!("Loading config for network: {}", network);
+    
     let mut builder = Config::builder();
-
+    
     // Check if the config file exists
     if config_path.exists() {
         builder = builder.add_source(File::with_name(config_path.to_str().unwrap()));
@@ -1750,14 +1754,46 @@ pub fn load_config() -> Result<Config> {
         );
     }
 
-    builder = builder.add_source(Environment::with_prefix("ARCH_CLI"));
+    // Add environment variables and set config_dir
+    builder = builder
+        .add_source(Environment::with_prefix("ARCH_CLI").separator("_"))
+        .set_override("config_dir", config_dir)?;
 
-    // Add config_dir to the builder
-    builder = builder.set_override("config_dir", config_dir)?;
+    // Build the initial configuration
+    let initial_config = builder.build()?;
 
-    let config = builder.build().context("Failed to build configuration")?;
+    // Try to get the network-specific configuration
+    let network_config: Option<Value> = initial_config.get(&format!("networks.{}", network)).ok();
 
-    Ok(config)
+    if let Some(network_config) = network_config {
+        // Merge the network-specific configuration
+        builder = Config::builder()
+            .add_source(config::File::from_str(
+                &serde_json::to_string(&network_config)?,
+                config::FileFormat::Json,
+            ))
+            .add_source(initial_config);
+
+        println!(
+            "  {} Loaded network-specific configuration for {}",
+            "✓".bold().green(),
+            network.yellow()
+        );
+    } else {
+        println!(
+            "  {} No specific configuration found for network {}",
+            "ℹ".bold().blue(),
+            network.yellow()
+        );
+        builder = Config::builder().add_source(initial_config);
+    }
+
+    // Build the final configuration
+    let final_config = builder
+        .build()
+        .context("Failed to build configuration")?;
+
+    Ok(final_config)
 }
 
 pub fn get_arch_data_dir(config: &Config) -> Result<PathBuf> {
@@ -2960,8 +2996,8 @@ pub fn ensure_keys_dir() -> Result<PathBuf> {
 
 async fn generate_account_address(caller_pubkey: Pubkey) -> Result<String> {
     // Get program account address from network
-    let account_address = get_account_address(caller_pubkey);
-    // println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
+    let account_address = tokio::task::spawn_blocking(move || get_account_address(caller_pubkey)).await.unwrap();
+    println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
 
     Ok(account_address)
 }
@@ -3162,17 +3198,17 @@ pub async fn indexer_clean(config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub async fn validator_start(args: &ValidatorStartArgs) -> Result<()> {
+pub async fn validator_start(args: &ValidatorStartArgs, config: &Config) -> Result<()> {
     println!("{}", "Starting the local validator...".bold().green());
 
-    let network = &args.network;
-    let rust_log = "info";
+    let _network = &args.network;
+    let rust_log = config.get_string("arch.rust_log")?;
     let rpc_bind_ip = "0.0.0.0";
-    let rpc_bind_port = "9002";
-    let bitcoin_rpc_endpoint = "bitcoin-node.dev.aws.archnetwork.xyz";
-    let bitcoin_rpc_port = "18443";
-    let bitcoin_rpc_username = "bitcoin";
-    let bitcoin_rpc_password = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618";
+    let rpc_bind_port = config.get_string("arch.leader_rpc_port")?;
+    let bitcoin_rpc_endpoint = config.get_string("bitcoin_rpc_endpoint")?;
+    let bitcoin_rpc_port = config.get_string("bitcoin_rpc_port")?;
+    let bitcoin_rpc_username = config.get_string("bitcoin_rpc_user")?;
+    let bitcoin_rpc_password = config.get_string("bitcoin_rpc_password")?;
 
     let container_name = "local_validator";
     let container_exists = String::from_utf8(
@@ -3236,22 +3272,41 @@ pub async fn validator_start(args: &ValidatorStartArgs) -> Result<()> {
 }
 
 pub async fn validator_stop() -> Result<()> {
-    println!("{}", "Stopping the local validator...".bold().green());
+    println!("{}", "Stopping and removing the local validator...".bold().green());
 
-    let output = ShellCommand::new("docker")
+    // Stop the container
+    let stop_output = ShellCommand::new("docker")
         .arg("stop")
         .arg("local_validator")
         .output()
         .context("Failed to stop the local validator")?;
 
-    if !output.status.success() {
+    if !stop_output.status.success() {
+        println!(
+            "  {} Warning: Failed to stop the local validator: {}",
+            "⚠".bold().yellow(),
+            String::from_utf8_lossy(&stop_output.stderr)
+        );
+    } else {
+        println!("  {} Local validator stopped", "✓".bold().green());
+    }
+
+    // Remove the container and its volumes
+    let remove_output = ShellCommand::new("docker")
+        .arg("rm")
+        .arg("-v")  // -v flag removes volumes associated with the container
+        .arg("local_validator")
+        .output()
+        .context("Failed to remove the local validator container")?;
+
+    if !remove_output.status.success() {
         return Err(anyhow!(
-            "Failed to stop the local validator: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "Failed to remove the local validator container: {}",
+            String::from_utf8_lossy(&remove_output.stderr)
         ));
     }
 
-    println!("{}", "Local validator stopped successfully!".bold().green());
+    println!("{}", "Local validator stopped and removed successfully!".bold().green());
     Ok(())
 }
 

@@ -1,15 +1,41 @@
-[network]
-type = "development"
+[networks]
+default = "development"
 
-[bitcoin]
+[networks.development]
+type = "development"
+bitcoin_rpc_endpoint = "http://localhost:18443"
+bitcoin_rpc_port = "18443"
+bitcoin_rpc_user = "bitcoin"
+bitcoin_rpc_password = "password"
+bitcoin_rpc_wallet = "devwallet"
 docker_compose_file = "./bitcoin-docker-compose.yml"
-network = "regtest"
-rpc_endpoint = "http://localhost:18443"
-rpc_port = "18443"
-rpc_user = "bitcoin"
-rpc_password = "password"
-rpc_wallet = "devwallet"
 services = ["bitcoin", "electrs", "btc-rpc-explorer"]
+
+[networks.development2]
+type = "development2"
+bitcoin_rpc_endpoint = "https://bitcoin-node.dev.aws.archnetwork.xyz"
+bitcoin_rpc_port = "18443"
+bitcoin_rpc_user = "bitcoin"
+bitcoin_rpc_password = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618"
+bitcoin_rpc_wallet = "devwallet"
+docker_compose_file = "./bitcoin-docker-compose.yml"
+services = ["bitcoin", "electrs", "btc-rpc-explorer"]
+
+[networks.testnet]
+type = "testnet"
+bitcoin_rpc_endpoint = "bitcoin-node.dev.aws.archnetwork.xyz"
+bitcoin_rpc_port = "18443"
+bitcoin_rpc_user = "bitcoin"
+bitcoin_rpc_password = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618"
+bitcoin_rpc_wallet = "devwallet"
+
+[networks.mainnet]
+type = "mainnet"
+bitcoin_rpc_endpoint = "bitcoin-node.mainnet.archnetwork.xyz"
+bitcoin_rpc_port = "8332"
+bitcoin_rpc_user = "bitcoin"
+bitcoin_rpc_password = "mainnet_password"
+bitcoin_rpc_wallet = "mainnet_wallet"
 
 [program]
 key_path = "${CONFIG_DIR}/keys/program.json"
