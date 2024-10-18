@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
         Commands::Config(ConfigCommands::Reset) => config_reset().await,
         Commands::Start => server_start(&config).await,
         Commands::Stop => server_stop().await,
-        Commands::Indexer(IndexerCommands::Start { arch_node_url }) => indexer_start(&config, arch_node_url.clone()).await,
+        Commands::Indexer(IndexerCommands::Start) => indexer_start(&config).await,
         Commands::Indexer(IndexerCommands::Stop) => indexer_stop(&config).await,
         Commands::Indexer(IndexerCommands::Clean) => indexer_clean(&config).await,
         Commands::Project(ProjectCommands::Create(args)) => project_create(args, &config).await,

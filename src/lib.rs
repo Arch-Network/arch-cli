@@ -27,6 +27,7 @@ use secp256k1::Keypair;
 use secp256k1::{Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::fs::OpenOptions;
@@ -49,6 +50,19 @@ pub struct ServiceConfig {
     #[allow(dead_code)]
     docker_compose_file: String,
     services: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct NetworkConfig {
+    pub type_: String,
+    pub bitcoin_rpc_endpoint: String,
+    pub bitcoin_rpc_port: String,
+    pub bitcoin_rpc_user: String,
+    pub bitcoin_rpc_password: String,
+    pub bitcoin_rpc_wallet: String,
+    pub docker_compose_file: Option<String>,
+    pub leader_rpc_endpoint: String,
+    pub services: Option<Vec<String>>,
 }
 
 #[derive(Parser)]
@@ -130,7 +144,7 @@ pub enum Commands {
 #[derive(Subcommand)]
 pub enum ServerCommands {
     /// Start the development server
-    #[clap(long_about = "Starts the development environment, including Bitcoin regtest network and Arch Network nodes.")]
+    #[clap(long_about = "Starts the local development environment, including Bitcoin regtest network and Arch Network nodes.")]
     Start,
 
     /// Stop the development server
@@ -169,11 +183,7 @@ pub enum ProjectCommands {
 pub enum IndexerCommands {
     /// Start the indexer
     #[clap(long_about = "Starts the arch-indexer using Docker Compose.")]
-    Start {
-        /// URL of the Arch Node
-        #[clap(long, help = "Specifies the URL of the Arch Node")]
-        arch_node_url: Option<String>,
-    },
+    Start,
 
     /// Stop the indexer
     #[clap(long_about = "Stops the arch-indexer using Docker Compose.")]
@@ -851,13 +861,12 @@ pub async fn server_start(config: &Config) -> Result<()> {
     env::set_var("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap());
 
     // Set other required environment variables
-    set_env_vars(config)?;
+    set_env_vars(config, "development")?;
 
-    // Start Bitcoin services
     start_docker_service(
         "Bitcoin",
         "bitcoin",
-        &config.get_string("bitcoin.docker_compose_file")?,
+        &config.get_string("docker_compose_file")?,
     )?;
 
     // Start Arch Network services
@@ -1137,14 +1146,14 @@ pub async fn server_status(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn fetch_service_logs(service_name: &str, service_config: &ServiceConfig) -> Result<()> {
+fn fetch_service_logs(service_name: &str, services: &[String]) -> Result<()> {
     println!(
         "  {} Fetching logs for {}...",
         "→".bold().blue(),
         service_name.yellow()
     );
 
-    for container in &service_config.services {
+    for container in services {
         println!("    Logs for {}:", container.bold());
         let log_output = Command::new("docker")
             .args(["logs", "--tail", "50", container])
@@ -1199,34 +1208,41 @@ fn check_service_status(service_name: &str, service_config: &ServiceConfig) -> R
 }
 
 pub async fn server_logs(service: &str, config: &Config) -> Result<()> {
-    println!(
-        "{}",
-        format!("Fetching logs for {}...", service).bold().blue()
-    );
+    println!("{}", format!("Fetching logs for {}...", service).bold().blue());
 
-    let network_type = config
-        .get_string("network.type")
-        .context("Failed to get network type from configuration")?;
+    let network_type = config.get_string("selected_network").unwrap_or_else(|_| "development".to_string());
 
-    if network_type == "development" {
-        if service == "all" || service == "bitcoin" {
-            let bitcoin_config: ServiceConfig = config
-                .get("bitcoin")
-                .context("Failed to get Bitcoin configuration")?;
-            fetch_service_logs("Bitcoin regtest network", &bitcoin_config)?;
+    if network_type != "development" && network_type != "development2" {
+        println!("  {} Logs are not available for non-development networks", "ℹ".bold().blue());
+        return Ok(());
+    }
+
+    let services_to_fetch = match service {
+        "all" => vec!["bitcoin", "arch"],
+        s if s == "bitcoin" || s == "arch" => vec![s],
+        _ => return Err(anyhow!("Invalid service specified")),
+    };
+
+    for &s in &services_to_fetch {
+        let config_key = if s == "bitcoin" {
+            format!("networks.{}.services", network_type)
+        } else {
+            "arch.services".to_string()
+        };
+
+        if let Ok(services) = config.get_array(&config_key) {
+            let service_names: Vec<String> = services.iter()
+                .filter_map(|v| Some(v.to_string()))
+                .collect();
+
+            if !service_names.is_empty() {
+                fetch_service_logs(&format!("{} services", s), &service_names)?;
+            } else {
+                println!("  {} No services defined for {}", "ℹ".bold().blue(), s);
+            }
+        } else {
+            println!("  {} Failed to get services for {}", "⚠".bold().yellow(), s);
         }
-
-        if service == "all" || service == "arch" {
-            let arch_config: ServiceConfig = config
-                .get("arch")
-                .context("Failed to get Arch Network configuration")?;
-            fetch_service_logs("Arch Network nodes", &arch_config)?;
-        }
-    } else {
-        println!(
-            "  {} Logs are not available for non-development networks",
-            "ℹ".bold().blue()
-        );
     }
 
     Ok(())
@@ -1519,7 +1535,7 @@ pub async fn start_dkg(config: &Config) -> Result<()> {
     );
 
     let leader_rpc = config
-        .get_string("arch.leader_rpc_endpoint")
+        .get_string("leader_rpc_endpoint")
         .expect("Failed to get leader RPC endpoint from config");
 
     // Create an HTTP client with a timeout
@@ -1772,14 +1788,17 @@ pub fn load_config(network: &str) -> Result<Config> {
         builder = Config::builder().add_source(initial_config);
     }
 
+    // Add the network key to the final configuration
+    builder = builder.set_override("selected_network", network.to_string())?;
+
     // Build the final configuration
     let final_config = builder
         .build()
         .context("Failed to build configuration")?;
 
     Ok(final_config)
-}
 
+}
 pub fn get_arch_data_dir(config: &Config) -> Result<PathBuf> {
     let config_dir = config.get_string("config_dir")?;
     Ok(PathBuf::from(config_dir).join("arch-data"))
@@ -1792,13 +1811,30 @@ pub fn check_file_exists(file_path: &str) -> Result<()> {
         Ok(())
     }
 }
+fn set_env_vars(config: &Config, network: &str) -> Result<()> {
+    let network_config: std::collections::HashMap<String, config::Value> = config
+        .get_table(&format!("networks.{}", network))
+        .with_context(|| format!("Failed to get configuration for network '{}'", network))?;
 
-fn set_env_vars(config: &Config) -> Result<()> {
     let vars = [
-        ("BITCOIN_RPC_PORT", "bitcoin.rpc_port"),
-        ("BITCOIN_RPC_USER", "bitcoin.rpc_user"),
-        ("BITCOIN_RPC_PASSWORD", "bitcoin.rpc_password"),
-        ("BITCOIN_RPC_WALLET", "bitcoin.rpc_wallet"),
+        ("BITCOIN_RPC_ENDPOINT", "bitcoin_rpc_endpoint"),
+        ("BITCOIN_RPC_PORT", "bitcoin_rpc_port"),
+        ("BITCOIN_RPC_USER", "bitcoin_rpc_user"),
+        ("BITCOIN_RPC_PASSWORD", "bitcoin_rpc_password"),
+        ("BITCOIN_RPC_WALLET", "bitcoin_rpc_wallet"),
+        ("LEADER_RPC_ENDPOINT", "leader_rpc_endpoint"),
+    ];
+
+    for (env_var, config_key) in vars.iter() {
+        if let Some(value) = network_config.get(*config_key) {
+            if let Ok(str_value) = value.clone().into_string() {
+                env::set_var(env_var, str_value);
+            }
+        }
+    }
+
+    // Set other environment variables that are not network-specific
+    let other_vars = [
         ("ELECTRS_REST_API_PORT", "electrs.rest_api_port"),
         ("ELECTRS_ELECTRUM_PORT", "electrs.electrum_port"),
         ("BTC_RPC_EXPLORER_PORT", "btc_rpc_explorer.port"),
@@ -1821,11 +1857,10 @@ fn set_env_vars(config: &Config) -> Result<()> {
         ("REPLICA_COUNT", "arch.replica_count"),
     ];
 
-    for (env_var, config_key) in vars.iter() {
-        let value = config
-            .get_string(config_key)
-            .with_context(|| format!("Failed to get {} from config", config_key))?;
-        env::set_var(env_var, value);
+    for (env_var, config_key) in other_vars.iter() {
+        if let Ok(value) = config.get_string(config_key) {
+            env::set_var(env_var, value);
+        }
     }
 
     Ok(())
@@ -2452,7 +2487,7 @@ async fn create_program_account(
 pub async fn demo_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
 
-    set_env_vars(config)?;
+    set_env_vars(config, "development")?;
 
     // Get the project directory from the config
     let project_dir = config
@@ -2542,7 +2577,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
 pub async fn demo_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the demo application...".bold().green());
 
-    set_env_vars(config)?;
+    set_env_vars(config, "development")?;
 
     // Get the project directory from the config
     let project_dir = config
@@ -3077,10 +3112,12 @@ async fn transfer_account_ownership(
     Ok(())
 }
 
-pub async fn indexer_start(config: &Config, arch_node_url: Option<String>) -> Result<()> {
+pub async fn indexer_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the arch-indexer...".bold().green());
 
-    set_env_vars(config)?;
+    let arch_node_url = config.get_string("leader_rpc_endpoint")?;
+
+    set_env_vars(config, "development")?;
 
     let mut command = ShellCommand::new("docker-compose");
     command
@@ -3090,9 +3127,7 @@ pub async fn indexer_start(config: &Config, arch_node_url: Option<String>) -> Re
         .arg("--build")
         .arg("-d");
 
-    if let Some(url) = arch_node_url {
-        command.env("ARCH_NODE_URL", url);
-    }
+    command.env("ARCH_NODE_URL", arch_node_url);
 
     let output = command
         .output()
@@ -3112,7 +3147,7 @@ pub async fn indexer_start(config: &Config, arch_node_url: Option<String>) -> Re
 pub async fn indexer_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the arch-indexer...".bold().green());
 
-    set_env_vars(config)?;
+    set_env_vars(config, "development")?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
@@ -3147,7 +3182,7 @@ pub async fn indexer_clean(config: &Config) -> Result<()> {
         return Ok(());
     }
 
-    set_env_vars(config)?;
+    set_env_vars(config, "development")?;
 
     // Stop and remove containers
     let output = Command::new("docker-compose")
