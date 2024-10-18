@@ -3316,21 +3316,26 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
             .interact()?;
     }
 
-    // Create the new project folder
+    // Check if the project already exists
     let new_project_dir = project_dir.join(&project_name);
-
-    // Create the project directory if it doesn't exist
-    if !new_project_dir.exists() {
-        fs::create_dir_all(&new_project_dir).context(format!(
-            "Failed to create project directory: {:?}",
-            new_project_dir
-        ))?;
+    if new_project_dir.exists() {
         println!(
-            "  {} Created project directory at {:?}",
-            "✓".bold().green(),
-            new_project_dir
+            "{}",
+            format!("A project named '{}' already exists.", project_name).bold().red()
         );
+        return Err(anyhow!("Project already exists"));
     }
+
+    // Create the new project folder
+    fs::create_dir_all(&new_project_dir).context(format!(
+        "Failed to create project directory: {:?}",
+        new_project_dir
+    ))?;
+    println!(
+        "  {} Created project directory at {:?}",
+        "✓".bold().green(),
+        new_project_dir
+    );
 
     // Get the CLI directory (where the template files are located)
     let cli_dir = std::env::current_dir()?;
