@@ -44,8 +44,29 @@ const TransactionHistoryPage: React.FC = () => {
   const [totalBlocks, setTotalBlocks] = useState<number>(0);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null);
+  const [serverStatus, setServerStatus] = useState<boolean>(false);
 
   const navigate = useNavigate();
+
+  const checkServerStatus = useCallback(async () => {
+    try {
+      const response = await fetch(INDEXER_API_URL.replace(/\/api$/, '/'));
+      if (!response.ok) {
+        throw new Error('Server is not responding');
+      }
+      const data = await response.json();
+      if (data.message === 'Arch Indexer API is running') {
+        setServerStatus(true);
+      }
+    } catch (err) {
+      console.error('Error checking server status:', err);
+      setError('The Arch Indexer API is not running. Please start the server.');
+    }
+  }, []);
+
+  useEffect(() => {
+    checkServerStatus();
+  }, [checkServerStatus]);
 
   const fetchNetworkStats = useCallback(async () => {
     try {
@@ -139,6 +160,10 @@ const TransactionHistoryPage: React.FC = () => {
   const syncPercentage = syncStatus ? parseFloat(syncStatus.percentageComplete) : 0;
   const showBlocks = syncPercentage >= SYNC_THRESHOLD;
   const isFullySynced = syncPercentage >= 98;
+
+  if (!serverStatus) {
+    return <ErrorMessage message="The Arch Indexer API is not running. Please start the server using 'arch-cli indexer start'." />;
+  }
 
   return (
     <div className="p-4 max-w-7xl mx-auto text-arch-white">
