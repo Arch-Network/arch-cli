@@ -12,7 +12,7 @@ services:
       - DB_NAME=archindexer
       - DB_PASSWORD=yourpassword
       - DB_PORT=5432
-      - ARCH_NODE_URL=http://leader:9002
+      - ARCH_NODE_URL=${ARCH_NODE_URL:-http://leader:9002}
     depends_on:
       - db
     networks:

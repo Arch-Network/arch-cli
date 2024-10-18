@@ -175,7 +175,11 @@ pub enum ProjectCommands {
 pub enum IndexerCommands {
     /// Start the indexer
     #[clap(long_about = "Starts the arch-indexer using Docker Compose.")]
-    Start,
+    Start {
+        /// URL of the Arch Node
+        #[clap(long, help = "Specifies the URL of the Arch Node")]
+        arch_node_url: Option<String>,
+    },
 
     /// Stop the indexer
     #[clap(long_about = "Stops the arch-indexer using Docker Compose.")]
@@ -1973,31 +1977,60 @@ pub fn prepare_program_keys() -> Result<(secp256k1::Keypair, Pubkey)> {
     let keys_file = config_dir.join("keys.json");
 
     if keys_file.exists() {
-        let keys = load_keys(&keys_file)?;
+        let mut keys = load_keys(&keys_file)?;
         if !keys.as_object().map_or(true, |obj| obj.is_empty()) {
-            return select_existing_key(&keys);
+            return select_existing_key(&mut keys);
         }
     }
 
     create_new_key(&keys_file)
 }
-
 fn load_keys(keys_file: &PathBuf) -> Result<Value> {
     let keys_content = fs::read_to_string(keys_file)?;
     Ok(serde_json::from_str(&keys_content)?)
 }
 
-fn select_existing_key(keys: &Value) -> Result<(secp256k1::Keypair, Pubkey)> {
-    let account_names: Vec<String> = keys.as_object().unwrap().keys().cloned().collect();
+fn select_existing_key(keys: &mut Value) -> Result<(secp256k1::Keypair, Pubkey)> {
+    let mut account_names: Vec<String> = keys.as_object().unwrap().keys().cloned().collect();
+    account_names.push("Create a new key".to_string());
+
     let selection = Select::new()
         .with_prompt("Select a key to use as the program key")
         .items(&account_names)
         .default(0)
         .interact()?;
 
-    let selected_account = &keys[&account_names[selection]];
-    let secret_key = selected_account["secret_key"].as_str().unwrap();
-    with_secret_key(secret_key)
+    if selection == account_names.len() - 1 {
+        // User chose to create a new key
+        let new_key_name = Input::<String>::new()
+            .with_prompt("Enter a name for the new key")
+            .interact_text()?;
+
+        let secp = Secp256k1::new();
+        let (secret_key, public_key) = secp.generate_keypair(&mut OsRng);
+        let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+        let pubkey = Pubkey::from_slice(&public_key.serialize()[1..33]);
+
+        // Save the new key to the keys Value
+        let new_key_value = json!({
+            "public_key": hex::encode(pubkey.serialize()),
+            "secret_key": hex::encode(secret_key.secret_bytes()),
+        });
+        keys[&new_key_name] = new_key_value;
+
+        // Save the updated keys to the file
+        let keys_file = get_config_dir()?.join("keys.json");
+        fs::write(&keys_file, serde_json::to_string_pretty(keys)?)?;
+
+        println!("  {} Created and saved new key '{}'", "✓".bold().green(), new_key_name);
+
+        Ok((keypair, pubkey))
+    } else {
+        // User selected an existing key
+        let selected_account = &keys[&account_names[selection]];
+        let secret_key = selected_account["secret_key"].as_str().unwrap();
+        with_secret_key(secret_key)
+    }
 }
 
 fn create_new_key(keys_file: &PathBuf) -> Result<(secp256k1::Keypair, Pubkey)> {
@@ -3024,17 +3057,24 @@ async fn transfer_account_ownership(
     Ok(())
 }
 
-pub async fn indexer_start(config: &Config) -> Result<()> {
+pub async fn indexer_start(config: &Config, arch_node_url: Option<String>) -> Result<()> {
     println!("{}", "Starting the arch-indexer...".bold().green());
 
     set_env_vars(config)?;
 
-    let output = ShellCommand::new("docker-compose")
+    let mut command = ShellCommand::new("docker-compose");
+    command
         .arg("-f")
-        .arg("./arch-indexer/docker-compose.yml") // Updated path
+        .arg("./arch-indexer/docker-compose.yml")
         .arg("up")
         .arg("--build")
-        .arg("-d")
+        .arg("-d");
+
+    if let Some(url) = arch_node_url {
+        command.env("ARCH_NODE_URL", url);
+    }
+
+    let output = command
         .output()
         .context("Failed to start the arch-indexer using Docker Compose")?;
 
