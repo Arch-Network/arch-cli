@@ -75,9 +75,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize a new Arch Network app
-    #[clap(
-        long_about = "Creates the project structure and boilerplate files for a new Arch Network application."
-    )]
+    #[clap(long_about = "Creates the project structure and configuration for a new Arch Network application.")]
     Init,
 
     /// Manage the development server
@@ -85,12 +83,10 @@ pub enum Commands {
     Server(ServerCommands),
 
     /// Deploy your Arch Network app
-    #[clap(
-        long_about = "Builds and deploys your Arch Network application to the specified network."
-    )]
+    #[clap(long_about = "Builds and deploys your Arch Network application to the specified network.")]
     Deploy(DeployArgs),
 
-    /// Manage the project
+    /// Manage projects
     #[clap(subcommand)]
     Project(ProjectCommands),
 
@@ -102,7 +98,7 @@ pub enum Commands {
     #[clap(subcommand)]
     Bitcoin(BitcoinCommands),
 
-    /// Manage the frontend application
+    /// Manage the demo application
     #[clap(subcommand)]
     Demo(DemoCommands),
 
@@ -134,21 +130,15 @@ pub enum Commands {
 #[derive(Subcommand)]
 pub enum ServerCommands {
     /// Start the development server
-    #[clap(
-        long_about = "Starts the development environment, including Bitcoin regtest network and Arch Network nodes."
-    )]
+    #[clap(long_about = "Starts the development environment, including Bitcoin regtest network and Arch Network nodes.")]
     Start,
 
     /// Stop the development server
-    #[clap(
-        long_about = "Stops all related Docker containers and services for the development environment."
-    )]
+    #[clap(long_about = "Stops all related Docker containers and services for the development environment.")]
     Stop,
 
     /// Check the status of the development server
-    #[clap(
-        long_about = "Displays the current status of all services in the development environment."
-    )]
+    #[clap(long_about = "Displays the current status of all services in the development environment.")]
     Status,
 
     /// View logs for development server components
@@ -160,18 +150,18 @@ pub enum ServerCommands {
     },
 
     /// Clean the project
-    #[clap(long_about = "Removes the src/app directory, cleaning the project structure.")]
+    #[clap(long_about = "Removes temporary files and resets the development environment.")]
     Clean,
 }
 
 #[derive(Subcommand)]
 pub enum ProjectCommands {
     /// Create a new project
-    #[clap(long_about = "Creates a new project with a specified name.")]
+    #[clap(long_about = "Creates a new Arch Network project with the specified name.")]
     Create(CreateProjectArgs),
 
     /// Deploy a project
-    #[clap(long_about = "Deploys the specified project.")]
+    #[clap(long_about = "Deploys the specified Arch Network project.")]
     Deploy,
 }
 
@@ -221,33 +211,27 @@ pub enum BitcoinCommands {
 
 #[derive(Subcommand)]
 pub enum DemoCommands {
-    /// Start the demo application (frontend and backend)
-    #[clap(
-        long_about = "Starts the demo application, including both frontend and backend services."
-    )]
+    /// Start the demo application
+    #[clap(long_about = "Starts the demo application, including both frontend and backend services.")]
     Start,
 
-    /// Stop the demo application (frontend and backend)
-    #[clap(
-        long_about = "Stops the demo application, including both frontend and backend services."
-    )]
+    /// Stop the demo application
+    #[clap(long_about = "Stops the demo application, including both frontend and backend services.")]
     Stop,
 }
 
 #[derive(Subcommand)]
 pub enum AccountCommands {
     /// Create an account for the dApp
-    #[clap(
-        long_about = "Creates an account for the dApp, prompts for funding, and transfers ownership to the program"
-    )]
+    #[clap(long_about = "Creates an account for the dApp, prompts for funding, and transfers ownership to the program.")]
     Create(CreateAccountArgs),
 
     /// List all accounts
-    #[clap(long_about = "Lists all accounts stored in the accounts.json file")]
+    #[clap(long_about = "Lists all accounts stored in the accounts file.")]
     List,
 
     /// Delete an account
-    #[clap(long_about = "Deletes an account from the accounts.json file")]
+    #[clap(long_about = "Deletes an account from the accounts file.")]
     Delete(DeleteAccountArgs),
 }
 
@@ -324,8 +308,8 @@ pub struct ValidatorStartArgs {
     /// Network to use (testnet or mainnet)
     #[clap(
         long,
-        default_value = "testnet",
-        help = "Specifies the network to use: testnet or mainnet"
+        default_value = "development",
+        help = "Specifies the network to use: development, development2, testnet, or mainnet"
     )]
     network: String,
 }
