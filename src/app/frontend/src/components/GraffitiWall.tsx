@@ -1,15 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ArchRpcClient, Pubkey } from 'arch-typescript-sdk';
+import { RpcConnection, Pubkey, AccountUtil, InstructionUtil, MessageUtil, PubkeyUtil } from '@saturnbtcio/arch-sdk';
 import { Info, Copy, Check, AlertCircle } from 'lucide-react';
 
 const NETWORK = (import.meta as any).env.VITE_NETWORK;
-const client = new ArchRpcClient((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
+const client = new RpcConnection((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
 const PROGRAM_PUBKEY = (import.meta as any).env.VITE_PROGRAM_PUBKEY;
-const BACKEND_URL = (import.meta as any).env.VITE_BACKEND_URL || 'http://localhost:5174';
-
-interface CreateArchAccountProps {
-  accountPubkey: string;
-}
+const WALL_PRIVATE_KEY = (import.meta as any).env.VITE_WALL_PRIVATE_KEY;
+// const BACKEND_URL = (import.meta as any).env.VITE_BACKEND_URL || 'http://localhost:5174';
 
 class GraffitiMessage {
   constructor(
@@ -19,7 +16,7 @@ class GraffitiMessage {
   ) {}
 }
 
-const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
+const GraffitiWall: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isAccountCreated, setIsAccountCreated] = useState(false);
   const [message, setMessage] = useState('');
@@ -28,42 +25,38 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
   const [name, setName] = useState('');
   const [copied, setCopied] = useState(false);  
 
+  const accountPubkey = PubkeyUtil.fromHex(WALL_ACCOUNT_PUBKEY);
+
   const copyToClipboard = () => {
-    navigator.clipboard.writeText(`arch-cli account create --name graffiti --program-id ${PROGRAM_PUBKEY}`);
+    navigator.clipboard.writeText(`arch-cli account create --name <unique_name>--program-id ${PROGRAM_PUBKEY}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const checkAccountCreated = useCallback(async () => {
-    if (!accountPubkey) {
-      console.log("Account pubkey not available yet");
-      return;
-    }
-  
     try {
-      const formalPubkey = Pubkey.fromString(accountPubkey);
-      await client.readAccountInfo(formalPubkey);
+      await client.readAccountInfo(accountPubkey);
       setIsAccountCreated(true);
-      setError(null); // Clear any previous errors
+      setError(null);
     } catch (error) {
       console.error('Error checking account:', error);
       setIsAccountCreated(false);
-      setError("Network Error: Please ensure your network is up and the Arch server is running. You can start the server using the command:\n\n```\narch-cli server start\n```");
+      setError('The Arch Graffiti program has not been deployed to the network yet. They need to run `arch-cli deploy` for this dapp.');
     }
   }, [accountPubkey]);
+
   const fetchWallData = useCallback(async () => {
-    if (!accountPubkey || !isAccountCreated) return;
+    if (!isAccountCreated) return;
 
     try {
-      const formalPubkey = Pubkey.fromString(accountPubkey);
-      const userAccount = await client.readAccountInfo(formalPubkey);
+      const userAccount = await client.readAccountInfo(accountPubkey);
 
       if (userAccount.data.length === 0) {
         setWallData([]);
         return;
       }
   
-      const dataView = new DataView(new Uint8Array(userAccount.data).buffer);
+      const dataView = new DataView(userAccount.data.buffer);
       const messages: GraffitiMessage[] = [];
       let offset = 0;
 
@@ -71,14 +64,14 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
       offset += 4;
 
       for (let i = 0; i < messageCount; i++) {
-        const timestamp = Number(dataView.getBigInt64(offset, true));
+        const timestamp = Number(dataView.getBigUint64(offset, true));
         offset += 8;
 
-        const nameBytes = new Uint8Array(userAccount.data.slice(offset, offset + 16));
+        const nameBytes = userAccount.data.slice(offset, offset + 16);
         const name = new TextDecoder().decode(nameBytes).replace(/\0+$/, '');
         offset += 16;
 
-        const messageBytes = new Uint8Array(userAccount.data.slice(offset, offset + 64));
+        const messageBytes = userAccount.data.slice(offset, offset + 64);
         const message = new TextDecoder().decode(messageBytes).replace(/\0+$/, '');
         offset += 64;
   
@@ -90,7 +83,8 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
       console.error('Error fetching wall data:', error);
       setError(`Failed to fetch wall data: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [accountPubkey, isAccountCreated]);
+  }, [isAccountCreated, accountPubkey]);
+
   useEffect(() => {
     checkAccountCreated();
     if (isAccountCreated) {
@@ -107,29 +101,44 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
     }
   
     try {
-      const response = await fetch(`${BACKEND_URL}/add-to-wall`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          programPubkey: PROGRAM_PUBKEY,
-          name,
-          message,
-        }),
-      });
-  
-      if (!response.ok) {
-        throw new Error('Failed to add to wall');
-      }
-  
-      const result = await response.json();
-      if (result.success) {
-        await fetchWallData();
-        setMessage('');
-      } else {
-        throw new Error(result.error);
-      }
+      const privateKey = PubkeyUtil.fromHex(WALL_PRIVATE_KEY);
+      const publicKey = privateKey;
+
+    //   const instruction = {
+    //     programId: PubkeyUtil.fromHex(PROGRAM_PUBKEY),
+    //     accounts: [
+    //       AccountUtil.serialize({ pubkey: publicKey, is_signer: true, is_writable: true }),
+    //       AccountUtil.serialize({ pubkey: publicKey, is_signer: false, is_writable: true }),
+    //     ],
+    //     data: InstructionUtil.serialize({ name, message }),
+    //   };
+
+    //   const messageObj = {
+    //     signers: [publicKey],
+    //     instructions: [instruction],
+    //   };
+
+    //   const serializedMessage = MessageUtil.serialize(messageObj);
+    //   const messageHash = MessageUtil.hash(messageObj);
+
+    //   // Note: You'll need to implement the signing logic here
+    //   // const signature = sign(messageHash, privateKey);
+
+    //   const transaction = {
+    //     version: 0,
+    //     signatures: [/* signature */],
+    //     message: serializedMessage,
+    //   };
+
+    //   const result = await client.sendTransaction(transaction);
+
+    //   if (result) {
+    //     await fetchWallData();
+    //     setMessage('');
+    //     setName('');
+    //   } else {
+    //     throw new Error('Failed to add to wall');
+    //   }
     } catch (error) {
       console.error('Error adding to wall:', error);
       setError(`Failed to add to wall: ${error instanceof Error ? error.message : String(error)}`);
@@ -248,12 +257,9 @@ const GraffitiWall: React.FC<CreateArchAccountProps> = ({ accountPubkey }) => {
         <div className="mt-6 p-4 bg-red-500 text-white rounded-lg">
           <div className="flex items-center mb-2">
             <AlertCircle className="w-6 h-6 mr-2" />
-            <p className="font-bold">Network Error</p>
+            <p className="font-bold">Program Error</p>
           </div>
-          <p className="mb-2">Please ensure your network is up and the Arch server is running. You can start the server using the command:</p>
-          <pre className="bg-red-600 p-2 rounded">
-            <code>arch-cli server start</code>
-          </pre>
+          <p>{error}</p>
         </div>
       )}
     </div>
