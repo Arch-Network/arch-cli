@@ -12,23 +12,30 @@ pub struct WalletManager {
 impl WalletManager {
     pub fn new(config: &Config) -> Result<Self> {
         let rpc_user = config
-            .get_string("bitcoin.rpc_user")
+            .get_string("bitcoin_rpc_user")
             .context("Failed to get Bitcoin RPC username")?;
         let rpc_password = config
-            .get_string("bitcoin.rpc_password")
+            .get_string("bitcoin_rpc_password")
             .context("Failed to get Bitcoin RPC password")?;
         let wallet_name = config
-            .get_string("bitcoin.rpc_wallet")
+            .get_string("bitcoin_rpc_wallet")
             .unwrap_or_else(|_| "devwallet".to_string());
 
         let wallet_rpc_uri = format!(
-            "{}/wallet/{}",
-            config.get_string("bitcoin.rpc_endpoint")?,
+            "{}:{}/wallet/{}",
+            config.get_string("bitcoin_rpc_endpoint")?,
+            config.get_string("bitcoin_rpc_port")?,
             wallet_name
         );
+        println!("Wallet RPC URI: {}", wallet_rpc_uri);
         let client = Client::new(&wallet_rpc_uri, Auth::UserPass(rpc_user, rpc_password))
             .context("Failed to create RPC client")?;
 
+        // Print something to prove teh client is connected
+        println!(
+            "Client connected: {}",
+            client.get_best_block_hash().unwrap()
+        );
         let wallet_manager = Self {
             client,
             wallet_name,
@@ -56,7 +63,14 @@ impl WalletManager {
                 Ok(())
             }
             Err(e) => {
-                if e.to_string().contains("Wallet file verification failed")
+                if e.to_string().contains("is already loaded") {
+                    println!(
+                        "  {} Wallet '{}' is already loaded.",
+                        "✓".bold().green(),
+                        self.wallet_name.yellow()
+                    );
+                    Ok(())
+                } else if e.to_string().contains("Wallet file verification failed")
                     || e.to_string().contains("Requested wallet does not exist")
                     || e.to_string().contains("Unable to obtain an exclusive lock")
                 {

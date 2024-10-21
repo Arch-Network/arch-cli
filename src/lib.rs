@@ -2277,13 +2277,15 @@ async fn deploy_program(
     deploy_folder: Option<String>,
 ) -> Result<()> {
     // Create a new account for the program
-    create_program_account(program_keypair, program_pubkey, txid, vout);
+    create_program_account(program_keypair, program_pubkey, txid, vout).await?;
 
     // Deploy the program transactions
-    deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder);
+    deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder).await?;
 
     // Make program executable
-    make_program_executable(program_keypair, program_pubkey);
+    tokio::task::block_in_place( move || {
+        make_program_executable(program_keypair, program_pubkey)
+    }).await?;
 
     Ok(())
 }
@@ -2312,11 +2314,15 @@ fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Result<()> {
+async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config, program_keypair: Option<(Keypair, Pubkey)>) -> Result<()> {
     println!("  ℹ Deploying program...");
 
-    // Prepare program keys
-    let (program_keypair, program_pubkey) = prepare_program_keys()?;
+    // Prepare program keys if not provided
+    let (program_keypair, program_pubkey) = if let Some(keypair) = program_keypair {
+        keypair
+    } else {
+        prepare_program_keys()?
+    };
 
     // Build-sbf the program (make .so file) in src folder
     build_program_from_path(program_dir)?;
@@ -2334,22 +2340,30 @@ async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config) -> Res
     display_program_id(&program_pubkey);
     Ok(())
 }
-fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
+
+async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
     println!("    Making program executable...");
-    let (txid, _) = sign_and_send_instruction(
-        Instruction {
-            program_id: Pubkey::system_program(),
-            accounts: vec![AccountMeta {
-                pubkey: *program_pubkey,
-                is_signer: true,
-                is_writable: true,
-            }],
-            data: vec![2],
-        },
-        vec![*program_keypair],
-    )?;
-    println!("    Transaction sent: {}", txid.clone());
-    get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())?;
+
+    let instruction = Instruction {
+        program_id: Pubkey::system_program(),
+        accounts: vec![AccountMeta {
+            pubkey: *program_pubkey,
+            is_signer: true,
+            is_writable: true,
+        }],
+        data: vec![2],
+    };
+
+    let keypair = program_keypair.clone();
+
+    let (txid, _) = tokio::task::spawn_blocking(move || {
+        sign_and_send_instruction(instruction, vec![keypair])
+    }).await??;
+
+    println!("    Transaction sent: {}", txid);
+    tokio::task::spawn_blocking(move || {
+        get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())
+    }).await??;
     println!("    Program made executable successfully");
     Ok(())
 }
@@ -2471,15 +2485,23 @@ async fn create_program_account(
     vout: u32,
 ) -> Result<()> {
     println!("    Creating program account...");
-    let (txid, _) = sign_and_send_instruction(
-        SystemInstruction::new_create_account_instruction(
-            hex::decode(txid).unwrap().try_into().unwrap(),
-            vout,
-            *program_pubkey,
-        ),
-        vec![*program_keypair],
-    )?;
-    get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone());
+
+    let program_keypair_clone = program_keypair.clone();
+    let program_pubkey_clone = *program_pubkey;
+    let txid_clone = txid.to_string();
+
+    let (txid, _) = tokio::task::spawn_blocking(move || {
+        sign_and_send_instruction(
+            SystemInstruction::new_create_account_instruction(
+                hex::decode(txid_clone).unwrap().try_into().unwrap(),
+                vout,
+                program_pubkey_clone,
+            ),
+            vec![program_keypair_clone],
+        )
+    }).await??;
+
+    let _ = tokio::task::spawn_blocking(move || get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())).await;
     println!("    Program account created successfully");
     Ok(())
 }
@@ -2525,11 +2547,86 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     // Change to the demo directory
     std::env::set_current_dir(&demo_dir).context("Failed to change to demo directory")?;
 
+    let env_file = PathBuf::from(&demo_dir).join("app/frontend/.env");
+
+    // Read the VITE_PROGRAM_PUBKEY from the specific .env file
+    let env_content = fs::read_to_string(&env_file).context("Failed to read .env file")?;
+    let mut program_pubkey = env_content
+        .lines()
+        .find_map(|line| line.strip_prefix("VITE_PROGRAM_PUBKEY="))
+        .unwrap_or("")
+        .to_string();
+
+    println!("Existing program pubkey: {}", program_pubkey);
+
+    // If program_pubkey is empty then create a new account for the program
+    let keys_file = get_config_dir()?.join("keys.json");
+
+    let graffiti_key_name: String;
+
+    if program_pubkey.is_empty() {
+        // Check if there is a key in keys.json with the name graffiti and add a postfix until it is unique
+        graffiti_key_name = {
+            let mut name = String::from("graffiti");
+            let mut counter = 1;
+            while key_name_exists(&keys_file, &name)? {
+                name = format!("graffiti_{}", counter);
+                counter += 1;
+            }
+            name
+        };
+
+        println!("Creating account with name: {}", graffiti_key_name);
+
+        // Call create_account with the graffiti_key_name
+        create_account(&CreateAccountArgs {
+            name: graffiti_key_name.clone(),
+            program_id: None,
+        }, config).await?;
+
+        // Set the program_pubkey to the pubkey of the graffiti account
+        program_pubkey = get_pubkey_from_name(&graffiti_key_name, &keys_file)?;
+
+        // Write the program_pubkey into the app/frontend/.env file
+        let env_file = PathBuf::from(&demo_dir).join("app/frontend/.env");
+        let mut env_content = fs::read_to_string(&env_file).context("Failed to read .env file")?;
+        env_content = env_content.replace("VITE_PROGRAM_PUBKEY=", &format!("VITE_PROGRAM_PUBKEY={}", program_pubkey));
+        fs::write(&env_file, env_content).context("Failed to write to .env file")?;
+    } else {
+        // If program_pubkey is not empty, we need to find the corresponding key name
+        graffiti_key_name = find_key_name_by_pubkey(&keys_file, &program_pubkey)?;
+        println!("Using existing account with name: {}", graffiti_key_name);
+    }
+
+    // Get the program keypair from the keys.json file
+    let program_keypair = get_keypair_from_name(&graffiti_key_name, &keys_file)?;
+    let program_pubkey = Pubkey::from_slice(&program_keypair.public_key().serialize()[1..33]);
+
+    // Deploy the program with the existing keypair
+    deploy_program_from_path(
+        &PathBuf::from(&demo_dir).join("app/program"),
+        config,
+        Some((program_keypair.clone(), program_pubkey))
+    ).await?;
+
+    // Make the program executable
+    make_program_executable(&program_keypair, &program_pubkey).await?;
+
+    // // Create the program account
+    // create_account(&CreateAccountArgs {
+    //     name: graffiti_key_name.to_string(),
+    //     program_id: None,
+    // }, config).await?;
+
     // Stop existing demo containers
     println!(
         "  {} Stopping any existing demo containers...",
         "→".bold().blue()
     );
+
+    // Change to the demo directory
+    std::env::set_current_dir(&demo_dir).context("Failed to change to demo directory")?;
+
     let stop_output = ShellCommand::new("docker-compose")
         .arg("-f")
         .arg("app/demo-docker-compose.yml")
@@ -2572,6 +2669,41 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         "Demo application started successfully!".bold().green()
     );
     Ok(())
+}
+
+fn find_key_name_by_pubkey(keys_file: &PathBuf, pubkey: &str) -> Result<String> {
+    let keys = load_keys(keys_file)?;
+    for (name, key_info) in keys.as_object().unwrap() {
+        if key_info["public_key"].as_str().unwrap() == pubkey {
+            return Ok(name.clone());
+        }
+    }
+    Err(anyhow!("No key found with the given public key"))
+}
+
+fn get_pubkey_from_name(name: &str, keys_file: &Path) -> Result<String> {
+    let keys = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(keys_file)?)?;
+    let pubkey = keys.get(name).context(format!("Key with name '{}' not found", name))?;
+    let pubkey = pubkey.get("public_key").context(format!("Public key for '{}' not found", name))?;
+    Ok(pubkey.as_str().context(format!("Public key for '{}' is not a string", name))?.to_string())
+}
+
+fn get_keypair_from_name(name: &str, keys_file: &PathBuf) -> Result<Keypair> {
+    let keys = load_keys(keys_file)?;
+
+    let key_info = keys.as_object()
+        .and_then(|obj| obj.get(name))
+        .ok_or_else(|| anyhow!("Key with name '{}' not found", name))?;
+
+    let secret_key_hex = key_info["secret_key"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Invalid secret key format for key '{}'", name))?;
+
+    let secret_key = SecretKey::from_str(secret_key_hex)?;
+    let secp = Secp256k1::new();
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+
+    Ok(keypair)
 }
 
 pub async fn demo_stop(config: &Config) -> Result<()> {
@@ -3052,18 +3184,24 @@ async fn create_arch_account(
     // println!("  {} Transaction info: {:?}", "ℹ".bold().blue(), tx_info);
 
     if let Some(info) = tx_info {
-        let (txid, _) = sign_and_send_instruction(
-            SystemInstruction::new_create_account_instruction(
-                hex::decode(&info.info.txid.to_string())
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-                0,
-                *caller_pubkey,
-            ),
-            vec![*caller_keypair],
-        )
-        .expect("signing and sending a transaction should not fail");
+        let caller_keypair = caller_keypair.clone();
+        let caller_pubkey = *caller_pubkey;
+        let (txid, _) = tokio::task::spawn_blocking(move || {
+            sign_and_send_instruction(
+                SystemInstruction::new_create_account_instruction(
+                    hex::decode(&info.info.txid.to_string())
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                    0,
+                    caller_pubkey,
+                ),
+                vec![caller_keypair],
+            )
+            .expect("signing and sending a transaction should not fail")
+        })
+        .await
+        .unwrap();
 
         println!(
             "  {} Account created with Arch Network transaction ID: {}",
@@ -3080,7 +3218,6 @@ async fn create_arch_account(
         Ok(())
     }
 }
-
 async fn transfer_account_ownership(
     caller_keypair: &Keypair,
     account_pubkey: &Pubkey,
@@ -3095,19 +3232,27 @@ async fn transfer_account_ownership(
         hex::encode(account_pubkey.serialize())
     );
 
-    let (_txid, _) = sign_and_send_instruction(
-        Instruction {
-            program_id: Pubkey::system_program(),
-            accounts: vec![AccountMeta {
-                pubkey: *account_pubkey,
-                is_signer: true,
-                is_writable: true,
-            }],
-            data: instruction_data,
-        },
-        vec![*caller_keypair],
-    )
-    .expect("signing and sending a transaction should not fail");
+    let instruction_data_clone = instruction_data.clone();
+    let account_pubkey_clone = *account_pubkey;
+    let caller_keypair_clone = caller_keypair.clone();
+
+    let (_txid, _) = tokio::task::spawn_blocking(move || {
+        sign_and_send_instruction(
+            Instruction {
+                program_id: Pubkey::system_program(),
+                accounts: vec![AccountMeta {
+                    pubkey: account_pubkey_clone,
+                    is_signer: true,
+                    is_writable: true,
+                }],
+                data: instruction_data_clone,
+            },
+            vec![caller_keypair_clone],
+        )
+        .expect("signing and sending a transaction should not fail")
+    })
+    .await
+    .unwrap();
 
     Ok(())
 }
@@ -3523,7 +3668,7 @@ pub async fn project_deploy(config: &Config) -> Result<()> {
 
     // Here, call your existing deploy function with the program_dir
     // You may need to modify your existing deploy function to accept a PathBuf instead of DeployArgs
-    if let Err(e) = deploy_program_from_path(&program_dir, config).await {
+    if let Err(e) = deploy_program_from_path(&program_dir, config, None).await {
         println!("Failed to deploy program: {}", e);
         return Err(e);
     }
