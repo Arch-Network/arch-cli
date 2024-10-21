@@ -2012,7 +2012,7 @@ async fn deploy_program_with_tx_info(
             program_pubkey,
             &info.info.txid.to_string(),
             0,
-            deploy_folder,
+            deploy_folder.map(|folder| format!("{}/app/program", folder)),
         )
         .await?;
         println!("  {} Program deployed successfully", "✓".bold().green());
@@ -2612,11 +2612,19 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     // Make the program executable
     make_program_executable(&program_keypair, &program_pubkey).await?;
 
-    // // Create the program account
-    // create_account(&CreateAccountArgs {
-    //     name: graffiti_key_name.to_string(),
-    //     program_id: None,
-    // }, config).await?;
+    // Create the graffiti state account
+    create_account(&CreateAccountArgs {
+        name: "graffiti_wall_state".to_string(),
+        program_id: Some(hex::encode(program_pubkey.serialize())),
+    }, config).await?;
+
+    // Write the private key into the app/frontend/.env file
+    let env_file = PathBuf::from(&demo_dir).join("app/frontend/.env");
+    let mut env_content = fs::read_to_string(&env_file).context("Failed to read .env file")?;
+    let private_key = program_keypair.secret_bytes();
+    let private_key_hex = hex::encode(private_key);
+    env_content = env_content.replace("VITE_WALL_PRIVATE_KEY=", &format!("VITE_WALL_PRIVATE_KEY={}", private_key_hex));
+    fs::write(&env_file, env_content).context("Failed to write to .env file")?;
 
     // Stop existing demo containers
     println!(
