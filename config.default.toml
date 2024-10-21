@@ -3,6 +3,17 @@ default = "development"
 
 [networks.development]
 type = "development"
+bitcoin_rpc_endpoint = "http://bitcoin-node.dev.aws.archnetwork.xyz"
+bitcoin_rpc_port = "18443"
+bitcoin_rpc_user = "bitcoin"
+bitcoin_rpc_password = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618"
+bitcoin_rpc_wallet = "testwallet"
+docker_compose_file = "./bitcoin-docker-compose.yml"
+leader_rpc_endpoint = "http://host.docker.internal:9002"
+services = ["local_validator"]
+
+[networks.development2]
+type = "development2"
 bitcoin_rpc_endpoint = "http://localhost:18443"
 bitcoin_rpc_port = "18443"
 bitcoin_rpc_user = "bitcoin"
@@ -11,17 +22,6 @@ bitcoin_rpc_wallet = "devwallet"
 docker_compose_file = "./bitcoin-docker-compose.yml"
 leader_rpc_endpoint = "http://localhost:9002"
 services = ["bitcoin", "electrs", "btc-rpc-explorer"]
-
-[networks.development2]
-type = "development2"
-bitcoin_rpc_endpoint = "https://bitcoin-node.dev.aws.archnetwork.xyz"
-bitcoin_rpc_port = "18443"
-bitcoin_rpc_user = "bitcoin"
-bitcoin_rpc_password = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618"
-bitcoin_rpc_wallet = "devwallet"
-docker_compose_file = "./bitcoin-docker-compose.yml"
-leader_rpc_endpoint = "http://host.docker.internal:9002"
-services = ["local_validator"]
 
 [networks.testnet]
 type = "testnet"
