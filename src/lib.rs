@@ -852,8 +852,12 @@ pub async fn server_start(config: &Config) -> Result<()> {
     // Set the ARCH_DATA_DIR environment variable
     env::set_var("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap());
 
-    // Set other required environment variables
-    set_env_vars(config, "development")?;
+    // Get the selected network from the config
+    let selected_network = config.get_string("selected_network")
+        .unwrap_or_else(|_| "development".to_string());
+
+    // Set environment variables for the selected network
+    set_env_vars(config, &selected_network)?;
 
     start_docker_service(
         "Bitcoin",
@@ -2497,7 +2501,12 @@ async fn create_program_account(
 pub async fn demo_start(config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
 
-    set_env_vars(config, "development")?;
+    // Get the selected network from the config
+    let selected_network = config.get_string("selected_network")
+        .unwrap_or_else(|_| "development".to_string());
+
+    // Set environment variables for the selected network
+    set_env_vars(config, &selected_network)?;
 
     // Get the project directory from the config
     let project_dir = config
@@ -2747,7 +2756,12 @@ fn get_keypair_from_name(name: &str, keys_file: &PathBuf) -> Result<Keypair> {
 pub async fn demo_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the demo application...".bold().green());
 
-    set_env_vars(config, "development")?;
+    // Get the selected network from the config
+    let selected_network = config.get_string("selected_network")
+        .unwrap_or_else(|_| "development".to_string());
+
+    // Set environment variables for the selected network
+    set_env_vars(config, &selected_network)?;
 
     // Get the project directory from the config
     let project_dir = config
@@ -3300,7 +3314,12 @@ pub async fn indexer_start(config: &Config) -> Result<()> {
 
     let arch_node_url = config.get_string("leader_rpc_endpoint")?;
 
-    set_env_vars(config, "development")?;
+    // Get the selected network from the config
+    let selected_network = config.get_string("selected_network")
+        .unwrap_or_else(|_| "development".to_string());
+
+    // Set environment variables for the selected network
+    set_env_vars(config, &selected_network)?;
 
     let mut command = ShellCommand::new("docker-compose");
     command
@@ -3330,7 +3349,12 @@ pub async fn indexer_start(config: &Config) -> Result<()> {
 pub async fn indexer_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the arch-indexer...".bold().green());
 
-    set_env_vars(config, "development")?;
+    // Get the selected network from the config
+    let selected_network = config.get_string("selected_network")
+        .unwrap_or_else(|_| "development".to_string());
+
+    // Set environment variables for the selected network
+    set_env_vars(config, &selected_network)?;
 
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
@@ -3365,7 +3389,12 @@ pub async fn indexer_clean(config: &Config) -> Result<()> {
         return Ok(());
     }
 
-    set_env_vars(config, "development")?;
+    // Get the selected network from the config
+    let selected_network = config.get_string("selected_network")
+        .unwrap_or_else(|_| "development".to_string());
+
+    // Set environment variables for the selected network
+    set_env_vars(config, &selected_network)?;
 
     // Stop and remove containers
     let output = Command::new("docker-compose")
