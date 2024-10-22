@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { RpcConnection, Pubkey, AccountUtil, InstructionUtil, MessageUtil, PubkeyUtil } from '@saturnbtcio/arch-sdk';
-import { Info, Copy, Check, AlertCircle } from 'lucide-react';
+import { Copy, Check, AlertCircle } from 'lucide-react';
+import { Buffer } from 'buffer';
 
 const NETWORK = (import.meta as any).env.VITE_NETWORK;
 const client = new RpcConnection((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
 const PROGRAM_PUBKEY = (import.meta as any).env.VITE_PROGRAM_PUBKEY;
 const WALL_PRIVATE_KEY = (import.meta as any).env.VITE_WALL_PRIVATE_KEY;
 // const BACKEND_URL = (import.meta as any).env.VITE_BACKEND_URL || 'http://localhost:5174';
+const WALL_ACCOUNT_PUBKEY = (import.meta as any).env.VITE_WALL_ACCOUNT_PUBKEY;
+
+window.Buffer = Buffer;
 
 class GraffitiMessage {
   constructor(

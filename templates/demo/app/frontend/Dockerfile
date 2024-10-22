@@ -1,15 +1,16 @@
-FROM node:18.20.0
+FROM node:18.20.0-slim
 
 WORKDIR /usr/src/app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
-
 # Copy the rest of the application
 COPY . .
+
+# Install dependencies
+RUN rm -rf node_modules && npm install
+
 
 # Set environment variables
 ARG DEMO_FRONTEND_PORT
