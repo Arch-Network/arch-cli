@@ -42,8 +42,11 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::task;
 use toml_edit::{value, Document, Item};
+use include_dir::{include_dir, Dir};
 
 use common::wallet_manager::*;
+
+static PROJECT_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/demo");
 
 #[derive(Deserialize)]
 pub struct ServiceConfig {
@@ -333,9 +336,6 @@ pub async fn init() -> Result<()> {
     // Ensure default config exists
     ensure_default_config()?;
 
-    // Store the current directory
-    let cli_dir = std::env::current_dir()?;
-
     // Get the default project directory based on the OS
     let default_dir = get_default_project_dir();
 
@@ -389,26 +389,7 @@ pub async fn init() -> Result<()> {
         arch_data_dir
     );
 
-    // Copy config.default.toml to the arch_data_dir
-    let default_config_path = Path::new("config.default.toml");
-    if default_config_path.exists() {
-        let dest_path = config_dir.join("config.toml");
-        fs::copy(default_config_path, &dest_path)
-            .with_context(|| format!("Failed to copy default config to {:?}", dest_path))?;
-        println!(
-            "  {} Copied default configuration to {:?}",
-            "✓".bold().green(),
-            dest_path
-        );
-
-        // Update config.toml with project directory
-        update_config_with_project_dir(&dest_path, &project_dir)?;
-    } else {
-        println!(
-            "  {} Warning: config.default.toml not found",
-            "⚠".bold().yellow()
-        );
-    }
+    update_config_with_project_dir(&config_path, &project_dir)?;
 
     // Create the 'demo' folder within the project directory if it doesn't exist
     let demo_dir = project_dir.join("demo");
@@ -421,44 +402,8 @@ pub async fn init() -> Result<()> {
             demo_dir
         );
 
-        // Change to the CLI project directory
-        std::env::set_current_dir(&cli_dir)?;
-
-        // Copy everything from ./src to the demo folder
-        println!("{}", "Copying project files...".bold().blue());
-        println!(" Current directory: {:?}", std::env::current_dir()?);
-        let src_dir = cli_dir.join("src");
-        if src_dir.exists() {
-            let exclude_files = &["lib.rs", "main.rs"];
-            copy_dir_excluding(&src_dir, &demo_dir, exclude_files)?;
-            println!(
-                "  {} Copied project files to demo directory",
-                "✓".bold().green()
-            );
-        } else {
-            println!(
-                "  {} Warning: ./src directory not found",
-                "⚠".bold().yellow()
-            );
-        }
-
-        // Copy the whole program folder to the demo folder
-        println!("{}", "Copying program folder...".bold().blue());
-        let program_dir = cli_dir.join("program");
-        if program_dir.exists() {
-            let program_dir_in_demo = demo_dir.join("program");
-            fs::create_dir_all(&program_dir_in_demo)?;
-            copy_dir_all(&program_dir, &program_dir_in_demo)?;
-            println!(
-                "  {} Copied program folder to demo directory",
-                "✓".bold().green()
-            );
-        } else {
-            println!(
-                "  {} Warning: ./program directory not found",
-                "⚠".bold().yellow()
-            );
-        }
+        // Extract project files from binary
+        extract_project_files(&PROJECT_DIR, &demo_dir)?;
 
         // Change to the demo directory
         std::env::set_current_dir(&demo_dir)?;
@@ -498,6 +443,53 @@ pub async fn init() -> Result<()> {
         "  {} New Arch Network app initialized successfully!",
         "✓".bold().green()
     );
+    Ok(())
+}
+
+fn extract_project_files(project_dir: &Dir, target_dir: &Path) -> Result<()> {
+    for entry in project_dir.entries() {
+        match entry {
+            include_dir::DirEntry::File(file) => {
+                let relative_path = file.path();
+                let target_path = target_dir.join(relative_path);
+                if let Some(parent) = target_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(target_path, file.contents())?;
+            }
+            include_dir::DirEntry::Dir(dir) => {
+                let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+                match dir_name {
+                    "app" | "program" | "common" => {
+                        // These directories should be at the top level
+                        extract_dir_contents(dir, &target_dir.join(dir_name))?;
+                    }
+                    _ => {
+                        // Other directories follow the original structure
+                        let new_target_dir = target_dir.join(dir.path());
+                        extract_dir_contents(dir, &new_target_dir)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn extract_dir_contents(dir: &Dir, target_dir: &Path) -> Result<()> {
+    fs::create_dir_all(target_dir)?;
+    for entry in dir.entries() {
+        match entry {
+            include_dir::DirEntry::File(file) => {
+                let target_path = target_dir.join(file.path().file_name().unwrap());
+                fs::write(target_path, file.contents())?;
+            }
+            include_dir::DirEntry::Dir(subdir) => {
+                let new_target_dir = target_dir.join(subdir.path().file_name().unwrap());
+                extract_dir_contents(subdir, &new_target_dir)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -2293,8 +2285,6 @@ async fn deploy_program(
 fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
     println!("  ℹ Building program...");
 
-    println!("program_dir: {:?}", program_dir);
-
     // Change to the program directory
     std::env::set_current_dir(program_dir).context("Failed to change to program directory")?;
 
@@ -2334,7 +2324,7 @@ async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config, progra
         Some(program_dir.to_str().unwrap().to_string()),
     );
 
-    println!("deploy_result: {:?}", deploy_result.await);
+    deploy_result.await?;
 
     println!("  ✓ Program deployed successfully");
     display_program_id(&program_pubkey);
@@ -2451,8 +2441,6 @@ async fn deploy_program_txs_with_folder(
 ) -> Result<()> {
     println!("    Deploying program transactions...");
 
-    println!("deploy_folder: {:?}", deploy_folder);
-
     let so_folder = deploy_folder
         .ok_or_else(|| anyhow!("No deploy folder specified"))?
         .to_string();
@@ -2528,17 +2516,20 @@ pub async fn demo_start(config: &Config) -> Result<()> {
             "  {} Demo directory not found. Creating it...",
             "ℹ".bold().blue()
         );
-        let src_demo_dir = cli_dir.join("src/app");
-        let dst_demo_dir = PathBuf::from(&demo_dir).join("app");
-        copy_dir_all(&src_demo_dir, &dst_demo_dir).context("Failed to copy demo folder")?;
 
-        // Copy /program folder to the demo directory as /arch_program
-        let src_program_dir = cli_dir.join("program");
-        let program_dir = PathBuf::from(&demo_dir).join("program");
-        copy_dir_all(&src_program_dir, &program_dir).context("Failed to copy program folder")?;
+        // Create the 'demo' folder within the project directory
+        fs::create_dir_all(&demo_dir)?;
+        println!(
+            "  {} Created demo directory at {:?}",
+            "✓".bold().green(),
+            demo_dir
+        );
+
+        // Extract demo files from binary
+        extract_project_files(&PROJECT_DIR, &demo_dir)?;
 
         println!(
-            "  {} Copied demo template to {:?}",
+            "  {} Extracted demo template to {:?}",
             "✓".bold().green(),
             demo_dir
         );
@@ -2612,18 +2603,25 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     // Make the program executable
     make_program_executable(&program_keypair, &program_pubkey).await?;
 
-    // Create the graffiti state account
-    create_account(&CreateAccountArgs {
-        name: "graffiti_wall_state".to_string(),
-        program_id: Some(hex::encode(program_pubkey.serialize())),
-    }, config).await?;
+    let graffiti_wall_state_exists = key_name_exists(&keys_file, "graffiti_wall_state")?;
 
-    // Write the private key into the app/frontend/.env file
+    if graffiti_wall_state_exists {
+        println!("  {} Using existing graffiti_wall_state account", "ℹ".bold().blue());
+    } else {
+        println!("  {} Creating new graffiti_wall_state account", "ℹ".bold().blue());
+        create_account(&CreateAccountArgs {
+            name: "graffiti_wall_state".to_string(),
+            program_id: Some(hex::encode(program_pubkey.serialize())),
+        }, config).await?;
+    }
+
+    // Get the public key of the graffiti_wall_state account
+    let graffiti_wall_state_pubkey = get_pubkey_from_name("graffiti_wall_state", &keys_file)?;
+
+    // Write the graffiti_wall_state public key into the app/frontend/.env file
     let env_file = PathBuf::from(&demo_dir).join("app/frontend/.env");
     let mut env_content = fs::read_to_string(&env_file).context("Failed to read .env file")?;
-    let private_key = program_keypair.secret_bytes();
-    let private_key_hex = hex::encode(private_key);
-    env_content = env_content.replace("VITE_WALL_PRIVATE_KEY=", &format!("VITE_WALL_PRIVATE_KEY={}", private_key_hex));
+    env_content = env_content.replace("VITE_WALL_STATE_PUBKEY=", &format!("VITE_WALL_STATE_PUBKEY={}", graffiti_wall_state_pubkey));
     fs::write(&env_file, env_content).context("Failed to write to .env file")?;
 
     // Stop existing demo containers
@@ -2653,6 +2651,38 @@ pub async fn demo_start(config: &Config) -> Result<()> {
             "✓".bold().green()
         );
     }
+
+    // Remove the arch-network
+    println!("  {} Removing arch-network...", "→".bold().blue());
+    let remove_network_output = ShellCommand::new("docker")
+        .args(&["network", "rm", "arch-network"])
+        .output()
+        .context("Failed to remove arch-network")?;
+
+    if !remove_network_output.status.success() {
+        let error_message = String::from_utf8_lossy(&remove_network_output.stderr);
+        if !error_message.contains("not found") {
+            println!("  {} Warning: Failed to remove arch-network: {}", "⚠".bold().yellow(), error_message);
+        }
+    }
+
+    println!("  {} arch-network removed", "✓".bold().green());
+
+    // Create the arch-network if it doesn't exist
+    println!("  {} Creating arch-network...", "→".bold().blue());
+    let create_network_output = ShellCommand::new("docker")
+        .args(&["network", "create", "arch-network"])
+        .output()
+        .context("Failed to create arch-network")?;
+
+    if !create_network_output.status.success() {
+        let error_message = String::from_utf8_lossy(&create_network_output.stderr);
+        if !error_message.contains("already exists") {
+            return Err(anyhow!("Failed to create arch-network: {}", error_message));
+        }
+    }
+
+    println!("  {} arch-network created or already exists", "✓".bold().green());
 
     // Start the demo application
     println!("  {} Starting demo containers...", "→".bold().blue());
@@ -3483,33 +3513,9 @@ pub async fn validator_stop() -> Result<()> {
 }
 
 pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result<()> {
-    let config_dir = get_config_dir()?;
-    if !config_dir.exists() {
-        println!(
-            "{}",
-            "Config directory not found. It seems the 'init' command hasn't been run yet."
-                .bold()
-                .yellow()
-        );
-        let run_init = Confirm::new()
-            .with_prompt("Do you want to run the 'init' command now?")
-            .default(true)
-            .interact()?;
-
-        if run_init {
-            init().await?;
-        } else {
-            return Err(anyhow!(
-                "Please run 'arch-cli init' before creating a project."
-            ));
-        }
-    } else {
-        // Ensure the config file exists even if the directory does
-        ensure_default_config()?;
-    }
-
+    ensure_global_config()?;
     println!("{}", "Creating a new project...".bold().green());
-
+    
     // Get the project directory from the config or prompt the user
     let project_dir = match config.get_string("project.directory") {
         Ok(dir) => PathBuf::from(dir),
@@ -3684,36 +3690,72 @@ pub async fn project_deploy(config: &Config) -> Result<()> {
     println!("{}", "Project deployed successfully!".bold().green());
     Ok(())
 }
+
 fn ensure_default_config() -> Result<()> {
     let config_path = get_config_path()?;
-    let config_dir = config_path.parent().unwrap();
-
     if !config_path.exists() {
-        // Create the arch-data directory if it doesn't exist
-        let arch_data_dir = config_dir.join("arch-data");
-        fs::create_dir_all(&arch_data_dir)?;
+        let default_config_content = include_str!("../templates/config.default.toml");
+        fs::write(&config_path, default_config_content)?;
         println!(
-            "  {} Created arch-data directory at {:?}",
+            "  {} Created default configuration at {:?}",
             "✓".bold().green(),
-            arch_data_dir
+            config_path
         );
+    }
+    Ok(())
+}
 
-        // Copy config.default.toml to the config directory
-        let default_config_path = Path::new("config.default.toml");
-        if default_config_path.exists() {
-            fs::copy(default_config_path, &config_path)
-                .with_context(|| format!("Failed to copy default config to {:?}", config_path))?;
-            println!(
-                "  {} Copied default configuration to {:?}",
-                "✓".bold().green(),
-                config_path
-            );
-        } else {
-            println!(
-                "  {} Warning: config.default.toml not found",
-                "⚠".bold().yellow()
-            );
-            return Err(anyhow!("Default configuration file not found"));
+pub fn ensure_global_config() -> Result<()> {
+    let config_dir = get_config_dir()?;
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir)?;
+        println!("Created global configuration directory at {:?}", config_dir);
+    }
+
+    ensure_default_config()?;
+
+    // Ensure other necessary directories and files exist
+    let arch_data_dir = config_dir.join("arch-data");
+    if !arch_data_dir.exists() {
+        fs::create_dir_all(&arch_data_dir)?;
+        println!("Created arch-data directory at {:?}", arch_data_dir);
+    }
+
+    // Copy template files if they don't exist
+    copy_template_files()?;
+
+    Ok(())
+}
+
+fn copy_template_files() -> Result<()> {
+    let config_dir = get_config_dir()?;
+    let templates = [
+        ("config.default.toml", "config.toml"),
+        ("init.sh", "init.sh"),
+        ("bootnode.sh", "bootnode.sh"),
+        ("arch-docker-compose.yml", "arch-docker-compose.yml"),
+        ("bitcoin-docker-compose.yml", "bitcoin-docker-compose.yml"),
+        ("btc-rpc-explorer.dockerfile", "btc-rpc-explorer.dockerfile"),
+        ("leader.sh", "leader.sh"),
+        ("validator.sh", "validator.sh"),
+    ];
+
+    for (template, dest) in templates.iter() {
+        let dest_path = config_dir.join(dest);
+        if !dest_path.exists() {
+            let template_content = match *template {
+                "config.default.toml" => include_str!("../templates/config.default.toml"),
+                "init.sh" => include_str!("../templates/init.sh"),
+                "bootnode.sh" => include_str!("../templates/bootnode.sh"),
+                "arch-docker-compose.yml" => include_str!("../templates/arch-docker-compose.yml"),
+                "bitcoin-docker-compose.yml" => include_str!("../templates/bitcoin-docker-compose.yml"),
+                "btc-rpc-explorer.dockerfile" => include_str!("../templates/btc-rpc-explorer.dockerfile"),
+                "leader.sh" => include_str!("../templates/leader.sh"),
+                "validator.sh" => include_str!("../templates/validator.sh"),
+                _ => return Err(anyhow!("Unknown template file: {}", template)),
+            };
+            fs::write(&dest_path, template_content)?;
+            println!("Created {} at {:?}", dest, dest_path);
         }
     }
 

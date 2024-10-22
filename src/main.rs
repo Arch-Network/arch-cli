@@ -10,6 +10,11 @@ async fn main() -> Result<()> {
 
     println!("{}", "Welcome to the Arch Network CLI".bold().green());
 
+    if let Err(e) = ensure_global_config() {
+        eprintln!("Failed to initialize global configuration: {}", e);
+        std::process::exit(1);
+    }
+
     // Parse command-line arguments
     let cli = Cli::parse();
 
