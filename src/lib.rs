@@ -2513,9 +2513,6 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         .get_string("project.directory")
         .context("Failed to get project directory from config")?;
 
-    // Get the CLI directory (where the template files are located)
-    let cli_dir = std::env::current_dir()?;
-
     // Define the demo directory in the project
     let demo_dir = PathBuf::from(&project_dir).join("demo");
 
@@ -3321,19 +3318,33 @@ pub async fn indexer_start(config: &Config) -> Result<()> {
     // Set environment variables for the selected network
     set_env_vars(config, &selected_network)?;
 
-    let mut command = ShellCommand::new("docker-compose");
-    command
+    // Get or create the directory for the indexer
+    let indexer_dir = get_indexer_dir()?;
+
+    // Clone or update the arch-indexer repository
+    clone_or_update_repo(&indexer_dir)?;
+
+    // Remember the current directory
+    let original_dir = env::current_dir()?;
+
+    // Change to the indexer directory
+    env::set_current_dir(&indexer_dir)
+        .context("Failed to change to indexer directory")?;
+
+    // Start the indexer using docker-compose
+    let output = ShellCommand::new("docker-compose")
         .arg("-f")
-        .arg("./arch-indexer/docker-compose.yml")
+        .arg("docker-compose.yml")
         .arg("up")
         .arg("--build")
-        .arg("-d");
-
-    command.env("ARCH_NODE_URL", arch_node_url);
-
-    let output = command
+        .arg("-d")
+        .env("ARCH_NODE_URL", arch_node_url)
         .output()
         .context("Failed to start the arch-indexer using Docker Compose")?;
+
+    // Change back to the original directory
+    env::set_current_dir(original_dir)
+        .context("Failed to change back to original directory")?;
 
     if !output.status.success() {
         return Err(anyhow!(
@@ -3343,6 +3354,47 @@ pub async fn indexer_start(config: &Config) -> Result<()> {
     }
 
     println!("{}", "arch-indexer started successfully!".bold().green());
+    Ok(())
+}
+
+fn get_indexer_dir() -> Result<PathBuf> {
+    let config_dir = get_config_dir()?;
+    let indexer_dir = config_dir.join("arch-indexer");
+    fs::create_dir_all(&indexer_dir)?;
+    Ok(indexer_dir)
+}
+
+fn clone_or_update_repo(indexer_dir: &Path) -> Result<()> {
+    if indexer_dir.join(".git").exists() {
+        // Repository already exists, update it
+        println!("  {} Updating arch-indexer repository...", "→".bold().blue());
+        let status = ShellCommand::new("git")
+            .current_dir(indexer_dir)
+            .args(&["pull", "origin", "main"])
+            .status()
+            .context("Failed to update arch-indexer repository")?;
+
+        if !status.success() {
+            return Err(anyhow!("Failed to update arch-indexer repository"));
+        }
+    } else {
+        // Clone the repository
+        println!("  {} Cloning arch-indexer repository...", "→".bold().blue());
+        let status = ShellCommand::new("git")
+            .args(&[
+                "clone",
+                "https://github.com/Arch-Network/arch-indexer.git",
+                indexer_dir.to_str().unwrap(),
+            ])
+            .status()
+            .context("Failed to clone arch-indexer repository")?;
+
+        if !status.success() {
+            return Err(anyhow!("Failed to clone arch-indexer repository"));
+        }
+    }
+
+    println!("  {} arch-indexer repository ready", "✓".bold().green());
     Ok(())
 }
 
@@ -3356,9 +3408,18 @@ pub async fn indexer_stop(config: &Config) -> Result<()> {
     // Set environment variables for the selected network
     set_env_vars(config, &selected_network)?;
 
+    let indexer_dir = get_indexer_dir()?;
+
+    // Remember the current directory
+    let original_dir = env::current_dir()?;
+
+    // Change to the indexer directory
+    env::set_current_dir(&indexer_dir)
+        .context("Failed to change to indexer directory")?;
+
     let output = ShellCommand::new("docker-compose")
         .arg("-f")
-        .arg("./arch-indexer/docker-compose.yml")
+        .arg("docker-compose.yml")
         .arg("down")
         .output()
         .context("Failed to stop the arch-indexer using Docker Compose")?;
@@ -3371,6 +3432,11 @@ pub async fn indexer_stop(config: &Config) -> Result<()> {
     }
 
     println!("{}", "arch-indexer stopped successfully!".bold().green());
+
+    // Change back to the original directory
+    env::set_current_dir(original_dir)
+        .context("Failed to change back to original directory")?;
+
     Ok(())
 }
 
