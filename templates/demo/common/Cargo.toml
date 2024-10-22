@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 #sdk = { path = "../../sdk" }
-arch_program = { path = "../../program" }
+arch_program = { path = "../program" }
 bitcoincore-rpc = "0.18.0"
 bitcoin = { version = "0.31.0", features = ["serde", "rand"] }
 rand_core = { version = "0.6.4", features = ["getrandom"] }

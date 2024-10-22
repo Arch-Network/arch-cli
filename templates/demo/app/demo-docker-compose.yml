@@ -23,5 +23,5 @@ services:
 
 networks:
   arch-network:
-    external: true
+    # external: true
     name: arch-cli_arch-network

@@ -137,6 +137,7 @@ services:
 
 networks:
   arch-network:
+    name: arch-network
     ipam:
       driver: default
       config:

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-arch_program = { path = "../../../program" }
+arch_program = { path = "./demo/program" }
 borsh = "0.9"
 
 [lib]
