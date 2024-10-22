@@ -49,49 +49,6 @@ Before using Arch-CLI, you need to set up a `config.toml` file. By default, the 
 
 If the configuration file is not found, a default configuration file will be created automatically using the `config.default.toml` template.
 
-You can also specify a custom configuration file location by setting the `ARCH_CLI_CONFIG` environment variable:
-
-```sh
-export ARCH_CLI_CONFIG=/path/to/your/config.toml
-```
-
-Here's an example configuration:
-
-```toml
-[network]
-type = "development"  # Options: development, testnet, mainnet
-
-[bitcoin]
-docker_compose_file = "./bitcoin-docker-compose.yml"
-network = "regtest"
-rpc_endpoint = "http://localhost:18443"
-rpc_port = "18443"
-rpc_user = "bitcoin"
-rpc_password = "password"
-rpc_wallet = "devwallet"
-
-[arch]
-docker_compose_file = "./arch-docker-compose.yml"
-leader_rpc_endpoint = "http://localhost:8080"
-network_mode = "development"
-rust_log = "info"
-rust_backtrace = "1"
-bootnode_ip = "127.0.0.1"
-leader_p2p_port = "9000"
-leader_rpc_port = "8080"
-validator1_p2p_port = "9001"
-validator1_rpc_port = "8081"
-validator2_p2p_port = "9002"
-validator2_rpc_port = "8082"
-bitcoin_rpc_endpoint = "http://localhost:18443"
-bitcoin_rpc_wallet = "devwallet"
-replica_count = "3"
-
-[program]
-key_path = "src/app/keys/program.json"
-```
-
-By following these steps, you ensure that your CLI can be run from any location and still correctly locate and load its configuration files on Windows, macOS, and Linux.
 
 ## Usage
 
@@ -105,10 +62,33 @@ arch-cli init
 
 This command sets up a new Arch Network project with the necessary folder structure, boilerplate code, and Docker configurations.
 
-### Manage the local development server (Docker)
+**You MUST run this command before using any other Arch-CLI commands.**
+
+### Run a Local Validator
+
+For quick development and testing, you can run a single local validator node using the following command:
 
 ```sh
-arch-cli server start [--num-validators <number>] [--debug]
+arch-cli validator start [--network <network>]
+```
+
+This command starts a lightweight local validator that serves as an RPC endpoint, allowing you to develop and test your Arch Network applications with minimal setup.
+
+- `--network <network>`: Specify the network to connect to (e.g., 'development', 'testnet', 'mainnet'). Default is 'development'.
+
+To stop the local validator, use:
+
+```sh
+arch-cli validator stop
+```
+
+Running a local validator is an easy way to get started with development, as it provides a single node that you can interact with for testing your applications. This is particularly useful when you don't need the full complexity of a multi-node setup provided by the `server start` command.
+
+
+### Manage the local development server (ADVANCED)
+
+```sh
+arch-cli server start
 arch-cli server stop
 arch-cli server status
 arch-cli server logs [--service <service_name>]
@@ -117,8 +97,6 @@ arch-cli server clean
 
 These commands start, stop, check the status of, view logs for, and clean up the development environment, including the Bitcoin regtest network and Arch Network nodes.
 
-- `--num-validators <number>`: Specify the number of validators to start (default is 2)
-- `--debug`: Start the server in debug mode
 - `--service <service_name>`: Specify which service to show logs for (e.g., 'bitcoin', 'arch', 'bootnode', 'leader', 'validator-1', 'validator-2')
 
 ### Deploy a program
@@ -196,21 +174,6 @@ Starts, stops, or cleans the arch-indexer using Docker Compose.
 
 - `--arch-node-url <url>`: Specify the URL of the Arch node to connect to
 
-### Manage the validator
-
-The validator is a lightweight server that only serves as an RPC for developers to get up and running quickly with the least amount of overhead.
-
-```sh
-arch-cli validator start [--network <network>] [--rpc-port <port>] [--p2p-port <port>]
-arch-cli validator stop
-```
-
-Starts a local validator with specified network settings or stops the local validator.
-
-- `--network <network>`: Specify the network to connect to (e.g., 'localnet', 'testnet', 'mainnet')
-- `--rpc-port <port>`: Specify the RPC port for the validator
-- `--p2p-port <port>`: Specify the P2P port for the validator
-
 ## Getting Started with the Demo App
 
 To quickly set up and run the demo application, follow these steps:
@@ -222,17 +185,10 @@ To quickly set up and run the demo application, follow these steps:
 
 2. Start the development server:
    ```
-   arch-cli server start
+   arch-cli validator start
    ```
 
-3. Deploy your application:
-   ```
-   arch-cli deploy
-   ```
-
-   Choose the demo application to deploy. When asked to create a key, do so.
-
-5. Start the demo application:
+3. Start the demo application:
    ```
    arch-cli demo start
    ```
@@ -241,7 +197,7 @@ By following these steps in order, you'll have a fully functional demo Arch Netw
 
 ## Project Structure
 
-After initialization, your project will have the following structure:
+After you run `arch-cli project create`, your project will have the following structure:
 
 ```
 my-arch-project/
