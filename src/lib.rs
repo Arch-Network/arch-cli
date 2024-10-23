@@ -27,6 +27,7 @@ use secp256k1::Keypair;
 use secp256k1::{Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use webbrowser::open_browser;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -2713,6 +2714,12 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         "{}",
         "Demo application started successfully!".bold().green()
     );
+
+    // Open the browser with the demo application
+    if let Err(e) = open_browser(webbrowser::Browser::Default, &format!("http://localhost:5173")) {
+        return Err(anyhow!("Failed to open the browser: {}", e));
+    }
+
     Ok(())
 }
 
