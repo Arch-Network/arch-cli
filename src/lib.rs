@@ -47,6 +47,7 @@ use include_dir::{include_dir, Dir};
 use common::wallet_manager::*;
 
 static PROJECT_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/demo");
+static SAMPLE_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/sample");
 
 #[derive(Deserialize)]
 pub struct ServiceConfig {
@@ -3665,69 +3666,56 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
         new_project_dir
     );
 
-    // Get the CLI directory (where the template files are located)
-    let cli_dir = std::env::current_dir()?;
-
     // Create the app folder
     let app_dir = new_project_dir.join("app");
     fs::create_dir_all(&app_dir)
         .context(format!("Failed to create app directory: {:?}", app_dir))?;
 
-    // // Copy the backend folder to the app directory
-    // let src_backend_dir = cli_dir.join("src/app/backend");
-    // let dest_backend_dir = app_dir.join("backend");
-    // copy_dir_all(&src_backend_dir, &dest_backend_dir)
-    //     .context("Failed to copy backend folder")?;
+    // Copy the sample project files to the new project directory
+    extract_project_files(&SAMPLE_DIR, &new_project_dir)?;
 
-    // println!("  {} Copied backend to {:?}", "✓".bold().green(), dest_backend_dir);
+    // Create Vite app using npm
+    println!("Creating Vite application...");
+    let create_vite_output = std::process::Command::new("npm")
+        .args(["create", "vite@latest", "frontend", "--", "--template", "react"])
+        .current_dir(&app_dir)
+        .output()
+        .context("Failed to create Vite application")?;
 
-    // // Copy the frontend folder to the app directory
-    // let src_frontend_dir = cli_dir.join("src/app/frontend");
-    // let dest_frontend_dir = app_dir.join("frontend");
-    // copy_dir_all(&src_frontend_dir, &dest_frontend_dir)
-    //     .context("Failed to copy frontend folder")?;
+    if !create_vite_output.status.success() {
+        return Err(anyhow!("Failed to create Vite application: {}",
+            String::from_utf8_lossy(&create_vite_output.stderr)));
+    }
+    println!("  {} Created Vite application", "✓".bold().green());
 
-    // println!("  {} Copied frontend to {:?}", "✓".bold().green(), dest_frontend_dir);
+    // Change to frontend directory and install base dependencies
+    let frontend_dir = app_dir.join("frontend");
+    let install_output = std::process::Command::new("npm")
+        .arg("install")
+        .current_dir(&frontend_dir)
+        .output()
+        .context("Failed to install base dependencies")?;
 
-    // Copy the hello world program folder to the new project directory
-    let src_program_dir = cli_dir.join("templates/program");
-    let dest_program_dir = app_dir.join("program");
-    copy_dir_all(&src_program_dir, &dest_program_dir).context("Failed to copy program folder")?;
+    if !install_output.status.success() {
+        return Err(anyhow!("Failed to install base dependencies: {}",
+            String::from_utf8_lossy(&install_output.stderr)));
+    }
+    println!("  {} Installed base dependencies", "✓".bold().green());
 
-    println!(
-        "  {} Copied program to {:?}",
-        "✓".bold().green(),
-        dest_program_dir
-    );
+    // Install additional packages
+    let additional_packages = ["sats-connect", "@saturnbtcio/arch-sdk"];
+    let install_additional_output = std::process::Command::new("npm")
+        .arg("install")
+        .args(&additional_packages)
+        .current_dir(&frontend_dir)
+        .output()
+        .context("Failed to install additional packages")?;
 
-    // Copy the src/common folder over to the project directory
-    let src_common_dir = cli_dir.join("src/common");
-    let dest_common_dir = new_project_dir.join("common");
-    copy_dir_all(&src_common_dir, &dest_common_dir).context("Failed to copy common folder")?;
-
-    println!(
-        "  {} Copied common libraries to {:?}",
-        "✓".bold().green(),
-        dest_common_dir
-    );
-
-    // Copy arch program over to the new project directory
-    let src_program_dir = cli_dir.join("program");
-    let dest_program_dir = new_project_dir.join("program");
-    copy_dir_all(&src_program_dir, &dest_program_dir).context("Failed to copy program folder")?;
-
-    println!(
-        "  {} Copied program to {:?}",
-        "✓".bold().green(),
-        dest_program_dir
-    );
-
-    // Create a basic README.md file
-    let readme_content = format!("# {}\n\nThis is a new Arch Network project.", project_name);
-    fs::write(new_project_dir.join("README.md"), readme_content)
-        .context("Failed to create README.md")?;
-
-    println!("  {} Created README.md", "✓".bold().green());
+    if !install_additional_output.status.success() {
+        return Err(anyhow!("Failed to install additional packages: {}",
+            String::from_utf8_lossy(&install_additional_output.stderr)));
+    }
+    println!("  {} Installed additional packages", "✓".bold().green());
 
     println!("{}", "New project created successfully!".bold().green());
     println!(
