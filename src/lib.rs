@@ -3717,12 +3717,21 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     }
     println!("  {} Installed additional packages", "✓".bold().green());
 
-    println!("{}", "New project created successfully!".bold().green());
+    println!("{}", "New project created successfully! 🎉".bold().green());
     println!(
         "  {} Project location: {:?}",
         "ℹ".bold().blue(),
         new_project_dir
     );
+
+    println!("\n{}", "Next steps:".bold().yellow());
+    println!(
+        "  1. Navigate to {} to find the Rust program template",
+        new_project_dir.join("app").join("program").display().to_string().yellow()
+    );
+    println!("  2. Edit the source code to implement your program logic");
+    println!("  3. When ready, run {} to compile and deploy your program to the network", "arch-cli deploy".cyan());
+    println!("\n{}", "Need help? Check out our documentation at https://arch-network.github.io/docs/".italic());
 
     Ok(())
 }
