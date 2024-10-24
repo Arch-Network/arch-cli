@@ -1,8 +1,8 @@
 // src/utils/cryptoHelpers.ts
 
 import * as secp256k1 from 'noble-secp256k1';
-import { Pubkey, Instruction, Message, AccountMeta, RuntimeTransaction } from 'arch-typescript-sdk';
-import { Buffer } from 'buffer';
+import { Instruction, Message, AccountMeta, RuntimeTransaction } from '@saturnbtcio/arch-sdk';
+import { PubkeyUtil } from '@saturnbtcio/arch-sdk';
 
 export interface Transaction {
   version: number;
@@ -32,53 +32,51 @@ export function generatePrivateKey(): string {
   return Array.from(privateKeyBytes).map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export function generatePubkeyFromPrivateKey(privateKeyHex: string): Pubkey {
-    const privateKeyBytes = hexToUint8Array(privateKeyHex);
-    if (privateKeyBytes.length !== 32) {
-      throw new Error(`Invalid private key length: ${privateKeyBytes.length} bytes`);
-    }
-    const publicKeyBytes = secp256k1.getPublicKey(privateKeyBytes);
-    const xOnlyPubKey = publicKeyBytes.slice(1, 33);
-    return new Pubkey(xOnlyPubKey);
+export function generatePubkeyFromPrivateKey(privateKeyHex: string): Uint8Array {
+  const privateKeyBytes = hexToUint8Array(privateKeyHex);
+  if (privateKeyBytes.length !== 32) {
+    throw new Error(`Invalid private key length: ${privateKeyBytes.length} bytes`);
   }
+  const publicKeyBytes = secp256k1.getPublicKey(privateKeyBytes);
+  return publicKeyBytes.slice(1, 33); // Return Uint8Array directly
+}
 
-  export async function createTransaction(
-    programId: string,
-    accountPubkey: string,
-    accountIsSigner: boolean,
-    accountIsWritable: boolean,
-    instructionData: string,
-    privateKey: string
-  ): Promise<RuntimeTransaction> {
-    const programIdPubkey = Pubkey.fromString(programId);
-    const accountPubkeyObj = Pubkey.fromString(accountPubkey);
-    const accountMeta: AccountMeta = {
-      pubkey: accountPubkeyObj,
-      is_signer: accountIsSigner,
-      is_writable: accountIsWritable
-    };
-    const instructionDataBytes = hexToUint8Array(instructionData);
-    const instruction: Instruction = {
-      program_id: programIdPubkey,
-      accounts: [accountMeta],
-      data: Array.from(instructionDataBytes)
-    };
-    const signerPubkey = generatePubkeyFromPrivateKey(privateKey);
-    const message: Message = {
-      signers: [signerPubkey],
-      instructions: [instruction]
-    };
-    
-    // // Implement proper signature generation
-    // const messageBytes = encodeMessage(message);
-    // const messageHash = await secp256k1.utils.sha256(messageBytes);
-    // const signature = await secp256k1.schnorr.sign(messageHash, hexToUint8Array(privateKey));
-    
-    const transaction: RuntimeTransaction = {
-      version: 0,
-      signatures: [],
-      // signatures: [Buffer.from(signature).toString('hex')],
-      message: message
-    };
-    return transaction;
-  }
+export async function createTransaction(
+programId: string,
+accountPubkey: string,
+accountIsSigner: boolean,
+accountIsWritable: boolean,
+instructionData: string,
+privateKey: string
+): Promise<RuntimeTransaction> {
+// Convert program ID and account pubkey to Uint8Array using SDK utility
+const programIdPubkey = PubkeyUtil.fromHex(programId);
+const accountPubkeyObj = PubkeyUtil.fromHex(accountPubkey);
+
+const accountMeta: AccountMeta = {
+  pubkey: accountPubkeyObj,
+  is_signer: accountIsSigner,
+  is_writable: accountIsWritable
+};
+
+const instruction: Instruction = {
+  program_id: programIdPubkey,
+  accounts: [accountMeta],
+  data: hexToUint8Array(instructionData)
+};
+
+const signerPubkey = generatePubkeyFromPrivateKey(privateKey);
+
+const message: Message = {
+  signers: [signerPubkey],
+  instructions: [instruction]
+};
+
+const transaction: RuntimeTransaction = {
+  version: 0,
+  signatures: [], // Will be Uint8Array[]
+  message: message
+};
+
+return transaction;
+}

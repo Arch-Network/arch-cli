@@ -227,11 +227,11 @@ pub enum BitcoinCommands {
 #[derive(Subcommand)]
 pub enum DemoCommands {
     /// Start the demo application
-    #[clap(long_about = "Starts the demo application, including both frontend and backend services.")]
+    #[clap(long_about = "Starts the demo application.")]
     Start,
 
     /// Stop the demo application
-    #[clap(long_about = "Stops the demo application, including both frontend and backend services.")]
+    #[clap(long_about = "Stops the demo application.")]
     Stop,
 }
 
@@ -1837,7 +1837,6 @@ fn set_env_vars(config: &Config, network: &str) -> Result<()> {
         ("ELECTRS_ELECTRUM_PORT", "electrs.electrum_port"),
         ("BTC_RPC_EXPLORER_PORT", "btc_rpc_explorer.port"),
         ("DEMO_FRONTEND_PORT", "demo.frontend_port"),
-        ("DEMO_BACKEND_PORT", "demo.backend_port"),
         ("INDEXER_PORT", "indexer.port"),
         ("ORD_PORT", "ord.port"),
         ("NETWORK_MODE", "arch.network_mode"),
@@ -2629,7 +2628,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     // Write the graffiti_wall_state public key into the app/frontend/.env file
     let env_file = PathBuf::from(&demo_dir).join("app/frontend/.env");
     let mut env_content = fs::read_to_string(&env_file).context("Failed to read .env file")?;
-    env_content = env_content.replace("VITE_WALL_STATE_PUBKEY=", &format!("VITE_WALL_STATE_PUBKEY={}", graffiti_wall_state_pubkey));
+    env_content = env_content.replace("VITE_WALL_ACCOUNT_PUBKEY=", &format!("VITE_WALL_ACCOUNT_PUBKEY={}", graffiti_wall_state_pubkey));
     fs::write(&env_file, env_content).context("Failed to write to .env file")?;
 
     // Stop existing demo containers
@@ -3023,7 +3022,7 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     println!(
         "  {} Public Key: {}",
         "🔑".bold().yellow(),
-        hex::encode(public_key.serialize()).bright_green()
+        hex::encode(caller_pubkey.serialize()).bright_green()
     );
 
     // Close the Bitcoin wallet
