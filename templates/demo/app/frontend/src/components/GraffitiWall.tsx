@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { RpcConnection, Pubkey, AccountUtil, InstructionUtil, MessageUtil, PubkeyUtil } from '@saturnbtcio/arch-sdk';
+import { RpcConnection, MessageUtil, PubkeyUtil, Instruction, Message } from '@saturnbtcio/arch-sdk';
 import { Copy, Check, AlertCircle } from 'lucide-react';
 import { Buffer } from 'buffer';
 import { useWallet } from '../hooks/useWallet';
 
-const NETWORK = (import.meta as any).env.VITE_NETWORK;
-const client = new RpcConnection((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
-const PROGRAM_PUBKEY = (import.meta as any).env.VITE_PROGRAM_PUBKEY;
-const WALL_PRIVATE_KEY = (import.meta as any).env.VITE_WALL_PRIVATE_KEY;
-const WALL_ACCOUNT_PUBKEY = (import.meta as any).env.VITE_WALL_ACCOUNT_PUBKEY;
-
+// Configure global Buffer for browser environment
 window.Buffer = Buffer;
 
+// Environment variables for configuration
+const client = new RpcConnection((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
+const PROGRAM_PUBKEY = (import.meta as any).env.VITE_PROGRAM_PUBKEY;
+const WALL_ACCOUNT_PUBKEY = (import.meta as any).env.VITE_WALL_ACCOUNT_PUBKEY;
+
+// Data structure for wall messages
 class GraffitiMessage {
   constructor(
     public timestamp: number,
@@ -21,42 +22,48 @@ class GraffitiMessage {
 }
 
 const GraffitiWall: React.FC = () => {
+  // State management
   const wallet = useWallet();
   const [error, setError] = useState<string | null>(null);
   const [isAccountCreated, setIsAccountCreated] = useState(false);
-  const [message, setMessage] = useState('');
+  const [isProgramDeployed, setIsProgramDeployed] = useState(false);
   const [wallData, setWallData] = useState<GraffitiMessage[]>([]);
-  const [isFormValid, setIsFormValid] = useState(false);
+  
+  // Form state
+  const [message, setMessage] = useState('');
   const [name, setName] = useState('');
-  const [copied, setCopied] = useState(false);  
+  const [isFormValid, setIsFormValid] = useState(false);
+  const [copied, setCopied] = useState(false);
 
+  // Convert account pubkey once
   const accountPubkey = PubkeyUtil.fromHex(WALL_ACCOUNT_PUBKEY);
 
+  // Utility Functions
   const copyToClipboard = () => {
     navigator.clipboard.writeText(`arch-cli account create --name <unique_name> --program-id ${PROGRAM_PUBKEY}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Check if the program is deployed on the network
   const checkProgramDeployed = useCallback(async () => {
     try {
       const pubkeyBytes = PubkeyUtil.fromHex(PROGRAM_PUBKEY);
-      console.log(`Checking program at ${PROGRAM_PUBKEY}`);
       const accountInfo = await client.readAccountInfo(pubkeyBytes);
-      console.log(accountInfo);
       if (accountInfo) {
         setIsProgramDeployed(true);
         setError(null);
       }
     } catch (error) {
       console.error('Error checking program:', error);
-      setError('The Arch Graffiti program has not been deployed to the network yet. They need to run `arch-cli deploy` for this dapp.');
+      setError('The Arch Graffiti program has not been deployed to the network yet. Please run `arch-cli deploy`.');
     }
   }, []);
 
+  // Check if the wall account exists
   const checkAccountCreated = useCallback(async () => {
     try {
-      const pubkeyBytes = PubkeyUtil.fromHex(STATE_ACCOUNT_PUBKEY);
+      const pubkeyBytes = PubkeyUtil.fromHex(WALL_ACCOUNT_PUBKEY);
       const accountInfo = await client.readAccountInfo(pubkeyBytes);
       if (accountInfo) {
         setIsAccountCreated(true);
@@ -65,25 +72,51 @@ const GraffitiWall: React.FC = () => {
     } catch (error) {
       console.error('Error checking account:', error);
       setIsAccountCreated(false);
-      setError('The Arch Graffiti program has not been deployed to the network yet. They need to run `arch-cli deploy` for this dapp.');
+      setError('The wall account has not been created yet. Please run the account creation command.');
     }
   }, []);
 
+  // Fetch and parse wall messages
   const fetchWallData = useCallback(async () => {
     try {
       const userAccount = await client.readAccountInfo(accountPubkey);
-      // ... rest of fetchWallData implementation ...
+      if (!userAccount) {
+        setError('Account not found.');
+        return;
+      }
+
+      // Parse binary data into GraffitiMessage array
+      const messages: GraffitiMessage[] = [];
+      const dataView = new DataView(userAccount.data.buffer);
+      let offset = 0;
+      
+      while (offset < userAccount.data.length) {
+        // Format: [timestamp(4), nameLength(1), name(n), messageLength(1), message(n)]
+        const timestamp = dataView.getUint32(offset); offset += 4;
+        const nameLength = dataView.getUint8(offset); offset += 1;
+        const name = new TextDecoder().decode(userAccount.data.slice(offset, offset + nameLength));
+        offset += nameLength;
+        const messageLength = dataView.getUint8(offset); offset += 1;
+        const message = new TextDecoder().decode(userAccount.data.slice(offset, offset + messageLength));
+        offset += messageLength;
+        
+        messages.push(new GraffitiMessage(timestamp, name, message));
+      }
+      
+      setWallData(messages);
     } catch (error) {
       console.error('Error fetching wall data:', error);
       setError(`Failed to fetch wall data: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [accountPubkey]); 
+  }, []); 
 
+  // Initialize component
   useEffect(() => {
     checkProgramDeployed();
     checkAccountCreated();
-  }, [checkAccountCreated]);
+  }, [checkAccountCreated, checkProgramDeployed]);
 
+  // Set up polling for wall data
   useEffect(() => {
     if (!isAccountCreated) return;
 
@@ -92,48 +125,74 @@ const GraffitiWall: React.FC = () => {
     return () => clearInterval(interval);
   }, [isAccountCreated, fetchWallData]);
 
+  // Message handlers
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newName = e.target.value;
+    const bytes = new TextEncoder().encode(newName);
+
+    if (bytes.length <= 16) {
+      setName(newName);
+      setIsFormValid(newName.trim() !== '' && message.trim() !== '');
+    }
+  };
+
+  const handleMessageChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newMessage = e.target.value;
+    const bytes = new TextEncoder().encode(newMessage);
+
+    if (bytes.length <= 64) {
+      setMessage(newMessage);
+      setIsFormValid(name.trim() !== '' && newMessage.trim() !== '');
+    }
+  };
+
   const handleAddToWall = async () => {
     if (!message.trim() || !name.trim() || !isAccountCreated || !wallet.isConnected) {
       setError("Name and message are required, account must be created, and wallet must be connected.");
       return;
     }
-  
+
     try {
-      const messageToSign = JSON.stringify({ name, message, timestamp: Date.now() });
-      const signature = await wallet.signMessage(messageToSign);
-  
-      const instruction = {
-        programId: PubkeyUtil.fromHex(PROGRAM_PUBKEY),
+      const data = serializeGraffitiData(name, message);
+    
+      const instruction: Instruction = {
+        program_id: PubkeyUtil.fromHex(PROGRAM_PUBKEY),
         accounts: [
-          AccountUtil.serialize({ 
-            pubkey: wallet.publicKey!, 
+          { 
+            pubkey: PubkeyUtil.fromHex(wallet.publicKey!), 
             is_signer: true, 
-            is_writable: true 
-          }),
-          AccountUtil.serialize({ 
+            is_writable: false 
+          },
+          { 
             pubkey: accountPubkey, 
             is_signer: false, 
             is_writable: true 
-          }),
+          },
         ],
-        data: InstructionUtil.serialize({ 
-          name, 
-          message,
-          signature 
-        }),
+        data: new Uint8Array(data),
       };
-  
-      const messageObj = {
-        signers: [wallet.publicKey!],
+
+      const messageObj : Message = {
+        signers: [PubkeyUtil.fromHex(wallet.publicKey!)],
         instructions: [instruction],
       };
-  
+
+      console.log(`Pubkey: ${PubkeyUtil.fromHex(wallet.publicKey!)}`);
+      const messageBytes = MessageUtil.serialize(messageObj);
+      console.log(`Message hash: ${MessageUtil.hash(messageObj).toString()}`);
+      const signature = await wallet.signMessage(Buffer.from(MessageUtil.hash(messageObj)).toString('hex'));
+      console.log(`Signature: ${signature}`);
+
+      // Take last 64 bytes of base64 decoded signature
+      const signatureBytes = new Uint8Array(Buffer.from(signature, 'base64')).slice(2);
+      console.log(`Signature bytes: ${signatureBytes}`);
+
       const result = await client.sendTransaction({
         version: 0,
-        signatures: [signature],
+        signatures: [signatureBytes],
         message: messageObj,
       });
-  
+
       if (result) {
         await fetchWallData();
         setMessage('');
@@ -145,26 +204,31 @@ const GraffitiWall: React.FC = () => {
     }
   };
 
-  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newName = e.target.value;
-    const encoder = new TextEncoder();
-    const bytes = encoder.encode(newName);
-
-    if (bytes.length <= 16) {
-      setName(newName);
-      setIsFormValid(newName.trim() !== '' && message.trim() !== '');
-    }
-  };
-
-  const handleMessageChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newMessage = e.target.value;
-    const encoder = new TextEncoder();
-    const bytes = encoder.encode(newMessage);
-
-    if (bytes.length <= 64) {
-      setMessage(newMessage);
-      setIsFormValid(newMessage.trim() !== '');
-    }
+  const serializeGraffitiData = (name: string, message: string): number[] => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const nameBytes = new TextEncoder().encode(name);
+    const messageBytes = new TextEncoder().encode(message);
+    
+    // Format: [timestamp(4), nameLength(1), name(n), messageLength(1), message(n)]
+    const data = new Uint8Array(4 + 1 + nameBytes.length + 1 + messageBytes.length);
+    let offset = 0;
+  
+    // Write timestamp
+    new DataView(data.buffer).setUint32(offset, timestamp, true);
+    offset += 4;
+  
+    // Write name length and name
+    data[offset] = nameBytes.length;
+    offset += 1;
+    data.set(nameBytes, offset);
+    offset += nameBytes.length;
+  
+    // Write message length and message
+    data[offset] = messageBytes.length;
+    offset += 1;
+    data.set(messageBytes, offset);
+  
+    return Array.from(data);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -181,21 +245,23 @@ const GraffitiWall: React.FC = () => {
   <div className="bg-gradient-to-br from-arch-gray to-gray-900 p-8 rounded-lg shadow-lg max-w-4xl mx-auto">
       <h2 className="text-3xl font-bold mb-6 text-center text-arch-white">Graffiti Wall</h2>
       
-      {!wallet.isConnected ? (
-        <button
-          onClick={wallet.connect}
-          className="w-full mb-4 bg-arch-orange text-arch-black font-bold py-2 px-4 rounded-lg hover:bg-arch-white transition duration-300"
-        >
-          Connect Wallet
-        </button>
-      ) : (
-        <button
-          onClick={wallet.disconnect}
-          className="w-full mb-4 bg-gray-600 text-arch-white font-bold py-2 px-4 rounded-lg hover:bg-gray-700 transition duration-300"
-        >
-          Disconnect Wallet
-        </button>
-      )}
+      
+        {!wallet.isConnected ? (
+          <button
+            onClick={wallet.connect}
+            className="w-full mb-4 bg-arch-orange text-arch-black font-bold py-2 px-4 rounded-lg hover:bg-arch-white transition duration-300"
+          >
+            Connect Wallet
+          </button>
+        ) : (
+          <button
+            onClick={wallet.disconnect}
+            className="w-full mb-4 bg-gray-600 text-arch-white font-bold py-2 px-4 rounded-lg hover:bg-gray-700 transition duration-300"
+          >
+            Disconnect Wallet
+          </button>
+        )}
+      
 
       {!isAccountCreated ? (
         <div className="bg-arch-black p-6 rounded-lg">
@@ -204,7 +270,7 @@ const GraffitiWall: React.FC = () => {
           <div className="relative mb-4">
             <pre className="bg-gray-800 p-4 rounded-lg text-arch-white overflow-x-auto">
               <code>
-                arch-cli account create --name &lbsp;unique_name&rbsp; --program-id ${PROGRAM_PUBKEY}
+                arch-cli account create --name &lt;unique_name&gt; --program-id {PROGRAM_PUBKEY}
               </code>
             </pre>
             <button

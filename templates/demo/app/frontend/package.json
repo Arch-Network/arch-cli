@@ -12,11 +12,14 @@
   },
   "dependencies": {
     "@bitcoin-design/bitcoin-icons-react": "^0.1.10",
-    "@saturnbtcio/arch-sdk": "^0.0.2",
+    "@saturnbtcio/arch-sdk": "^0.0.5",
     "axios": "^1.7.7",
+    "bip32": "^5.0.0-rc.0",
+    "bip322-js": "^2.0.0",
     "borsh": "^2.0.0",
     "bs58": "^6.0.0",
     "buffer": "^6.0.3",
+    "crypto-js": "^4.2.0",
     "framer-motion": "^11.5.3",
     "lucide-react": "^0.438.0",
     "noble-secp256k1": "^1.2.14",
@@ -28,6 +31,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
+    "@types/crypto-js": "^4.2.2",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@types/react-router-dom": "^5.3.3",
