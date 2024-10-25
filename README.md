@@ -39,6 +39,29 @@ cd arch-cli
 cargo install --path .
 ```
 
+## Getting Started with the Demo App
+
+To quickly set up and run the demo application, follow these steps:
+
+1. Initialize the project:
+   ```
+   arch-cli init
+   ```
+
+2. Start the development server:
+   ```
+   arch-cli validator start
+   ```
+
+3. Start the demo application:
+   ```
+   arch-cli demo start
+   ```
+
+By following these steps in order, you'll have a fully functional demo Arch Network application running locally.
+
+
+
 ## Configuration
 
 Before using Arch-CLI, you need to set up a `config.toml` file. By default, the CLI will look for this file in the following locations:
@@ -174,26 +197,7 @@ Starts, stops, or cleans the arch-indexer using Docker Compose.
 
 - `--arch-node-url <url>`: Specify the URL of the Arch node to connect to
 
-## Getting Started with the Demo App
 
-To quickly set up and run the demo application, follow these steps:
-
-1. Initialize the project:
-   ```
-   arch-cli init
-   ```
-
-2. Start the development server:
-   ```
-   arch-cli validator start
-   ```
-
-3. Start the demo application:
-   ```
-   arch-cli demo start
-   ```
-
-By following these steps in order, you'll have a fully functional demo Arch Network application running locally.
 
 ## Project Structure
 
