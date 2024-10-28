@@ -108,7 +108,9 @@ arch-cli validator stop
 Running a local validator is an easy way to get started with development, as it provides a single node that you can interact with for testing your applications. This is particularly useful when you don't need the full complexity of a multi-node setup provided by the `server start` command.
 
 
-### Manage the local development server (ADVANCED)
+### Manage a self-contained Arch Network locally (ADVANCED)
+
+This set of commands allow developers to create a fully self-contained Arch Network environment that does not rely on third-party hosted servers, meaning you will have your own local leader node, several validator nodes, and the regtest Bitcoin infrastructure all hosted on Docker. Managing your own full network is not necessary for developing Arch Network programs or decentralized applications on top of those programs. You should avoid deploying these containers unless you are working on core Arch Network components or would like to understand better how Arch validators communicated and operate with each other.
 
 ```sh
 arch-cli server start
