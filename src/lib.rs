@@ -21,7 +21,7 @@ use config::{Config, Environment, File};
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, Select};
 use dirs::home_dir;
-use bip322::{derive_path, sign_message_bip322};
+use bip322::{sign_message_bip322};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::rngs::OsRng;
 use secp256k1::Keypair;
@@ -979,6 +979,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         &program_pubkey,
         tx_info,
         deploy_folder.to_str().map(String::from),
+        config,
     )
     .await?;
 
@@ -2003,6 +2004,7 @@ async fn deploy_program_with_tx_info(
     program_pubkey: &arch_program::pubkey::Pubkey,
     tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>,
     deploy_folder: Option<String>,
+    config: &Config,
 ) -> Result<()> {
     if let Some(info) = tx_info {
         deploy_program(
@@ -2011,6 +2013,7 @@ async fn deploy_program_with_tx_info(
             &info.info.txid.to_string(),
             0,
             deploy_folder.map(|folder| format!("{}/app/program", folder)),
+            config,
         )
         .await?;
         println!("  {} Program deployed successfully", "✓".bold().green());
@@ -2167,7 +2170,7 @@ async fn ensure_wallet_balance(client: &Client) -> Result<()> {
             "→".blue()
         );
         let new_address = client.get_new_address(None, None)?;
-        let checked_address = new_address.require_network(Network::Regtest)?;
+        let checked_address = new_address.require_network(arch_program::bitcoin::Network::Regtest)?;
         client.generate_to_address(101, &checked_address)?;
         println!("  {} Initial blocks generated", "✓".green());
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -2273,12 +2276,13 @@ async fn deploy_program(
     txid: &str,
     vout: u32,
     deploy_folder: Option<String>,
+    config: &Config,
 ) -> Result<()> {
     // Create a new account for the program
     create_program_account(program_keypair, program_pubkey, txid, vout).await?;
 
     // Deploy the program transactions
-    deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder).await?;
+    deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder, config).await?;
 
     // Make program executable
     tokio::task::block_in_place( move || {
@@ -2328,6 +2332,7 @@ async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config, progra
         &program_keypair,
         &program_pubkey,
         Some(program_dir.to_str().unwrap().to_string()),
+        config,
     );
 
     deploy_result.await?;
@@ -2364,8 +2369,13 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
     Ok(())
 }
 
-pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str) -> Result<()> {
+pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, config: &Config) -> Result<()> {
     let program_pubkey = Pubkey::from_slice(&program_keypair.public_key().serialize()[1..33]);
+
+    let network = config.get_string("bitcoin.network")
+        .unwrap_or_else(|_| "regtest".to_string());
+    let bitcoin_network =
+        Network::from_str(&network).context("Invalid Bitcoin network specified in config")?;
 
     let elf = fs::read(elf_path).expect("elf path should be available");
 
@@ -2390,13 +2400,12 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str) -> Re
                 )],
             };
 
-            let digest_slice =
-                hex::decode(message.hash()).expect("hashed message should be decodable");
+            let digest_slice =message.hash();
 
             RuntimeTransaction {
                 version: 0,
                 signatures: vec![common::signature::Signature(
-                    sign_message_bip322(program_keypair, &digest_slice).to_vec(),
+                    sign_message_bip322(program_keypair, &digest_slice, BITCOIN_NETWORK).to_vec(),
                 )],
                 message,
             }
@@ -2444,6 +2453,7 @@ async fn deploy_program_txs_with_folder(
     program_keypair: &Keypair,
     _program_pubkey: &Pubkey,
     deploy_folder: Option<String>,
+    config: &Config,
 ) -> Result<()> {
     println!("    Deploying program transactions...");
 
@@ -2465,7 +2475,7 @@ async fn deploy_program_txs_with_folder(
         so_file.ok_or_else(|| anyhow!("No .so file found in the specified folder"))?
     };
 
-    if let Err(e) = deploy_program_txs(program_keypair, &so_file).await {
+    if let Err(e) = deploy_program_txs(program_keypair, &so_file, config).await {
         println!("Failed to deploy program transactions: {}", e);
         return Err(e);
     }
