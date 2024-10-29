@@ -38,14 +38,17 @@ pub fn process_instruction(
     msg!("Graffiti Wall: Processing instruction");
 
     let account_iter = &mut accounts.iter();
-    let account = next_account_info(account_iter)?;
-
-    // Print out account owner and program id
-    msg!("Graffiti Wall: Account owner: {:?}", account.owner);
-    msg!("Graffiti Wall: Program id: {:?}", program_id);
     
-    if account.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
+    // Get the signer's account
+    let signer_account = next_account_info(account_iter)?;
+    if !signer_account.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    // Get the wall state account
+    let wall_account = next_account_info(account_iter)?;
+    if !wall_account.is_writable {
+        return Err(ProgramError::InvalidAccountData);
     }
 
     let params = GraffitiWallParams::try_from_slice(instruction_data)
@@ -62,8 +65,8 @@ pub fn process_instruction(
 
     msg!("Graffiti Wall: New message: {:?}", new_message);
 
-    let mut wall = if account.data_len() > 0 {
-        GraffitiWall::try_from_slice(&account.data.borrow())
+    let mut wall = if wall_account.data_len() > 0 {
+        GraffitiWall::try_from_slice(&wall_account.data.borrow())
             .map_err(|_| ProgramError::InvalidAccountData)?
     } else {
         GraffitiWall { messages: vec![] }
@@ -80,11 +83,11 @@ pub fn process_instruction(
     }
 
     let required_len = serialized_data.len();
-    if account.data_len() < required_len {
-        account.realloc(required_len, false)?;
+    if wall_account.data_len() < required_len {
+        wall_account.realloc(required_len, false)?;
     }
 
-    account.data.borrow_mut()[..required_len].copy_from_slice(&serialized_data);
+    wall_account.data.borrow_mut()[..required_len].copy_from_slice(&serialized_data);
 
     msg!("Graffiti Wall: Message added successfully");
     Ok(())
