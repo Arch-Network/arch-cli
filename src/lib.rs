@@ -21,6 +21,7 @@ use config::{Config, Environment, File};
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, Select};
 use dirs::home_dir;
+use bip322::{derive_path, sign_message_bip322};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::rngs::OsRng;
 use secp256k1::Keypair;
