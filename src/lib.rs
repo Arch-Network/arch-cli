@@ -408,6 +408,12 @@ pub async fn init() -> Result<()> {
         // Extract project files from binary
         extract_project_files(&PROJECT_DIR, &demo_dir)?;
 
+        // Rename the .env.example file to .env
+        let env_example_file = PathBuf::from(&demo_dir).join("app/frontend/.env.example");
+        if env_example_file.exists() {
+            fs::rename(&env_example_file, PathBuf::from(&demo_dir).join("app/frontend/.env"))?;
+        }
+
         // Change to the demo directory
         std::env::set_current_dir(&demo_dir)?;
 
@@ -2547,9 +2553,9 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         extract_project_files(&PROJECT_DIR, &demo_dir)?;
 
         // Rename the .env.example file to .env
-        let env_example_file = PathBuf::from(&demo_dir).join(".env.example");
+        let env_example_file = PathBuf::from(&demo_dir).join("app/frontend/.env.example");
         if env_example_file.exists() {
-            fs::rename(&env_example_file, PathBuf::from(&demo_dir).join(".env"))?;
+            fs::rename(&env_example_file, PathBuf::from(&demo_dir).join("app/frontend/.env"))?;
         }
 
         println!(
