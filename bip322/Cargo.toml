@@ -1,0 +1,13 @@
+[package]
+name = "bip322"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22.1"
+bitcoin = "0.32.3"
+hex = { version = "0.4.3", default-features = false }
+snafu = "0.8.5"
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
