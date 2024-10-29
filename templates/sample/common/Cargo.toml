@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 #sdk = { path = "../../sdk" }
 arch_program = { path = "../program" }
-bitcoincore-rpc = "0.18.0"
-bitcoin = { version = "0.31.0", features = ["serde", "rand"] }
+bitcoincore-rpc = "0.19.0"
+bitcoin = { version = "0.32.4", features = ["serde", "rand"] }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
@@ -25,7 +25,7 @@ futures = "0.3.30"
 colored = "2.0"
 config = "0.13"
 indicatif = "0.17.8"
-bip322 = "0.0.7"
+bip322 = { path = "../bip322" }
 tokio = { version = "1.32.0", features = ["full"] }
 log = "0.4.22"
 proptest = "1.1.2"

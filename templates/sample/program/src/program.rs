@@ -79,7 +79,7 @@ pub fn set_transaction_to_sign(
                 if let Some(account) = accounts.iter().find(|account| *account.key == input.signer)
                 {
                     account.set_utxo(&UtxoMeta::from(
-                        hex::decode(tx.txid().to_string())
+                        hex::decode(tx.compute_txid().to_string())
                             .expect("failed to decode_hex")
                             .try_into()
                             .expect("failed to try_into"),
