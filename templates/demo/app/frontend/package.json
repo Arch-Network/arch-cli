@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@bitcoin-design/bitcoin-icons-react": "^0.1.10",
+    "@project-serum/borsh": "^0.2.5",
     "@saturnbtcio/arch-sdk": "^0.0.5",
     "axios": "^1.7.7",
     "bip32": "^5.0.0-rc.0",

@@ -3,6 +3,7 @@ import { RpcConnection, MessageUtil, PubkeyUtil, Instruction, Message } from '@s
 import { Copy, Check, AlertCircle } from 'lucide-react';
 import { Buffer } from 'buffer';
 import { useWallet } from '../hooks/useWallet';
+import * as borsh from 'borsh';
 
 // Configure global Buffer for browser environment
 window.Buffer = Buffer;
@@ -12,16 +13,48 @@ const client = new RpcConnection((import.meta as any).env.VITE_ARCH_NODE_URL || 
 const PROGRAM_PUBKEY = (import.meta as any).env.VITE_PROGRAM_PUBKEY;
 const WALL_ACCOUNT_PUBKEY = (import.meta as any).env.VITE_WALL_ACCOUNT_PUBKEY;
 
-// Data structure for wall messages
 class GraffitiMessage {
   constructor(
     public timestamp: number,
     public name: string,
     public message: string
   ) {}
+
+  static schema = new Map([
+    [
+      GraffitiMessage,
+      {
+        kind: 'struct',
+        fields: [
+          ['timestamp', 'i64'],
+          ['name', ['u8', 16]],
+          ['message', ['u8', 64]]
+        ]
+      }
+    ]
+  ]);
 }
 
-const GraffitiWall: React.FC = () => {
+// Define the schema for the wall containing messages
+class GraffitiWall {
+  constructor(public messages: GraffitiMessage[]) {}
+
+  static schema = new Map([
+    [
+      GraffitiWall,
+      {
+        kind: 'struct',
+        fields: [
+          ['messages', [GraffitiMessage]]
+        ]
+      }
+    ]
+  ]);
+}
+
+
+
+const GraffitiWallComponent: React.FC = () => {
   // State management
   const wallet = useWallet();
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +70,20 @@ const GraffitiWall: React.FC = () => {
 
   // Convert account pubkey once
   const accountPubkey = PubkeyUtil.fromHex(WALL_ACCOUNT_PUBKEY);
+
+  const schema = {
+    struct: {
+      messages: {
+        seq: {
+          struct: {
+            timestamp: 'i64',
+            name: { array: { type: 'u8', len: 16 } },
+            message: { array: { type: 'u8', len: 64 } }
+          }
+        }
+      }
+    }
+  };
 
   // Utility Functions
   const copyToClipboard = () => {
@@ -79,36 +126,54 @@ const GraffitiWall: React.FC = () => {
   // Fetch and parse wall messages
   const fetchWallData = useCallback(async () => {
     try {
-      const userAccount = await client.readAccountInfo(accountPubkey);
-      if (!userAccount) {
-        setError('Account not found.');
-        return;
-      }
-
-      // Parse binary data into GraffitiMessage array
-      const messages: GraffitiMessage[] = [];
-      const dataView = new DataView(userAccount.data.buffer);
-      let offset = 0;
-      
-      while (offset < userAccount.data.length) {
-        // Format: [timestamp(4), nameLength(1), name(n), messageLength(1), message(n)]
-        const timestamp = dataView.getUint32(offset); offset += 4;
-        const nameLength = dataView.getUint8(offset); offset += 1;
-        const name = new TextDecoder().decode(userAccount.data.slice(offset, offset + nameLength));
-        offset += nameLength;
-        const messageLength = dataView.getUint8(offset); offset += 1;
-        const message = new TextDecoder().decode(userAccount.data.slice(offset, offset + messageLength));
-        offset += messageLength;
+        const userAccount = await client.readAccountInfo(accountPubkey);
+        if (!userAccount) {
+            setError('Account not found.');
+            return;
+        }
+        const wallData = userAccount.data;
         
-        messages.push(new GraffitiMessage(timestamp, name, message));
-      }
-      
-      setWallData(messages);
+        console.log(`Wall data: ${wallData}`);
+        
+        // Deserialize the wall data using borsh
+        // Read data directly from the buffer
+        const messages = [];
+        let offset = 0;
+
+        // First 4 bytes are the array length
+        const messageCount = new DataView(wallData.buffer).getUint32(offset, true);
+        offset += 4;
+
+        for (let i = 0; i < messageCount; i++) {
+            // Read timestamp (8 bytes)
+            const timestamp = new DataView(wallData.buffer).getBigInt64(offset, true);
+            offset += 8;
+
+            // Read name (16 bytes)
+            const nameBytes = wallData.slice(offset, offset + 16);
+            const name = new TextDecoder().decode(nameBytes.filter(x => x !== 0));
+            offset += 16;
+
+            // Read message (64 bytes)
+            const messageBytes = wallData.slice(offset, offset + 64);
+            const message = new TextDecoder().decode(messageBytes.filter(x => x !== 0));
+            offset += 64;
+
+            messages.push(new GraffitiMessage(
+                Number(timestamp),
+                name,
+                message
+            ));
+        }
+
+        messages.sort((a, b) => b.timestamp - a.timestamp);
+
+        setWallData(messages);
     } catch (error) {
-      console.error('Error fetching wall data:', error);
-      setError(`Failed to fetch wall data: ${error instanceof Error ? error.message : String(error)}`);
+        console.error('Error fetching wall data:', error);
+        setError(`Failed to fetch wall data: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, []); 
+}, []);
 
   // Initialize component
   useEffect(() => {
@@ -205,31 +270,34 @@ const GraffitiWall: React.FC = () => {
   };
 
   const serializeGraffitiData = (name: string, message: string): number[] => {
-    const timestamp = Math.floor(Date.now() / 1000);
+    // Create fixed-size arrays
+    const nameArray = new Uint8Array(16).fill(0);
+    const messageArray = new Uint8Array(64).fill(0);
+    
+    // Convert strings to bytes
     const nameBytes = new TextEncoder().encode(name);
     const messageBytes = new TextEncoder().encode(message);
     
-    // Format: [timestamp(4), nameLength(1), name(n), messageLength(1), message(n)]
-    const data = new Uint8Array(4 + 1 + nameBytes.length + 1 + messageBytes.length);
-    let offset = 0;
-  
-    // Write timestamp
-    new DataView(data.buffer).setUint32(offset, timestamp, true);
-    offset += 4;
-  
-    // Write name length and name
-    data[offset] = nameBytes.length;
-    offset += 1;
-    data.set(nameBytes, offset);
-    offset += nameBytes.length;
-  
-    // Write message length and message
-    data[offset] = messageBytes.length;
-    offset += 1;
-    data.set(messageBytes, offset);
-  
-    return Array.from(data);
-  };
+    // Copy bytes into fixed-size arrays (will truncate if too long)
+    nameArray.set(nameBytes.slice(0, 16));
+    messageArray.set(messageBytes.slice(0, 64));
+    
+    // Create the params object matching the Rust struct
+    const params = {
+        name: Array.from(nameArray),
+        message: Array.from(messageArray)
+    };
+    
+    // Define the schema for borsh serialization
+    const schema = {
+        struct: {
+            name: { array: { type: 'u8', len: 16 } },
+            message: { array: { type: 'u8', len: 64 } }
+        }
+    };
+    
+    return Array.from(borsh.serialize(schema, params));
+};
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -347,4 +415,4 @@ const GraffitiWall: React.FC = () => {
     </div>
   );
 };
-export default GraffitiWall;
+export default GraffitiWallComponent;
