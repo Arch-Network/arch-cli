@@ -77,7 +77,7 @@ mod tests {
         fn fuzz_serialize_deserialize_system_instruction_create_account(
             txid in any::<[u8; 32]>(),
             vout in any::<u32>(),
-            random_bytes in prop::collection::vec(any::<u8>(), 0..1024),
+            // random_bytes in prop::collection::vec(any::<u8>(), 0..1024),
         ) {
             let instruction = SystemInstruction::CreateAccount(UtxoMeta::from(txid, vout));
 
@@ -89,8 +89,8 @@ mod tests {
 
         #[test]
         fn fuzz_serialize_deserialize_system_instruction_extend_bytes(
-            txid in any::<[u8; 32]>(),
-            vout in any::<u32>(),
+            // txid in any::<[u8; 32]>(),
+            // vout in any::<u32>(),
             random_bytes in prop::collection::vec(any::<u8>(), 0..1024),
         ) {
             let instruction = SystemInstruction::ExtendBytes(random_bytes.clone());
