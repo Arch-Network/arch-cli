@@ -1,18 +1,17 @@
 //! This module contains helper methods for interacting with the HelloWorld program
 
 use anyhow::{anyhow, Result};
-use arch_program::instruction::Instruction;
-use bip322::sign_simple;
+use bip322::sign_message_bip322;
+use bitcoin::Txid;
 use bitcoin::{
     absolute::LockTime,
-    address::Address,
-    key::{TapTweak, TweakedKeypair},
+    key::{Keypair, TapTweak, TweakedKeypair},
     secp256k1::{self, Secp256k1},
     sighash::{Prevouts, SighashCache},
     transaction::Version,
-    Amount, OutPoint, PrivateKey, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, Txid,
-    Witness,
+    Network, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, Witness,
 };
+use bitcoin::{Address, Amount};
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
@@ -20,24 +19,20 @@ use serde::Serialize;
 use serde_json::{from_str, json, Value};
 use std::fs;
 use std::str::FromStr;
-use tokio::task;
 
 use crate::processed_transaction::ProcessedTransaction;
 
 use crate::constants::{
-    BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, CALLER_FILE_PATH,
-    GET_ACCOUNT_ADDRESS, GET_BEST_BLOCK_HASH, GET_BLOCK, GET_PROCESSED_TRANSACTION, GET_PROGRAM,
-    NODE1_ADDRESS, READ_ACCOUNT_INFO, TRANSACTION_NOT_FOUND_CODE,
+    BITCOIN_NETWORK, BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME,
+    CALLER_FILE_PATH, GET_ACCOUNT_ADDRESS, GET_BEST_BLOCK_HASH, GET_BLOCK,
+    GET_PROCESSED_TRANSACTION, GET_PROGRAM, NODE1_ADDRESS, READ_ACCOUNT_INFO,
+    TRANSACTION_NOT_FOUND_CODE,
 };
-use crate::helper::secp256k1::SecretKey;
 use crate::models::CallerInfo;
 use crate::runtime_transaction::RuntimeTransaction;
 use crate::signature::Signature;
 use arch_program::message::Message;
 use arch_program::pubkey::Pubkey;
-use bitcoin::key::UntweakedKeypair;
-use bitcoin::XOnlyPublicKey;
-use rand_core::OsRng;
 
 pub fn process_result(response: String) -> Result<Value> {
     let result = from_str::<Value>(&response).expect("result should be Value parseable");
@@ -114,6 +109,11 @@ fn _get_trader(trader_id: u64) -> Result<CallerInfo> {
     CallerInfo::with_secret_key_file(file_path)
 }
 
+use crate::helper::secp256k1::SecretKey;
+use bitcoin::key::UntweakedKeypair;
+use bitcoin::XOnlyPublicKey;
+use rand_core::OsRng;
+
 pub fn with_secret_key_file(file_path: &str) -> Result<(UntweakedKeypair, Pubkey)> {
     let secp = Secp256k1::new();
     let secret_key = match fs::read_to_string(file_path) {
@@ -152,22 +152,11 @@ pub fn extend_bytes_max_len() -> usize {
         .len()
 }
 
-pub fn sign_message_bip322(keypair: &UntweakedKeypair, msg: &[u8]) -> [u8; 64] {
-    let secp = Secp256k1::new();
-    let xpubk = XOnlyPublicKey::from_keypair(keypair).0;
-    let private_key = PrivateKey::new(SecretKey::from_keypair(keypair), bitcoin::Network::Regtest);
-
-    let address = Address::p2tr(&secp, xpubk, None, bitcoin::Network::Regtest);
-    let signature = sign_simple(&address, msg, private_key).unwrap();
-
-    signature.to_vec()[0][..64].try_into().unwrap()
-}
-
 /// Creates an instruction, signs it as a message
 /// and sends the signed message as a transaction
 pub fn sign_and_send_instruction(
     instruction: Instruction,
-    signers: Vec<UntweakedKeypair>,
+    signers: Vec<Keypair>,
 ) -> Result<(String, String)> {
     // Get public keys from signers
     let pubkeys = signers
@@ -185,14 +174,13 @@ pub fn sign_and_send_instruction(
     };
 
     // Step 3: Hash the message and decode
-    let message_hash = message.hash();
-    let digest_slice = hex::decode(message_hash).expect("hashed message should be decodable");
+    let digest_slice = message.hash();
 
     // Step 5: Sign the message with each signer's key
     let signatures = signers
         .iter()
         .map(|signer| {
-            let signature = sign_message_bip322(signer, &digest_slice).to_vec();
+            let signature = sign_message_bip322(signer, &digest_slice, BITCOIN_NETWORK).to_vec();
             Signature(signature)
         })
         .collect::<Vec<Signature>>();
@@ -222,6 +210,8 @@ pub fn sign_and_send_instruction(
     Ok((result, hashed_instruction))
 }
 
+use arch_program::instruction::Instruction;
+
 pub fn sign_and_send_transaction(
     instructions: Vec<Instruction>,
     signers: Vec<UntweakedKeypair>,
@@ -235,10 +225,12 @@ pub fn sign_and_send_transaction(
         signers: pubkeys,
         instructions,
     };
-    let digest_slice = hex::decode(message.hash()).expect("hashed message should be decodable");
+    let digest_slice = message.hash();
     let signatures = signers
         .iter()
-        .map(|signer| Signature(sign_message_bip322(signer, &digest_slice).to_vec()))
+        .map(|signer| {
+            Signature(sign_message_bip322(signer, &digest_slice, BITCOIN_NETWORK).to_vec())
+        })
         .collect::<Vec<Signature>>();
 
     let params = RuntimeTransaction {
@@ -256,11 +248,13 @@ pub fn sign_and_send_transaction(
 }
 
 /// Deploys the HelloWorld program using the compiled ELF
-pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> Result<()> {
+pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
     let program_pubkey =
         Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&program_keypair).0.serialize());
 
     let elf = fs::read(elf_path).expect("elf path should be available");
+
+    //println!("Program size is : {} Bytes", elf.len());
 
     let txs = elf
         .chunks(extend_bytes_max_len())
@@ -283,30 +277,34 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
                 )],
             };
 
-            let digest_slice =
-                hex::decode(message.hash()).expect("hashed message should be decodable");
+            let digest_slice = message.hash();
 
             RuntimeTransaction {
                 version: 0,
                 signatures: vec![Signature(
-                    sign_message_bip322(&program_keypair, &digest_slice).to_vec(),
+                    sign_message_bip322(&program_keypair, &digest_slice, BITCOIN_NETWORK).to_vec(),
                 )],
                 message,
             }
         })
         .collect::<Vec<RuntimeTransaction>>();
 
-    let response = post_data(
-        &NODE1_ADDRESS.to_string(),
-        &"send_transactions".to_string(),
-        txs.clone(),
+    /*println!(
+        "Program deployment split into {} Chunks, sending {} runtime transactions",
+        txs.len(),
+        txs.len()
     );
-
-    let txids = process_result(response)?
+     */
+    let txids = process_result(post_data(NODE1_ADDRESS, "send_transactions", txs))
+        .expect("send_transaction should not fail")
         .as_array()
-        .ok_or_else(|| anyhow!("Invalid response format"))?
+        .expect("cannot convert result to array")
         .iter()
-        .map(|r| r.as_str().unwrap_or_default().to_string())
+        .map(|r| {
+            r.as_str()
+                .expect("cannot convert object to string")
+                .to_string()
+        })
         .collect::<Vec<String>>();
 
     let pb = ProgressBar::new(txids.len() as u64);
@@ -318,7 +316,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
     pb.set_message("Successfully Processed Deployment Transactions :");
 
     for txid in txids {
-        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+        let _processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
         pb.inc(1);
         pb.set_message("Successfully Processed Deployment Transactions :");
@@ -326,14 +324,26 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
 
     pb.finish();
 
-    Ok(())
-}
-async fn async_post_data<T: Serialize + std::fmt::Debug + Send + 'static>(
-    url: String,
-    method: String,
-    params: T,
-) -> Result<String> {
-    Ok(task::spawn_blocking(move || post_data(&url, &method, params)).await?)
+    // for tx_batch in txs.chunks(12) {
+    //     let mut txids = vec![];
+    //     for tx in tx_batch {
+    //         let txid = process_result(post_data(NODE1_ADDRESS, "send_transaction", tx))
+    //             .expect("send_transaction should not fail")
+    //             .as_str()
+    //             .expect("cannot convert result to string")
+    //             .to_string();
+
+    //         println!("sent tx {:?}", txid);
+    //         txids.push(txid);
+    //     };
+
+    //     for txid in txids {
+    //         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+    //             .expect("get processed transaction should not fail");
+
+    //         println!("{:?}", read_account_info(NODE1_ADDRESS, program_pubkey.clone()));
+    //     }
+    // }
 }
 
 /// Starts Key Exchange by calling the RPC method
@@ -487,10 +497,23 @@ pub fn prepare_fees() -> String {
     let caller = CallerInfo::with_secret_key_file(CALLER_FILE_PATH)
         .expect("getting caller info should not fail");
 
+    let network = match BITCOIN_NETWORK {
+        bitcoin::Network::Bitcoin => bitcoincore_rpc::bitcoin::Network::Bitcoin,
+        bitcoin::Network::Testnet => bitcoincore_rpc::bitcoin::Network::Testnet,
+        bitcoin::Network::Signet => bitcoincore_rpc::bitcoin::Network::Signet,
+        bitcoin::Network::Regtest => bitcoincore_rpc::bitcoin::Network::Regtest,
+        _ => panic!("Unsupported bitcoin network type"),
+    };
+
+    let address = bitcoincore_rpc::bitcoin::Address::from_str(&caller.address.to_string())
+        .expect("failed to parse address")
+        .require_network(network)
+        .expect("invalid network");
+
     let txid = rpc
         .send_to_address(
-            &caller.address,
-            Amount::from_sat(3000),
+            &address,
+            bitcoincore_rpc::bitcoin::Amount::from_sat(3000),
             None,
             None,
             None,
@@ -503,10 +526,12 @@ pub fn prepare_fees() -> String {
     let sent_tx = rpc
         .get_raw_transaction(&txid, None)
         .expect("should get raw transaction");
-    let mut vout = 0;
+    let mut vout: u32 = 0;
 
     for (index, output) in sent_tx.output.iter().enumerate() {
-        if output.script_pubkey == caller.address.script_pubkey() {
+        if output.script_pubkey
+            == bitcoincore_rpc::bitcoin::ScriptBuf::from(caller.address.script_pubkey())
+        {
             vout = index as u32;
         }
     }
@@ -543,8 +568,8 @@ pub fn prepare_fees() -> String {
 
     // Update the witness stack.
     let signature = bitcoin::taproot::Signature {
-        sig: signature,
-        hash_ty: sighash_type,
+        signature,
+        sighash_type,
     };
     tx.input[0].witness.push(signature.to_vec());
 
@@ -571,7 +596,7 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
 
     let account_address = Address::from_str(&address)
         .unwrap()
-        .require_network(bitcoin::Network::Regtest)
+        .require_network(BITCOIN_NETWORK)
         .unwrap();
 
     let txid = rpc
@@ -616,7 +641,7 @@ pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
     println!("address {:?}", address);
     let account_address = Address::from_str(&address)
         .unwrap()
-        .require_network(bitcoin::Network::Regtest)
+        .require_network(BITCOIN_NETWORK)
         .unwrap();
 
     let txid = rpc

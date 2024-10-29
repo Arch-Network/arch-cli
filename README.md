@@ -165,7 +165,7 @@ arch-cli demo start
 arch-cli demo stop
 ```
 
-Starts or stops the demo application, including both frontend and backend services.
+Starts or stops the demo application.
 
 ### Manage accounts
 

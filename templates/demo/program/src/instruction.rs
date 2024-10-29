@@ -114,12 +114,12 @@ pub enum InstructionError {
     ExternalAccountLamportSpend,
 
     /// Program modified the data of an account that doesn't belong to it
-    #[error("instruction modified data of an account it does not own")]
-    ExternalAccountDataModified,
+    #[error("instruction modified data of an account it does not own, Account key: {0}, but program_id is: {1}, instruction program should own this account in order to modify it")]
+    ExternalAccountDataModified(String, String),
 
     /// Read-only account's data was modified
-    #[error("instruction modified data of a read-only account")]
-    ReadonlyDataModified,
+    #[error("instruction modified data of a read-only account, Account key: {0}")]
+    ReadonlyDataModified(String),
 
     /// An account was referenced more than once in a single instruction
     // Deprecated, instructions can now contain duplicate accounts

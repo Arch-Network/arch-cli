@@ -1,6 +1,8 @@
 use account::AccountInfo;
 use program_error::ProgramError;
 
+pub use bitcoin;
+
 pub mod account;
 pub mod atomic_u64;
 pub mod clock;

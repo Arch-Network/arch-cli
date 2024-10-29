@@ -1,20 +1,9 @@
 services:
-  backend:
-    build: 
-      context: ./backend
-      args:
-        DEMO_FRONTEND_PORT: ${DEMO_BACKEND_PORT}
-    ports:
-      - "${DEMO_BACKEND_PORT}:${DEMO_BACKEND_PORT}"
-    networks:
-      - arch-network
-
   frontend:
     build: 
       context: ./frontend
       args:
         DEMO_FRONTEND_PORT: ${DEMO_FRONTEND_PORT}
-        DEMO_BACKEND_PORT: ${DEMO_BACKEND_PORT}
         INDEXER_PORT: ${INDEXER_PORT}
     ports:
       - "${DEMO_FRONTEND_PORT}:${DEMO_FRONTEND_PORT}"

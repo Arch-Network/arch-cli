@@ -52,10 +52,10 @@ impl Message {
         }
     }
 
-    pub fn hash(&self) -> String {
+    pub fn hash(&self) -> Vec<u8> {
         let serialized_message = self.serialize();
         let first_hash = digest(serialized_message);
-        digest(first_hash.as_bytes())
+        digest(first_hash.as_bytes()).as_bytes().to_vec()
     }
 }
 
