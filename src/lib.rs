@@ -2546,6 +2546,12 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         // Extract demo files from binary
         extract_project_files(&PROJECT_DIR, &demo_dir)?;
 
+        // Rename the .env.example file to .env
+        let env_example_file = PathBuf::from(&demo_dir).join(".env.example");
+        if env_example_file.exists() {
+            fs::rename(&env_example_file, PathBuf::from(&demo_dir).join(".env"))?;
+        }
+
         println!(
             "  {} Extracted demo template to {:?}",
             "✓".bold().green(),
