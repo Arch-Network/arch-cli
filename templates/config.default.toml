@@ -30,7 +30,7 @@ bitcoin_rpc_port = ""
 bitcoin_rpc_user = ""
 bitcoin_rpc_password = ""
 bitcoin_rpc_wallet = ""
-leader_rpc_endpoint = "http://18.214.39.12:32323/"
+leader_rpc_endpoint = "http://rpc-01.test.arch.network"
 
 [networks.mainnet]
 type = "mainnet"
