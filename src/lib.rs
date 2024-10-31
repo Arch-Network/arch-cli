@@ -2248,6 +2248,7 @@ async fn fund_address(
         Network::from_str(&network).context("Invalid Bitcoin network specified in config")?;
 
     println!("Using network: {}", network);
+
     let address = Address::from_str(account_address).context("Invalid account address")?;
     let checked_address = address
         .require_network(bitcoin_network)
@@ -3032,28 +3033,71 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     // Get account address
     let account_address = generate_account_address(caller_pubkey, config).await?;
 
-    // Set up Bitcoin RPC client
-    let wallet_manager = WalletManager::new(config)?;
+    // Check if Bitcoin RPC endpoint is configured
+    let txid = if let Ok(endpoint) = config.get_string("bitcoin_rpc_endpoint") {
+        if !endpoint.is_empty() {
+            println!("  {} Using Bitcoin RPC at {}", "ℹ".bold().blue(), endpoint);
+            let wallet_manager = WalletManager::new(config)?;
+            let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
-    // Prompt user to send funds
-    println!("{}", "Please send funds to the following address:".bold());
-    println!(
-        "  {} Bitcoin address: {}",
-        "→".bold().blue(),
-        account_address.yellow()
-    );
-    println!(
-        "  {} Minimum required: {} satoshis",
-        "ℹ".bold().blue(),
-        "3000".yellow()
-    );
-    println!("  {} Waiting for funds...", "⏳".bold().blue());
+            // Close the Bitcoin wallet
+            wallet_manager.close_wallet()?;
+
+            if let Some(info) = tx_info {
+                info.info.txid.to_string()
+            } else {
+                return Err(anyhow!("Failed to get transaction info after funding"));
+            }
+
+        } else {
+            // Manual funding flow
+            println!("{}", "No Bitcoin RPC configured. Please send funds manually.".bold());
+            println!(
+                "  {} Bitcoin address: {}",
+                "→".bold().blue(),
+                account_address.yellow()
+            );
+            println!(
+                "  {} Minimum required: {} satoshis",
+                "ℹ".bold().blue(),
+                "3000".yellow()
+            );
+
+            // Prompt for transaction ID
+            print!("  {} Please enter the transaction ID of your payment: ", "?".bold().yellow());
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            input.trim().to_string()
+        }
+    } else {
+        // Same as the manual funding flow above
+        println!("{}", "No Bitcoin RPC configured. Please send funds manually.".bold());
+        println!(
+            "  {} Bitcoin address: {}",
+            "→".bold().blue(),
+            account_address.yellow()
+        );
+        println!(
+            "  {} Minimum required: {} satoshis",
+            "ℹ".bold().blue(),
+            "3000".yellow()
+        );
+
+        print!("  {} Please enter the transaction ID of your payment: ", "?".bold().yellow());
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        input.trim().to_string()
+    };
+
 
     create_arch_account(
         &caller_keypair,
         &caller_pubkey,
-        &account_address,
-        &wallet_manager,
+        &txid,
         config,
     )
     .await?;
@@ -3109,9 +3153,6 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
         "🔑".bold().yellow(),
         hex::encode(caller_pubkey.serialize()).bright_green()
     );
-
-    // Close the Bitcoin wallet
-    wallet_manager.close_wallet()?;
 
     Ok(())
 }
@@ -3316,52 +3357,38 @@ async fn _wait_for_funds(client: &Client, address: &str, config: &Config) -> Res
 async fn create_arch_account(
     caller_keypair: &Keypair,
     caller_pubkey: &Pubkey,
-    account_address: &str,
-    wallet_manager: &WalletManager,
+    txid: &str,
     config: &Config,
 ) -> Result<()> {
-    let tx_info = fund_address(&wallet_manager.client, account_address, config).await?;
+    let caller_keypair = caller_keypair.clone();
+    let caller_pubkey = *caller_pubkey;
+    let txid = txid.to_string(); // Clone the txid string
+    let config = config.clone();
 
-    // Output the bitcoin transaction info
-    // println!("  {} Transaction info: {:?}", "ℹ".bold().blue(), tx_info);
+    let (txid_response, _) = tokio::task::spawn_blocking(move || {
+        sign_and_send_instruction(
+            SystemInstruction::new_create_account_instruction(
+                hex::decode(txid)
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                0,
+                caller_pubkey,
+            ),
+            vec![caller_keypair],
+            &config,
+        )
+    })
+    .await??;
 
-    if let Some(info) = tx_info {
-        let caller_keypair = caller_keypair.clone();
-        let caller_pubkey = *caller_pubkey;
-        let config = config.clone();
-        let (txid, _) = tokio::task::spawn_blocking(move || {
-            sign_and_send_instruction(
-                SystemInstruction::new_create_account_instruction(
-                    hex::decode(&info.info.txid.to_string())
-                        .unwrap()
-                        .try_into()
-                        .unwrap(),
-                    0,
-                    caller_pubkey,
-                ),
-                vec![caller_keypair],
-                &config,
-            )
-            .expect("signing and sending a transaction should not fail")
-        })
-        .await
-        .unwrap();
-
-        println!(
-            "  {} Account created with Arch Network transaction ID: {}",
-            "✓".bold().green(),
-            txid.yellow()
-        );
-        Ok(())
-    } else {
-        println!(
-            "  {} Warning: No transaction info available for deployment",
-            "⚠".bold().yellow()
-        );
-        // You might want to implement an alternative deployment method for non-REGTEST networks
-        Ok(())
-    }
+    println!(
+        "  {} Account created with Arch Network transaction ID: {}",
+        "✓".bold().green(),
+        txid_response.yellow()
+    );
+    Ok(())
 }
+
 async fn transfer_account_ownership(
     caller_keypair: &Keypair,
     account_pubkey: &Pubkey,
