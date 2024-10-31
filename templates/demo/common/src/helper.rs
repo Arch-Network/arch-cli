@@ -2,6 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use bip322::sign_message_bip322;
+use config::Config;
 use bitcoin::Txid;
 use bitcoin::{
     absolute::LockTime,
@@ -19,6 +20,7 @@ use serde::Serialize;
 use serde_json::{from_str, json, Value};
 use std::fs;
 use std::str::FromStr;
+use crate::constants::get_node_address;
 
 use crate::processed_transaction::ProcessedTransaction;
 
@@ -87,6 +89,7 @@ pub fn post(url: &str, method: &str) -> String {
 
 pub fn post_data<T: Serialize + std::fmt::Debug>(url: &str, method: &str, params: T) -> String {
     let client = reqwest::blocking::Client::new();
+    println!("posting to {:?} with method {:?}", url, method);
     let res = client
         .post(url)
         .header("content-type", "application/json")
@@ -157,6 +160,7 @@ pub fn extend_bytes_max_len() -> usize {
 pub fn sign_and_send_instruction(
     instruction: Instruction,
     signers: Vec<Keypair>,
+    config: &Config,
 ) -> Result<(String, String)> {
     // Get public keys from signers
     let pubkeys = signers
@@ -196,7 +200,7 @@ pub fn sign_and_send_instruction(
 
     //println!("Runtime Transaction constructed : {:?} ",params);
     // Step 7: Send transaction to node for processeing
-    let result = process_result(post_data(NODE1_ADDRESS, "send_transaction", params))
+    let result = process_result(post_data(&get_node_address(config), "send_transaction", params))
         .expect("send_transaction should not fail")
         .as_str()
         .expect("cannot convert result to string")
@@ -215,6 +219,7 @@ use arch_program::instruction::Instruction;
 pub fn sign_and_send_transaction(
     instructions: Vec<Instruction>,
     signers: Vec<UntweakedKeypair>,
+    config: &Config,
 ) -> Result<String> {
     let pubkeys = signers
         .iter()
@@ -238,7 +243,7 @@ pub fn sign_and_send_transaction(
         signatures,
         message,
     };
-    let result = process_result(post_data(NODE1_ADDRESS, "send_transaction", params))
+    let result = process_result(post_data(&get_node_address(config), "send_transaction", params))
         .expect("send_transaction should not fail")
         .as_str()
         .expect("cannot convert result to string")
@@ -248,7 +253,7 @@ pub fn sign_and_send_transaction(
 }
 
 /// Deploys the HelloWorld program using the compiled ELF
-pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
+pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str, config: &Config) {
     let program_pubkey =
         Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&program_keypair).0.serialize());
 
@@ -295,7 +300,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
         txs.len()
     );
      */
-    let txids = process_result(post_data(NODE1_ADDRESS, "send_transactions", txs))
+    let txids = process_result(post_data(&get_node_address(config), "send_transactions", txs))
         .expect("send_transaction should not fail")
         .as_array()
         .expect("cannot convert result to array")
@@ -316,7 +321,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
     pb.set_message("Successfully Processed Deployment Transactions :");
 
     for txid in txids {
-        let _processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+        let _processed_tx = get_processed_transaction(&get_node_address(config), txid.clone())
             .expect("get processed transaction should not fail");
         pb.inc(1);
         pb.set_message("Successfully Processed Deployment Transactions :");
@@ -347,16 +352,16 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
 }
 
 /// Starts Key Exchange by calling the RPC method
-pub fn start_key_exchange() {
-    match process_result(post(NODE1_ADDRESS, "start_key_exchange")) {
+pub fn start_key_exchange(config: &Config) {
+    match process_result(post(&get_node_address(config), "start_key_exchange")) {
         Err(err) => println!("Error starting Key Exchange: {:?}", err),
         Ok(val) => assert!(val.as_bool().unwrap()),
     };
 }
 
 /// Starts a Distributed Key Generation round by calling the RPC method
-pub fn start_dkg() {
-    if let Err(err) = process_result(post(NODE1_ADDRESS, "start_dkg")) {
+pub fn start_dkg(config: &Config) {
+    if let Err(err) = process_result(post(&get_node_address(config), "start_dkg")) {
         println!("Error starting DKG: {:?}", err);
     };
 }
@@ -409,13 +414,13 @@ pub fn get_program(url: &str, program_id: String) -> String {
 }
 
 /// Returns the best block
-fn _get_best_block() -> String {
-    let best_block_hash = process_result(post(NODE1_ADDRESS, GET_BEST_BLOCK_HASH))
+fn _get_best_block(config: &Config) -> String {
+    let best_block_hash = process_result(post(&get_node_address(config), GET_BEST_BLOCK_HASH))
         .expect("best_block_hash should not fail")
         .as_str()
         .expect("cannot convert result to string")
         .to_string();
-    process_result(post_data(NODE1_ADDRESS, GET_BLOCK, best_block_hash))
+    process_result(post_data(&get_node_address(config), GET_BLOCK, best_block_hash))
         .expect("get_block should not fail")
         .as_str()
         .expect("cannot convert result to string")
@@ -576,7 +581,7 @@ pub fn prepare_fees() -> String {
     tx.raw_hex()
 }
 
-pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
+pub fn send_utxo(pubkey: Pubkey, config: &Config) -> (String, u32) {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
         BITCOIN_NODE_PASSWORD.to_string(),
@@ -587,7 +592,7 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
     let _caller = CallerInfo::with_secret_key_file(CALLER_FILE_PATH)
         .expect("getting caller info should not fail");
 
-    let address = get_account_address(pubkey);
+    let address = get_account_address(pubkey, config);
 
     /*println!(
         "Arch Account Address for Public key {:x} is {}",
@@ -626,7 +631,7 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
     (txid.to_string(), vout)
 }
 
-pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
+pub fn send_utxo_2(pubkey: Pubkey, config: &Config) -> (Txid, u32) {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
         BITCOIN_NODE_PASSWORD.to_string(),
@@ -637,7 +642,7 @@ pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
     let _caller = CallerInfo::with_secret_key_file(CALLER_FILE_PATH)
         .expect("getting caller info should not fail");
 
-    let address = get_account_address(pubkey);
+    let address = get_account_address(pubkey, config);
     println!("address {:?}", address);
     let account_address = Address::from_str(&address)
         .unwrap()
@@ -672,9 +677,9 @@ pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
     (txid, vout)
 }
 
-pub fn get_account_address(pubkey: Pubkey) -> String {
+pub fn get_account_address(pubkey: Pubkey, config: &Config) -> String {
     process_result(post_data(
-        NODE1_ADDRESS,
+        &get_node_address(config),
         GET_ACCOUNT_ADDRESS,
         pubkey.serialize(),
     ))

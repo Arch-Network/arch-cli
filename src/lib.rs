@@ -330,6 +330,47 @@ pub struct ValidatorStartArgs {
     network: String,
 }
 
+fn write_demo_env(demo_dir: &Path, network: &str) -> Result<()> {
+    let env_file = demo_dir.join("app/frontend/.env");
+
+    // Read existing content
+    let content = fs::read_to_string(&env_file)?;
+
+    // Replace or add VITE_NETWORK line
+    let new_content = if content.contains("VITE_NETWORK=") {
+        // Replace existing VITE_NETWORK line while preserving comments
+        content.lines()
+            .map(|line| {
+                if line.starts_with("VITE_NETWORK=") {
+                    // Split on '#' to preserve comments
+                    let parts: Vec<&str> = line.splitn(2, '#').collect();
+                    if parts.len() > 1 {
+                        // If there's a comment, preserve it
+                        format!("VITE_NETWORK={} #{}", network, parts[1])
+                    } else {
+                        format!("VITE_NETWORK={}", network)
+                    }
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        // Add VITE_NETWORK line if it doesn't exist
+        format!("{}{}VITE_NETWORK={}\n", content, if content.ends_with('\n') { "" } else { "\n" }, network)
+    };
+
+    // Write back to file
+    fs::write(&env_file, new_content)?;
+    println!(
+        "  {} Updated .env file with network: {}",
+        "✓".bold().green(),
+        network
+    );
+    Ok(())
+}
+
 pub async fn init() -> Result<()> {
     println!("{}", "Initializing new Arch Network app...".bold().green());
 
@@ -413,6 +454,16 @@ pub async fn init() -> Result<()> {
         if env_example_file.exists() {
             fs::rename(&env_example_file, PathBuf::from(&demo_dir).join("app/frontend/.env"))?;
         }
+
+        let network_options = vec!["regtest", "testnet", "mainnet"];
+        let network_selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Select the Bitcoin network for the demo application")
+            .items(&network_options)
+            .default(0)
+            .interact()?;
+
+        let selected_network = network_options[network_selection];
+        write_demo_env(&demo_dir, selected_network)?;
 
         // Change to the demo directory
         std::env::set_current_dir(&demo_dir)?;
@@ -975,9 +1026,11 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     ensure_wallet_balance(&wallet_manager.client).await?;
 
     // Get account address and fund it
+    let config_clone = config.clone();
     let account_address =
-        task::spawn_blocking(move || get_account_address(program_pubkey.clone())).await?;
-    let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
+        task::spawn_blocking(move || get_account_address(program_pubkey.clone(), &config_clone)).await?;
+
+    let tx_info = fund_address(&wallet_manager.client, &account_address, &config).await?;
 
     // Deploy the program
     deploy_program_with_tx_info(
@@ -985,7 +1038,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         &program_pubkey,
         tx_info,
         deploy_folder.to_str().map(String::from),
-        config,
+        &config,
     )
     .await?;
 
@@ -2194,6 +2247,7 @@ async fn fund_address(
     let bitcoin_network =
         Network::from_str(&network).context("Invalid Bitcoin network specified in config")?;
 
+    println!("Using network: {}", network);
     let address = Address::from_str(account_address).context("Invalid account address")?;
     let checked_address = address
         .require_network(bitcoin_network)
@@ -2285,14 +2339,14 @@ async fn deploy_program(
     config: &Config,
 ) -> Result<()> {
     // Create a new account for the program
-    create_program_account(program_keypair, program_pubkey, txid, vout).await?;
+    create_program_account(program_keypair, program_pubkey, txid, vout, config).await?;
 
     // Deploy the program transactions
     deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder, config).await?;
 
     // Make program executable
     tokio::task::block_in_place( move || {
-        make_program_executable(program_keypair, program_pubkey)
+        make_program_executable(program_keypair, program_pubkey, config)
     }).await?;
 
     Ok(())
@@ -2348,7 +2402,7 @@ async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config, progra
     Ok(())
 }
 
-async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
+async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey, config: &Config) -> Result<()> {
     println!("    Making program executable...");
 
     let instruction = Instruction {
@@ -2362,26 +2416,22 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
     };
 
     let keypair = program_keypair.clone();
+    let node_address = get_node_address(config);
 
+    let config = config.clone();
     let (txid, _) = tokio::task::spawn_blocking(move || {
-        sign_and_send_instruction(instruction, vec![keypair])
+        sign_and_send_instruction(instruction, vec![keypair], &config)
     }).await??;
 
     println!("    Transaction sent: {}", txid);
     tokio::task::spawn_blocking(move || {
-        get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())
+        get_processed_transaction(&node_address, txid)
     }).await??;
     println!("    Program made executable successfully");
     Ok(())
 }
-
 pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, config: &Config) -> Result<()> {
     let program_pubkey = Pubkey::from_slice(&program_keypair.public_key().serialize()[1..33]);
-
-    let network = config.get_string("bitcoin.network")
-        .unwrap_or_else(|_| "regtest".to_string());
-    let bitcoin_network =
-        Network::from_str(&network).context("Invalid Bitcoin network specified in config")?;
 
     let elf = fs::read(elf_path).expect("elf path should be available");
 
@@ -2406,7 +2456,7 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, confi
                 )],
             };
 
-            let digest_slice =message.hash();
+            let digest_slice = message.hash();
 
             RuntimeTransaction {
                 version: 0,
@@ -2418,9 +2468,8 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, confi
         })
         .collect::<Vec<RuntimeTransaction>>();
 
-
     let txids: Vec<String> = {
-        let node_address = NODE1_ADDRESS.to_string();
+        let node_address = get_node_address(config);
         let txs_clone = txs.clone(); // Clone if necessary
         let response = task::spawn_blocking(move || {
             post_data(&node_address, "send_transactions", txs_clone)
@@ -2435,7 +2484,6 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, confi
             .collect()
     };
 
-
     let pb = ProgressBar::new(txids.len() as u64);
 
     pb.set_style(ProgressStyle::default_bar()
@@ -2445,7 +2493,8 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, confi
     pb.set_message("Successfully Processed Deployment Transactions :");
 
     for txid in txids {
-        let _processed_tx = task::spawn_blocking(move || get_processed_transaction(NODE1_ADDRESS, txid.clone())).await;
+        let node_address = get_node_address(config);
+        let _processed_tx = task::spawn_blocking(move || get_processed_transaction(&node_address, txid.clone())).await;
         pb.inc(1);
         pb.set_message("Successfully Processed Deployment Transactions :");
     }
@@ -2493,12 +2542,15 @@ async fn create_program_account(
     program_pubkey: &Pubkey,
     txid: &str,
     vout: u32,
+    config: &Config,
 ) -> Result<()> {
     println!("    Creating program account...");
 
     let program_keypair_clone = program_keypair.clone();
     let program_pubkey_clone = *program_pubkey;
     let txid_clone = txid.to_string();
+
+    let config_clone = config.clone();
 
     let (txid, _) = tokio::task::spawn_blocking(move || {
         sign_and_send_instruction(
@@ -2508,10 +2560,12 @@ async fn create_program_account(
                 program_pubkey_clone,
             ),
             vec![program_keypair_clone],
+            &config_clone,
         )
     }).await??;
 
-    let _ = tokio::task::spawn_blocking(move || get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())).await;
+    let node_address = get_node_address(config);
+    let _ = tokio::task::spawn_blocking(move || get_processed_transaction(&node_address, txid.clone())).await;
     println!("    Program account created successfully");
     Ok(())
 }
@@ -2557,6 +2611,14 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         if env_example_file.exists() {
             fs::rename(&env_example_file, PathBuf::from(&demo_dir).join("app/frontend/.env"))?;
         }
+
+        // Get network from config
+        let network = config.get_string("bitcoin.network")
+            .unwrap_or_else(|_| "regtest".to_string());
+
+        println!("Using network: {}", network);
+
+        write_demo_env(&demo_dir, &network)?;
 
         println!(
             "  {} Extracted demo template to {:?}",
@@ -2631,7 +2693,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     ).await?;
 
     // Make the program executable
-    make_program_executable(&program_keypair, &program_pubkey).await?;
+    make_program_executable(&program_keypair, &program_pubkey, config).await?;
 
     let graffiti_wall_state_exists = key_name_exists(&keys_file, "graffiti_wall_state")?;
 
@@ -2968,7 +3030,7 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     let caller_pubkey = Pubkey::from_slice(&public_key_bytes[1..33]); // Skip the first byte and take the next 32
 
     // Get account address
-    let account_address = generate_account_address(caller_pubkey).await?;
+    let account_address = generate_account_address(caller_pubkey, config).await?;
 
     // Set up Bitcoin RPC client
     let wallet_manager = WalletManager::new(config)?;
@@ -3018,7 +3080,7 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     };
 
     // Transfer ownership to the program
-    transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id).await?;
+    transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id, config).await?;
 
     // Save the account information to keys.json
     save_keypair_to_json(&keys_file, &caller_keypair, &caller_pubkey, &args.name)?;
@@ -3224,9 +3286,10 @@ pub fn ensure_keys_dir() -> Result<PathBuf> {
     Ok(keys_dir)
 }
 
-async fn generate_account_address(caller_pubkey: Pubkey) -> Result<String> {
+async fn generate_account_address(caller_pubkey: Pubkey, config: &Config) -> Result<String> {
     // Get program account address from network
-    let account_address = tokio::task::spawn_blocking(move || get_account_address(caller_pubkey)).await.unwrap();
+    let config = config.clone();
+    let account_address = tokio::task::spawn_blocking(move || get_account_address(caller_pubkey, &config)).await.unwrap();
     println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
 
     Ok(account_address)
@@ -3265,6 +3328,7 @@ async fn create_arch_account(
     if let Some(info) = tx_info {
         let caller_keypair = caller_keypair.clone();
         let caller_pubkey = *caller_pubkey;
+        let config = config.clone();
         let (txid, _) = tokio::task::spawn_blocking(move || {
             sign_and_send_instruction(
                 SystemInstruction::new_create_account_instruction(
@@ -3276,6 +3340,7 @@ async fn create_arch_account(
                     caller_pubkey,
                 ),
                 vec![caller_keypair],
+                &config,
             )
             .expect("signing and sending a transaction should not fail")
         })
@@ -3301,6 +3366,7 @@ async fn transfer_account_ownership(
     caller_keypair: &Keypair,
     account_pubkey: &Pubkey,
     program_pubkey: &Pubkey,
+    config: &Config,
 ) -> Result<()> {
     let mut instruction_data = vec![3]; // Transfer instruction
     instruction_data.extend(program_pubkey.serialize());
@@ -3314,6 +3380,7 @@ async fn transfer_account_ownership(
     let instruction_data_clone = instruction_data.clone();
     let account_pubkey_clone = *account_pubkey;
     let caller_keypair_clone = caller_keypair.clone();
+    let config = config.clone();
 
     let (_txid, _) = tokio::task::spawn_blocking(move || {
         sign_and_send_instruction(
@@ -3327,6 +3394,7 @@ async fn transfer_account_ownership(
                 data: instruction_data_clone,
             },
             vec![caller_keypair_clone],
+            &config,
         )
         .expect("signing and sending a transaction should not fail")
     })
