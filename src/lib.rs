@@ -2821,8 +2821,51 @@ pub async fn demo_stop(config: &Config) -> Result<()> {
 }
 
 pub async fn config_view(config: &Config) -> Result<()> {
-    println!("{}", "Current configuration:".bold().green());
-    println!("{:#?}", config);
+    println!("{}", "Current Configuration:".bold().green());
+    println!();
+
+    // Get config file path
+    let config_path = get_config_path()?;
+    let config_content = std::fs::read_to_string(&config_path)?;
+
+    // Parse TOML content
+    let parsed_config = toml_edit::Document::from_str(&config_content)?;
+
+    // Helper function to print a section
+    fn print_section(name: &str, table: &toml_edit::Table) {
+        println!("{}", format!("[{}]", name).bold().blue());
+        for (key, value) in table.iter() {
+            match value {
+                toml_edit::Item::Table(subtable) => {
+                    println!();
+                    print_section(&format!("{}.{}", name, key), subtable);
+                }
+                toml_edit::Item::Value(val) => {
+                    let value_str = val.to_string().trim_matches('"').to_string();
+                    if !value_str.is_empty() {
+                        println!("  {} = {}",
+                            key.to_string().yellow(),
+                            value_str.bright_white()
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        println!();
+    }
+
+    // Print each top-level section
+    for (section_name, section) in parsed_config.as_table().iter() {
+        if let toml_edit::Item::Table(table) = section {
+            print_section(section_name, table);
+        }
+    }
+
+    // Print config file location
+    println!("{}", "Config file location:".bold().green());
+    println!("  {}", config_path.display().to_string().bright_white());
+
     Ok(())
 }
 
