@@ -2951,37 +2951,61 @@ pub async fn config_reset() -> Result<()> {
 
     // Check if the config file already exists
     if config_path.exists() {
-        println!(
-            "  {} Existing configuration found at {}",
-            "ℹ".bold().blue(),
-            config_path.display()
-        );
-        print!(
-            "  {} Are you sure you want to overwrite it? (y/N): ",
-            "?".bold().yellow()
-        );
-        io::stdout().flush()?;
+        let confirm = Confirm::new()
+            .with_prompt("Existing configuration found. Are you sure you want to reset it? This will remove all custom settings.")
+            .default(false)
+            .interact()?;
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-
-        if !input.trim().eq_ignore_ascii_case("y") {
+        if !confirm {
             println!("  {} Configuration reset cancelled", "ℹ".bold().blue());
             return Ok(());
+        }
+
+        // Backup the existing config file
+        let backup_path = config_path.with_extension("toml.backup");
+        if let Err(e) = fs::copy(&config_path, &backup_path) {
+            println!(
+                "  {} Warning: Failed to create backup: {}",
+                "⚠".bold().yellow(),
+                e
+            );
+        } else {
+            println!(
+                "  {} Created backup at {}",
+                "✓".bold().green(),
+                backup_path.display()
+            );
         }
     }
 
     // Create the config directory if it doesn't exist
     fs::create_dir_all(config_dir).context("Failed to create config directory")?;
 
-    // Copy the default config to the correct location
-    fs::copy("config.default.toml", &config_path).context("Failed to reset configuration")?;
+    // Get the default config content
+    let default_config_content = include_str!("../templates/config.default.toml");
+
+    // Write the default config
+    fs::write(&config_path, default_config_content)
+        .context("Failed to write default configuration")?;
 
     println!(
         "  {} Configuration reset to default at {}",
         "✓".bold().green(),
         config_path.display()
     );
+
+    // Ensure all template files are reset as well
+    println!("  {} Resetting template files...", "→".bold().blue());
+    copy_template_files()?;
+
+    println!("\n{}", "Configuration reset complete!".bold().green());
+    println!(
+        "  {} Use {} to view or {} to edit the new configuration",
+        "ℹ".bold().blue(),
+        "arch-cli config view".cyan(),
+        "arch-cli config edit".cyan()
+    );
+
     Ok(())
 }
 
