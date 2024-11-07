@@ -31,6 +31,7 @@ use serde_json::{json, Value};
 use webbrowser::open_browser;
 use std::collections::HashMap;
 use std::env;
+use regex::Regex;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io;
@@ -3603,6 +3604,37 @@ pub async fn validator_start(args: &ValidatorStartArgs, config: &Config) -> Resu
     let bitcoin_rpc_port = config.get_string("bitcoin_rpc_port")?;
     let bitcoin_rpc_username = config.get_string("bitcoin_rpc_user")?;
     let bitcoin_rpc_password = config.get_string("bitcoin_rpc_password")?;
+
+    // Validate Bitcoin RPC endpoint format
+    let bitcoin_rpc_endpoint = {
+        let endpoint = config.get_string("bitcoin_rpc_endpoint")?;
+        // Check if endpoint contains protocol or path
+        if endpoint.contains("://") || endpoint.contains("/") {
+            return Err(anyhow!("Bitcoin RPC endpoint should not contain protocol (http://) or path. Expected format: domain:port"));
+        }
+        // Validate format using regex
+        let endpoint_regex = regex::Regex::new(r"^[a-zA-Z0-9.-]+:\d+$")?;
+        if !endpoint_regex.is_match(&endpoint) {
+            return Err(anyhow!("Invalid Bitcoin RPC endpoint format. Expected format: domain:port (e.g., localhost:8332)"));
+        }
+        endpoint
+    };
+
+    // Validate port number
+    let bitcoin_rpc_port = {
+        let port = config.get_string("bitcoin_rpc_port")?;
+        port.parse::<u16>().map_err(|_| anyhow!("Invalid Bitcoin RPC port number"))?;
+        port
+    };
+
+    // Validate credentials are not empty
+    let bitcoin_rpc_username = {
+        let username = config.get_string("bitcoin_rpc_user")?;
+        if username.trim().is_empty() {
+            return Err(anyhow!("Bitcoin RPC username cannot be empty"));
+        }
+        username
+    };
 
     let container_name = "local_validator";
     let container_exists = String::from_utf8(
