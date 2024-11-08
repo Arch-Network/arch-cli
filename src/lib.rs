@@ -584,7 +584,7 @@ fn get_default_project_dir() -> PathBuf {
 fn prompt_for_project_dir(default_dir: &Path) -> Result<PathBuf> {
     println!("Where would you like to create your Arch Network project?");
     println!("Default: {}", default_dir.display());
-    println!("Note: Please provide a full path (e.g., /home/user/projects or C:\\Users\\user\\Projects)");
+    println!("⚠️  📝 Note: Please provide a full path (e.g., /home/user/projects or C:\\Users\\user\\Projects) 📝 ⚠️");
     print!("Project directory (press Enter for default): ");
     io::stdout().flush()?;
 
@@ -603,10 +603,10 @@ fn prompt_for_project_dir(default_dir: &Path) -> Result<PathBuf> {
 
         // If the path is not absolute, make it absolute by joining with current directory
         if !path.is_absolute() {
-            println!("  {} Warning: Relative path detected. Converting to absolute path...", "⚠".bold().yellow());
+            println!("  🚨 {} Warning: Relative path detected! Converting to absolute path... 🚨", "⚠".bold().yellow());
             let current_dir = std::env::current_dir()?;
             let absolute_path = current_dir.join(path);
-            println!("  {} Using absolute path: {}", "ℹ".bold().blue(), absolute_path.display());
+            println!("  💡 {} Using absolute path: {} 💡", "ℹ".bold().blue(), absolute_path.display());
             Ok(absolute_path)
         } else {
             Ok(path)
