@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use anyhow::{Context, Result};
 use arch_program::account::AccountMeta;
+
 use arch_program::instruction::Instruction;
 use arch_program::message::Message;
 use arch_program::pubkey::Pubkey;
@@ -2220,10 +2221,10 @@ async fn fund_address(
 
         let tx = rpc.send_to_address(
             &checked_address,
-            Amount::from_sat(3000),
+            Amount::from_sat(5000),
             None,
             None,
-            None,
+            Some(false),
             None,
             None,
             None,
