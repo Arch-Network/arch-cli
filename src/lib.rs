@@ -3642,9 +3642,6 @@ pub async fn validator_start(args: &ValidatorStartArgs, config: &Config) -> Resu
     let rust_log = config.get_string("arch.rust_log")?;
     let rpc_bind_ip = "0.0.0.0";
     let rpc_bind_port = config.get_string("arch.leader_rpc_port")?;
-    let bitcoin_rpc_endpoint = config.get_string("bitcoin_rpc_endpoint")?;
-    let bitcoin_rpc_port = config.get_string("bitcoin_rpc_port")?;
-    let bitcoin_rpc_username = config.get_string("bitcoin_rpc_user")?;
     let bitcoin_rpc_password = config.get_string("bitcoin_rpc_password")?;
 
     // Validate Bitcoin RPC endpoint format
@@ -3652,12 +3649,12 @@ pub async fn validator_start(args: &ValidatorStartArgs, config: &Config) -> Resu
         let endpoint = config.get_string("bitcoin_rpc_endpoint")?;
         // Check if endpoint contains protocol or path
         if endpoint.contains("://") || endpoint.contains("/") {
-            return Err(anyhow!("Bitcoin RPC endpoint should not contain protocol (http://) or path. Expected format: domain:port"));
+            return Err(anyhow!("Bitcoin RPC endpoint should not contain protocol (http://) or path. Expected format: domain"));
         }
         // Validate format using regex
-        let endpoint_regex = regex::Regex::new(r"^[a-zA-Z0-9.-]+:\d+$")?;
+        let endpoint_regex = regex::Regex::new(r"^[a-zA-Z0-9.-]+$")?;
         if !endpoint_regex.is_match(&endpoint) {
-            return Err(anyhow!("Invalid Bitcoin RPC endpoint format. Expected format: domain:port (e.g., localhost:8332)"));
+            return Err(anyhow!("Invalid Bitcoin RPC endpoint format. Expected format: domain (e.g., localhost)"));
         }
         endpoint
     };
