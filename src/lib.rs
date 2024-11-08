@@ -2842,11 +2842,17 @@ pub async fn config_view(config: &Config) -> Result<()> {
                     print_section(&format!("{}.{}", name, key), subtable);
                 }
                 toml_edit::Item::Value(val) => {
-                    let value_str = val.to_string().trim_matches('"').to_string();
+                    let value_str = val.to_string();
                     if !value_str.is_empty() {
+                        // Handle string values with proper quotes
+                        let formatted_value = if value_str.starts_with('"') && !value_str.ends_with('"') {
+                            format!("{}\"", value_str)
+                        } else {
+                            value_str
+                        };
                         println!("  {} = {}",
                             key.to_string().yellow(),
-                            value_str.bright_white()
+                            formatted_value.bright_white()
                         );
                     }
                 }
