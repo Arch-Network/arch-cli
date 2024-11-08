@@ -12,6 +12,7 @@ use bitcoin::Network;
 use bitcoin::{Address, XOnlyPublicKey};
 use bitcoincore_rpc::jsonrpc::serde_json;
 use bitcoincore_rpc::{Client, RpcApi};
+use bitcoincore_rpc::json::EstimateMode;
 use clap::{Args, Parser, Subcommand};
 use colored::*;
 use common::constants::*;
@@ -471,7 +472,8 @@ fn extract_project_files(project_dir: &Dir, target_dir: &Path) -> Result<()> {
             include_dir::DirEntry::Dir(dir) => {
                 let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
                 match dir_name {
-                    "app" | "program" | "common" => {
+                    // Add bip322 to the list of top-level directories
+                    "app" | "program" | "common" | "bip322" => {
                         // These directories should be at the top level
                         extract_dir_contents(dir, &target_dir.join(dir_name))?;
                     }
@@ -1063,12 +1065,12 @@ pub async fn send_coins(args: &SendCoinsArgs, config: &Config) -> Result<()> {
     let txid = wallet_manager.client.send_to_address(
         &address_networked,
         Amount::from_sat(args.amount),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
+        None,                    // comment
+        None,                    // comment_to
+        Some(false),            // subtract_fee
+        Some(true),             // replaceable (enable RBF)
+        Some(1),                // confirmation_target (blocks)
+        Some(EstimateMode::Economical) // estimate_mode
     )?;
 
     // Generate 1 block to confirm the transaction
