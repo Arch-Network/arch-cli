@@ -2570,16 +2570,52 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     std::env::set_current_dir(&demo_dir).context("Failed to change to demo directory")?;
 
     let env_file = PathBuf::from(&demo_dir).join("app/frontend/.env");
+    println!("  {} Attempting to read .env file from: {:?}", "ℹ".bold().blue(), env_file);
+
+    // Check if the file exists
+    if !env_file.exists() {
+        println!("  {} .env file not found", "✗".bold().red());
+
+        // Check if .env.example exists
+        let env_example_file = PathBuf::from(&demo_dir).join("app/frontend/.env.example");
+        if env_example_file.exists() {
+            println!("  {} Found .env.example file, attempting to copy it", "→".bold().blue());
+            fs::copy(&env_example_file, &env_file)
+                .with_context(|| format!("Failed to copy .env.example to .env. Source: {:?}, Destination: {:?}", env_example_file, env_file))?;
+            println!("  {} Successfully created .env file from .env.example", "✓".bold().green());
+        } else {
+            println!("  {} Neither .env nor .env.example files found in frontend directory", "✗".bold().red());
+            return Err(anyhow!("Missing required .env files in {:?}", env_file.parent().unwrap_or_else(|| Path::new(""))));
+        }
+    }
 
     // Read the VITE_PROGRAM_PUBKEY from the specific .env file
-    let env_content = fs::read_to_string(&env_file).context("Failed to read .env file")?;
+    let env_content = fs::read_to_string(&env_file)
+        .with_context(|| {
+            let metadata = fs::metadata(&env_file);
+            let permissions = metadata.as_ref().map(|m| m.permissions());
+            format!(
+                "Failed to read .env file at {:?}. File exists: {}, Metadata: {:?}, Permissions: {:?}",
+                env_file,
+                env_file.exists(),
+                metadata,
+                permissions
+            )
+        })?;
+
+    // Verify the content is not empty
+    if env_content.trim().is_empty() {
+        println!("  {} Warning: .env file is empty", "⚠".bold().yellow());
+    }
+
     let mut program_pubkey = env_content
         .lines()
         .find_map(|line| line.strip_prefix("VITE_PROGRAM_PUBKEY="))
         .unwrap_or("")
         .to_string();
 
-    println!("Existing program pubkey: {}", program_pubkey);
+    println!("  {} Read program pubkey from .env: '{}'", "ℹ".bold().blue(),
+        if program_pubkey.is_empty() { "not found" } else { &program_pubkey });
 
     // If program_pubkey is empty then create a new account for the program
     let keys_file = get_config_dir()?.join("keys.json");
