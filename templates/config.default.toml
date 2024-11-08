@@ -3,7 +3,7 @@ default = "development"
 
 [networks.development]
 type = "development"
-bitcoin_rpc_endpoint = "bitcoin-node.dev.aws.archnetwork.xyz"
+bitcoin_rpc_endpoint = "bitcoin-node.dev.aws.archnetwork.xyz:18443"
 bitcoin_rpc_port = "18443"
 bitcoin_rpc_user = "bitcoin"
 bitcoin_rpc_password = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618"
