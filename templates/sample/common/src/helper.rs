@@ -513,7 +513,7 @@ pub fn prepare_fees() -> String {
     let txid = rpc
         .send_to_address(
             &address,
-            bitcoincore_rpc::bitcoin::Amount::from_sat(3000),
+            bitcoincore_rpc::bitcoin::Amount::from_sat(5000),
             None,
             None,
             None,
@@ -602,7 +602,7 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
     let txid = rpc
         .send_to_address(
             &account_address,
-            Amount::from_sat(3000),
+            Amount::from_sat(5000),
             None,
             None,
             None,
@@ -647,7 +647,7 @@ pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
     let txid = rpc
         .send_to_address(
             &account_address,
-            Amount::from_sat(3000),
+            Amount::from_sat(5000),
             None,
             None,
             None,
