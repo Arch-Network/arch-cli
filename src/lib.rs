@@ -1,7 +1,6 @@
 use anyhow::anyhow;
 use anyhow::{Context, Result};
 use arch_program::account::AccountMeta;
-
 use arch_program::instruction::Instruction;
 use arch_program::message::Message;
 use arch_program::pubkey::Pubkey;
@@ -331,6 +330,24 @@ pub struct ValidatorStartArgs {
         help = "Specifies the network to use: development, development2, testnet, or mainnet"
     )]
     network: String,
+
+    /// Deployment target (local or gcp)
+    #[clap(
+        long,
+        default_value = "local",
+        help = "Specifies where to deploy the validator: local or gcp"
+    )]
+    target: String,
+
+    /// GCP configuration (required for GCP deployment)
+    #[clap(long, help = "GCP project ID")]
+    gcp_project: Option<String>,
+
+    #[clap(long, help = "GCP region")]
+    gcp_region: Option<String>,
+
+    #[clap(long, help = "GCP machine type")]
+    gcp_machine_type: Option<String>,
 }
 
 pub async fn init() -> Result<()> {
@@ -2237,16 +2254,19 @@ async fn fund_address(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
+        println!("Sending funds to address: {}", checked_address.to_string());
+
         let tx = rpc.send_to_address(
             &checked_address,
             Amount::from_sat(5000),
-            None,
-            None,
-            Some(false),
-            None,
-            None,
-            None,
+            None,                           // comment
+            None,                           // comment_to
+            Some(false),                    // subtract_fee_from_amount
+            None,                           // replaceable (RBF)
+            Some(10),                        // conf_target (1 block for high priority)
+            Some(bitcoincore_rpc::json::EstimateMode::Unset), // estimate_mode
         )?;
+
         println!(
             "  {} Transaction sent: {}",
             "✓".bold().green(),
@@ -3655,6 +3675,14 @@ pub async fn indexer_clean(config: &Config) -> Result<()> {
 }
 
 pub async fn validator_start(args: &ValidatorStartArgs, config: &Config) -> Result<()> {
+    match args.target.as_str() {
+        "local" => start_local_validator(&args, config).await,
+        "gcp" => start_gcp_validator(&args, config).await,
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+async fn start_local_validator(args: &ValidatorStartArgs, config: &Config) -> Result<()> {
     println!("{}", "Starting the local validator...".bold().green());
 
     let _network = &args.network;
@@ -3752,6 +3780,224 @@ pub async fn validator_start(args: &ValidatorStartArgs, config: &Config) -> Resu
     }
 
     println!("{}", "Local validator started successfully!".bold().green());
+    Ok(())
+}
+
+async fn start_gcp_validator(args: &ValidatorStartArgs, config: &Config) -> Result<()> {
+    let project_id = args.gcp_project.as_ref()
+        .ok_or_else(|| anyhow!("GCP project ID is required for GCP deployment"))?;
+    let region = args.gcp_region.as_ref()
+        .map_or("us-central1".to_string(), |r| r.to_string());
+    let zone = format!("{}-a", region);
+    let machine_type = args.gcp_machine_type.as_ref()
+        .map_or("e2-medium".to_string(), |m| m.to_string());
+    let instance_name = "arch-validator";
+
+    println!("{}", "Starting validator deployment to GCP...".bold().green());
+
+    // Check if instance already exists
+    let instance_exists = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", instance_name,
+            "--project", project_id,
+            "--zone", &zone,
+            "--format", "get(name)"
+        ])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+
+    if instance_exists {
+        let proceed = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("A validator instance already exists. Would you like to recreate it?")
+            .default(false)
+            .interact()?;
+
+        if !proceed {
+            // Get the instance's external IP and display current status
+            let describe_output = ShellCommand::new("gcloud")
+                .args([
+                    "compute", "instances", "describe", instance_name,
+                    "--project", project_id,
+                    "--zone", &zone,
+                    "--format", "get(networkInterfaces[0].accessConfigs[0].natIP,status)"
+                ])
+                .output()?;
+
+            let info = String::from_utf8_lossy(&describe_output.stdout);
+            let mut lines = info.lines();
+            let ip = lines.next().unwrap_or("unknown");
+            let status = lines.next().unwrap_or("unknown");
+
+            println!("\n{}", "Current validator instance:".bold().blue());
+            println!("Status: {}", status);
+            println!("External IP: {}", ip);
+            println!("RPC endpoint: {}", format!("http://{}:9001", ip).yellow());
+            
+            println!("\nTo view logs, run:");
+            println!("  {}", format!("gcloud compute instances get-serial-port-output {} --zone {} --project {}", 
+                instance_name, 
+                zone,
+                project_id
+            ).cyan());
+            
+            return Ok(());
+        }
+
+        // Delete the existing instance
+        println!("  {} Removing existing validator instance...", "→".bold().blue());
+        let delete_output = ShellCommand::new("gcloud")
+            .args([
+                "compute", "instances", "delete", instance_name,
+                "--project", project_id,
+                "--zone", &zone,
+                "--quiet"  // Skip confirmation
+            ])
+            .output()
+            .context("Failed to delete existing instance")?;
+
+        if !delete_output.status.success() {
+            return Err(anyhow!(
+                "Failed to delete existing instance: {}",
+                String::from_utf8_lossy(&delete_output.stderr)
+            ));
+        }
+        println!("  {} Existing instance removed", "✓".bold().green());
+    }
+
+    // Create a temporary directory for the build
+    let temp_dir = tempfile::tempdir()?;
+    println!("  {} Creating build directory", "→".bold().blue());
+
+    // Create Dockerfile
+    let dockerfile_content = r#"FROM ghcr.io/arch-network/local_validator:latest
+
+EXPOSE 9001
+
+ENV RUST_LOG=info
+ENV NETWORK_MODE=devnet
+
+ENTRYPOINT ["/usr/bin/local_validator"]
+"#;
+
+    let dockerfile_path = temp_dir.path().join("Dockerfile");
+    fs::write(&dockerfile_path, dockerfile_content)?;
+    println!("  {} Created Dockerfile", "✓".bold().green());
+
+    // Create cloudbuild.yaml
+    let cloudbuild_content = format!(r#"steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/{}/arch-validator:latest', '.']
+images: ['gcr.io/{}/arch-validator:latest']
+"#, project_id, project_id);
+
+    let cloudbuild_path = temp_dir.path().join("cloudbuild.yaml");
+    fs::write(&cloudbuild_path, cloudbuild_content)?;
+    println!("  {} Created Cloud Build configuration", "✓".bold().green());
+
+    // Build and push the validator image to Google Container Registry
+    println!("Building and pushing validator image to GCR...");
+    let build_push_output = ShellCommand::new("gcloud")
+        .args([
+            "builds", "submit",
+            "--config", cloudbuild_path.to_str().unwrap(),
+            "--project", project_id,
+            temp_dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .context("Failed to build and push image to GCR")?;
+
+    let image_name = format!("gcr.io/{}/arch-validator:latest", project_id);
+
+    println!("  {} Image built and pushed successfully", "✓".bold().green());
+
+    // Create firewall rule if it doesn't exist
+    println!("Ensuring firewall rule exists for validator...");
+    let firewall_rule_name = "allow-validator";
+    let create_firewall_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", firewall_rule_name,
+            "--project", project_id,
+            "--allow", "tcp:9001",
+            "--target-tags", "validator",
+            "--description", "Allow incoming traffic on port 9001 for validator",
+        ])
+        .output();
+
+    // Ignore if firewall rule already exists
+    if let Err(e) = create_firewall_output {
+        println!("  {} Firewall rule may already exist: {}", "ℹ".bold().blue(), e);
+    }
+
+    // Create and start the GCE instance
+    println!("Creating GCE instance for validator...");
+    let instance_name = "arch-validator";
+    let create_instance_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "create-with-container", instance_name,
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--machine-type", &machine_type,
+            "--container-image", &image_name,
+            "--zone", &zone,
+            "--container-env",
+            &format!("RUST_LOG=info,NETWORK_MODE={}", "devnet"),
+            "--container-command=/usr/bin/local_validator",
+            "--container-arg=--rpc-bind-ip=0.0.0.0",
+            "--container-arg=--rpc-bind-port=9001",
+            "--container-port=9001",
+            &format!("--container-arg=--bitcoin-rpc-endpoint={}", 
+                config.get_string("networks.development.bitcoin_rpc_endpoint")?),
+            &format!("--container-arg=--bitcoin-rpc-port={}", 
+                config.get_string("networks.development.bitcoin_rpc_port")?),
+            &format!("--container-arg=--bitcoin-rpc-username={}", 
+                config.get_string("networks.development.bitcoin_rpc_user")?),
+            &format!("--container-arg=--bitcoin-rpc-password={}", 
+                config.get_string("networks.development.bitcoin_rpc_password")?),
+        ])
+        .output()
+        .context("Failed to create GCE instance")?;
+
+    if !create_instance_output.status.success() {
+        return Err(anyhow!(
+            "Failed to create GCE instance: {}",
+            String::from_utf8_lossy(&create_instance_output.stderr)
+        ));
+    }
+
+    // Get the instance's external IP
+    let describe_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", instance_name,
+            "--project", project_id,
+            "--zone", &zone,
+            "--format", "get(networkInterfaces[0].accessConfigs[0].natIP)"
+        ])
+        .output()
+        .context("Failed to get instance IP")?;
+
+    let instance_ip = String::from_utf8_lossy(&describe_output.stdout).trim().to_string();
+
+    println!("{}", "Validator deployed successfully to GCP!".bold().green());
+    println!("Instance name: {}", instance_name);
+    println!("Instance zone: {}", zone);
+    println!("External IP: {}", instance_ip);
+    println!("Validator RPC endpoint: {}", format!("http://{}:9001", instance_ip).yellow());
+    
+    println!("\nTo view logs, run:");
+    println!("  {}", format!("gcloud compute instances get-serial-port-output {} --zone {} --project {}", 
+        instance_name, 
+        zone,
+        project_id
+    ).cyan());
+    
+    println!("\nTo SSH into the instance, run:");
+    println!("  {}", format!("gcloud compute ssh {} --zone {} --project {}", 
+        instance_name, 
+        zone,
+        project_id
+    ).cyan());
+
     Ok(())
 }
 
