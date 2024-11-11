@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
         Commands::Project(ProjectCommands::Create(args)) => project_create(args, &config).await,
         Commands::Project(ProjectCommands::Deploy) => project_deploy(&config).await,
         Commands::Validator(ValidatorCommands::Start(args)) => validator_start(args, &config).await,
-        Commands::Validator(ValidatorCommands::Stop) => validator_stop().await,
+        Commands::Validator(ValidatorCommands::Stop(args)) => validator_stop(&args).await,
     };
 
     if let Err(e) = result {

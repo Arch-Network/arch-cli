@@ -210,7 +210,7 @@ pub enum ValidatorCommands {
 
     /// Stop the validator
     #[clap(long_about = "Stops the local validator.")]
-    Stop,
+    Stop(ValidatorStartArgs),
 }
 
 #[derive(Subcommand)]
@@ -3999,8 +3999,121 @@ images: ['gcr.io/{}/arch-validator:latest']
     Ok(())
 }
 
-pub async fn validator_stop() -> Result<()> {
-    println!("{}", "Stopping and removing the local validator...".bold().green());
+// Update the validator_stop function signature and implementation
+pub async fn validator_stop(args: &ValidatorStartArgs) -> Result<()> {
+    println!("{}", "Stopping the validator...".bold().green());
+
+    match args.target.as_str() {
+        "local" => stop_local_validator(),
+        "gcp" => {
+            let project_id = args.gcp_project.as_ref()
+                .ok_or_else(|| anyhow!("GCP project ID is required for GCP deployment"))?;
+            let region = args.gcp_region.as_ref()
+                .map_or("us-central1".to_string(), |r| r.to_string());
+
+            stop_gcp_validator(project_id, &region).await
+        }
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+// Update the stop_gcp_validator function signature
+async fn stop_gcp_validator(project_id: &str, region: &str) -> Result<()> {
+    println!("  {} Managing GCP validator...", "→".bold().blue());
+
+    // Get instance details with separate fields
+    let describe_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", "arch-validator",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(status)"
+        ])
+        .output()
+        .context("Failed to get GCP instance details")?;
+
+    let status = String::from_utf8_lossy(&describe_output.stdout).trim().to_string();
+    let zone = format!("{}-a", region);
+
+    if describe_output.status.success() {
+        let options = vec!["Suspend instance", "Delete instance"];
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("What would you like to do with the GCP validator?")
+            .items(&options)
+            .default(0)
+            .interact()?;
+
+        match selection {
+            0 => {
+                if status == "SUSPENDED" {
+                    println!("  {} Instance is already suspended", "ℹ".bold().blue());
+                    return Ok(());
+                }
+
+                println!("  {} Suspending GCP validator...", "→".bold().blue());
+                let suspend_output = ShellCommand::new("gcloud")
+                    .args([
+                        "compute", "instances", "suspend",
+                        "arch-validator",
+                        "--project", project_id,
+                        "--zone", &zone,
+                        "--quiet"
+                    ])
+                    .output()
+                    .context("Failed to suspend GCP instance")?;
+
+                if !suspend_output.status.success() {
+                    return Err(anyhow!(
+                        "Failed to suspend GCP instance: {}",
+                        String::from_utf8_lossy(&suspend_output.stderr)
+                    ));
+                }
+
+                println!("{}", "GCP validator suspended successfully!".bold().green());
+            }
+            1 => {
+                let proceed = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Are you sure you want to delete the GCP validator instance? This action cannot be undone.")
+                    .default(false)
+                    .interact()?;
+
+                if !proceed {
+                    println!("  {} Operation cancelled", "ℹ".bold().blue());
+                    return Ok(());
+                }
+
+                println!("  {} Deleting GCP validator...", "→".bold().blue());
+                let delete_output = ShellCommand::new("gcloud")
+                    .args([
+                        "compute", "instances", "delete",
+                        "arch-validator",
+                        "--project", project_id,
+                        "--zone", &zone,
+                        "--quiet"
+                    ])
+                    .output()
+                    .context("Failed to delete GCP instance")?;
+
+                if !delete_output.status.success() {
+                    return Err(anyhow!(
+                        "Failed to delete GCP instance: {}",
+                        String::from_utf8_lossy(&delete_output.stderr)
+                    ));
+                }
+
+                println!("{}", "GCP validator deleted successfully!".bold().green());
+            }
+            _ => unreachable!()
+        }
+
+        Ok(())
+    } else {
+        Err(anyhow!("Failed to find GCP validator instance in zone {}", zone))
+    }
+}
+
+fn stop_local_validator() -> Result<()> {
+    println!("  {} Stopping local validator...", "→".bold().blue());
 
     // Stop the container
     let stop_output = ShellCommand::new("docker")
