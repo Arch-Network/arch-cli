@@ -7,7 +7,7 @@ use arch_program::message::Message;
 use arch_program::pubkey::Pubkey;
 use arch_program::system_instruction::SystemInstruction;
 use bitcoin::key::UntweakedKeypair;
-use bitcoin::Amount;ch
+use bitcoin::Amount;
 use bitcoin::Network;
 use bitcoin::{Address, XOnlyPublicKey};
 use bitcoincore_rpc::jsonrpc::serde_json;
