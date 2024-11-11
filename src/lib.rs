@@ -3788,7 +3788,6 @@ async fn start_gcp_validator(args: &ValidatorStartArgs, config: &Config) -> Resu
         .ok_or_else(|| anyhow!("GCP project ID is required for GCP deployment"))?;
     let region = args.gcp_region.as_ref()
         .map_or("us-central1".to_string(), |r| r.to_string());
-    let zone = format!("{}-a", region);
     let machine_type = args.gcp_machine_type.as_ref()
         .map_or("e2-medium".to_string(), |m| m.to_string());
     let instance_name = "arch-validator";
@@ -3800,7 +3799,7 @@ async fn start_gcp_validator(args: &ValidatorStartArgs, config: &Config) -> Resu
         .args([
             "compute", "instances", "describe", instance_name,
             "--project", project_id,
-            "--zone", &zone,
+            "--zone", &format!("{}-a", region),
             "--format", "get(name)"
         ])
         .output()
@@ -3819,7 +3818,7 @@ async fn start_gcp_validator(args: &ValidatorStartArgs, config: &Config) -> Resu
                 .args([
                     "compute", "instances", "describe", instance_name,
                     "--project", project_id,
-                    "--zone", &zone,
+                    "--zone", &format!("{}-a", region),
                     "--format", "get(networkInterfaces[0].accessConfigs[0].natIP,status)"
                 ])
                 .output()?;
@@ -3837,7 +3836,7 @@ async fn start_gcp_validator(args: &ValidatorStartArgs, config: &Config) -> Resu
             println!("\nTo view logs, run:");
             println!("  {}", format!("gcloud compute instances get-serial-port-output {} --zone {} --project {}", 
                 instance_name, 
-                zone,
+                &format!("{}-a", region),
                 project_id
             ).cyan());
             
@@ -3850,7 +3849,7 @@ async fn start_gcp_validator(args: &ValidatorStartArgs, config: &Config) -> Resu
             .args([
                 "compute", "instances", "delete", instance_name,
                 "--project", project_id,
-                "--zone", &zone,
+                "--zone", &format!("{}-a", region),
                 "--quiet"  // Skip confirmation
             ])
             .output()
@@ -3939,13 +3938,12 @@ images: ['gcr.io/{}/arch-validator:latest']
             "--zone", &format!("{}-a", region),
             "--machine-type", &machine_type,
             "--container-image", &image_name,
-            "--zone", &zone,
             "--container-env",
             &format!("RUST_LOG=info,NETWORK_MODE={}", "devnet"),
             "--container-command=/usr/bin/local_validator",
             "--container-arg=--rpc-bind-ip=0.0.0.0",
             "--container-arg=--rpc-bind-port=9001",
-            "--container-port=9001",
+            "--tags", "validator",
             &format!("--container-arg=--bitcoin-rpc-endpoint={}", 
                 config.get_string("networks.development.bitcoin_rpc_endpoint")?),
             &format!("--container-arg=--bitcoin-rpc-port={}", 
@@ -3970,7 +3968,7 @@ images: ['gcr.io/{}/arch-validator:latest']
         .args([
             "compute", "instances", "describe", instance_name,
             "--project", project_id,
-            "--zone", &zone,
+            "--zone", &format!("{}-a", region),
             "--format", "get(networkInterfaces[0].accessConfigs[0].natIP)"
         ])
         .output()
@@ -3980,21 +3978,21 @@ images: ['gcr.io/{}/arch-validator:latest']
 
     println!("{}", "Validator deployed successfully to GCP!".bold().green());
     println!("Instance name: {}", instance_name);
-    println!("Instance zone: {}", zone);
+    println!("Instance zone: {}", &format!("{}-a", region));
     println!("External IP: {}", instance_ip);
     println!("Validator RPC endpoint: {}", format!("http://{}:9001", instance_ip).yellow());
     
     println!("\nTo view logs, run:");
     println!("  {}", format!("gcloud compute instances get-serial-port-output {} --zone {} --project {}", 
         instance_name, 
-        zone,
+        &format!("{}-a", region),
         project_id
     ).cyan());
     
     println!("\nTo SSH into the instance, run:");
     println!("  {}", format!("gcloud compute ssh {} --zone {} --project {}", 
         instance_name, 
-        zone,
+        &format!("{}-a", region),
         project_id
     ).cyan());
 
