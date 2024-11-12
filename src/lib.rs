@@ -1,3 +1,5 @@
+mod demo;
+use demo::{setup_demo_environment, build_frontend, get_cloud_run_url};
 use anyhow::anyhow;
 use anyhow::{Context, Result};
 use arch_program::account::AccountMeta;
@@ -231,7 +233,7 @@ pub enum BitcoinCommands {
 pub enum DemoCommands {
     /// Start the demo application
     #[clap(long_about = "Starts the demo application.")]
-    Start,
+    Start(DemoStartArgs),
 
     /// Stop the demo application
     #[clap(long_about = "Stops the demo application.")]
@@ -271,6 +273,10 @@ pub struct CreateAccountArgs {
     /// Custom name for the account
     #[clap(long, help = "Specifies a custom name for the account")]
     name: String,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
 }
 
 #[derive(Args)]
@@ -309,6 +315,10 @@ pub struct DeployArgs {
         help = "Specifies the folder within the project directory to deploy"
     )]
     folder: Option<String>,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
 }
 
 #[derive(Args)]
@@ -319,6 +329,28 @@ pub struct SendCoinsArgs {
     /// Amount to send
     #[clap(long, help = "Specifies the amount of coins to send")]
     amount: u64,
+}
+
+#[derive(Args)]
+pub struct DemoStartArgs {
+    /// Deployment target (local or gcp)
+    #[clap(
+        long,
+        default_value = "local",
+        help = "Specifies where to deploy the demo: local or gcp"
+    )]
+    target: String,
+
+    /// GCP configuration (required for GCP deployment)
+    #[clap(long, help = "GCP project ID")]
+    gcp_project: Option<String>,
+
+    #[clap(long, help = "GCP region")]
+    gcp_region: Option<String>,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
 }
 
 #[derive(Args)]
@@ -1011,9 +1043,11 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     let wallet_manager = WalletManager::new(config)?;
     ensure_wallet_balance(&wallet_manager.client).await?;
 
+    let rpc_url_clone = args.rpc_url.clone().unwrap_or_default();
+
     // Get account address and fund it
     let account_address =
-        task::spawn_blocking(move || get_account_address(program_pubkey.clone())).await?;
+        task::spawn_blocking(move || get_account_address(&rpc_url_clone, program_pubkey.clone())).await?;
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
 
     // Deploy the program
@@ -1023,6 +1057,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         tx_info,
         deploy_folder.to_str().map(String::from),
         config,
+        args.rpc_url.clone(),
     )
     .await?;
 
@@ -1834,6 +1869,15 @@ pub fn load_config(network: &str) -> Result<Config> {
     // Add the network key to the final configuration
     builder = builder.set_override("selected_network", network.to_string())?;
 
+    // Set the bitcoin.network based on the selected network
+    let bitcoin_network = match network {
+        "mainnet" => "bitcoin",
+        "testnet" => "testnet",
+        "development" => "regtest",
+        _ => "regtest", // Default to regtest if unknown
+    };
+    builder = builder.set_override("bitcoin.network", bitcoin_network)?;
+
     // Build the final configuration
     let final_config = builder
         .build()
@@ -2034,6 +2078,7 @@ fn build_program(args: &DeployArgs) -> Result<()> {
     println!("  ✓ Program built successfully");
     Ok(())
 }
+
 fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
     Ok(args.program_key.clone().unwrap_or_else(|| {
         config
@@ -2048,6 +2093,7 @@ async fn deploy_program_with_tx_info(
     tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>,
     deploy_folder: Option<String>,
     config: &Config,
+    rpc_url: Option<String>,
 ) -> Result<()> {
     if let Some(info) = tx_info {
         deploy_program(
@@ -2057,6 +2103,7 @@ async fn deploy_program_with_tx_info(
             0,
             deploy_folder.map(|folder| format!("{}/app/program", folder)),
             config,
+            rpc_url,
         )
         .await?;
         println!("  {} Program deployed successfully", "✓".bold().green());
@@ -2231,6 +2278,8 @@ async fn fund_address(
     let bitcoin_network =
         Network::from_str(&network).context("Invalid Bitcoin network specified in config")?;
 
+        println!("Network: {}", bitcoin_network);
+
     let address = Address::from_str(account_address).context("Invalid account address")?;
     let checked_address = address
         .require_network(bitcoin_network)
@@ -2311,9 +2360,18 @@ async fn fund_address(
         );
         println!("  {} Waiting for funds...", "⏳".bold().blue());
 
-        // TODO: Implement balance checking for non-REGTEST networks
-        Ok(None)
+        // Implement balance checking for non-REGTEST networks
+        loop {
+            let balance = rpc.get_balance(None, None)?;
+            if balance > Amount::from_sat(5000) {
+                println!("  {} Funds received", "✓".bold().green());
+                return Ok(None);
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
+
+    Ok(None)
 }
 
 async fn deploy_program(
@@ -2323,16 +2381,17 @@ async fn deploy_program(
     vout: u32,
     deploy_folder: Option<String>,
     config: &Config,
+    rpc_url: Option<String>,
 ) -> Result<()> {
     // Create a new account for the program
-    create_program_account(program_keypair, program_pubkey, txid, vout).await?;
+    create_program_account(program_keypair, program_pubkey, txid, vout, rpc_url.clone()).await?;
 
     // Deploy the program transactions
-    deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder, config).await?;
+    deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder, config, rpc_url.clone()).await?;
 
     // Make program executable
-    tokio::task::block_in_place( move || {
-        make_program_executable(program_keypair, program_pubkey)
+    tokio::task::block_in_place(move || {
+        make_program_executable(program_keypair, program_pubkey, rpc_url)
     }).await?;
 
     Ok(())
@@ -2360,11 +2419,16 @@ fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config, program_keypair: Option<(Keypair, Pubkey)>) -> Result<()> {
+pub async fn deploy_program_from_path(
+    program_dir: &PathBuf,
+    config: &Config,
+    keypair: Option<(Keypair, Pubkey)>,
+    rpc_url: Option<String>,
+) -> Result<()> {
     println!("  ℹ Deploying program...");
 
     // Prepare program keys if not provided
-    let (program_keypair, program_pubkey) = if let Some(keypair) = program_keypair {
+    let (program_keypair, program_pubkey) = if let Some(keypair) = keypair {
         keypair
     } else {
         prepare_program_keys()?
@@ -2373,23 +2437,31 @@ async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config, progra
     // Build-sbf the program (make .so file) in src folder
     build_program_from_path(program_dir)?;
 
-    // Deploy the program
-    let deploy_result = deploy_program_txs_with_folder(
+    let dummy_txid = "0000000000000000000000000000000000000000000000000000000000000000";
+    let dummy_vout = 0;
+
+    deploy_program(
         &program_keypair,
         &program_pubkey,
-        Some(program_dir.to_str().unwrap().to_string()),
+        &dummy_txid,
+        dummy_vout,
+        Some(program_dir.to_string_lossy().to_string()),
         config,
-    );
-
-    deploy_result.await?;
+        rpc_url,
+    ).await?;
 
     println!("  ✓ Program deployed successfully");
     display_program_id(&program_pubkey);
     Ok(())
 }
 
-async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
+async fn make_program_executable(
+    program_keypair: &Keypair,
+    program_pubkey: &Pubkey,
+    rpc_url: Option<String>,
+) -> Result<()> {
     println!("    Making program executable...");
+    let url = rpc_url.unwrap_or_else(|| common::constants::NODE1_ADDRESS.to_string());
 
     let instruction = Instruction {
         program_id: Pubkey::system_program(),
@@ -2402,28 +2474,56 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
     };
 
     let keypair = program_keypair.clone();
+    let url_clone = url.clone(); // Clone for first closure
 
     let (txid, _) = tokio::task::spawn_blocking(move || {
-        sign_and_send_instruction(instruction, vec![keypair])
+        sign_and_send_instruction(instruction, vec![keypair], Some(url_clone))
     }).await??;
 
     println!("    Transaction sent: {}", txid);
+
+    let url_clone = url.clone(); // Clone for second closure
     tokio::task::spawn_blocking(move || {
-        get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())
+        get_processed_transaction(&url_clone, txid.clone())
     }).await??;
+
     println!("    Program made executable successfully");
     Ok(())
 }
 
-pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, config: &Config) -> Result<()> {
-    let program_pubkey = Pubkey::from_slice(&program_keypair.public_key().serialize()[1..33]);
+async fn deploy_program_txs(
+    program_dir: &PathBuf,
+    config: &Config,
+    keypair: Option<(Keypair, Pubkey)>,
+    rpc_url: Option<String>,
+) -> Result<()> {
+    let (program_keypair, program_pubkey) = keypair.ok_or_else(|| anyhow!("No keypair provided"))?;
 
     let network = config.get_string("bitcoin.network")
         .unwrap_or_else(|_| "regtest".to_string());
     let bitcoin_network =
         Network::from_str(&network).context("Invalid Bitcoin network specified in config")?;
 
-    let elf = fs::read(elf_path).expect("elf path should be available");
+    // Construct the full path to the release directory
+    let release_dir = program_dir.join("target/sbf-solana-solana/release");
+    println!("  ℹ Looking for .so file in release directory: {:?}", release_dir);
+
+    // Find the .so file
+    let elf_path = fs::read_dir(&release_dir)
+        .with_context(|| format!("Failed to read release directory at {:?}", release_dir))?
+        .filter_map(|entry| entry.ok())
+        .find(|entry| {
+            entry.path().extension()
+                .map_or(false, |ext| ext == "so")
+        })
+        .ok_or_else(|| anyhow!("No .so file found in release directory"))?
+        .path();
+
+    println!("  ℹ Found .so file at: {:?}", elf_path);
+
+    // Read the .so file
+    let elf = fs::read(&elf_path)
+        .with_context(|| format!("Failed to read .so file at {:?}", elf_path))?;
 
     let txs = elf
         .chunks(extend_bytes_max_len())
@@ -2446,25 +2546,26 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, confi
                 )],
             };
 
-            let digest_slice =message.hash();
+            let digest_slice = message.hash();
 
             RuntimeTransaction {
                 version: 0,
                 signatures: vec![common::signature::Signature(
-                    sign_message_bip322(program_keypair, &digest_slice, BITCOIN_NETWORK).to_vec(),
+                    sign_message_bip322(&program_keypair, &digest_slice, bitcoin_network).to_vec(),
                 )],
                 message,
             }
         })
         .collect::<Vec<RuntimeTransaction>>();
 
+    let url = rpc_url.unwrap_or_else(|| common::constants::NODE1_ADDRESS.to_string());
+    let url_clone = url.clone();
 
     let txids: Vec<String> = {
-        let node_address = NODE1_ADDRESS.to_string();
-        let txs_clone = txs.clone(); // Clone if necessary
+        let txs_clone = txs.clone();
         let response = task::spawn_blocking(move || {
-            post_data(&node_address, "send_transactions", txs_clone)
-        }).await.expect("Task panicked");
+            post_data(&url_clone, "send_transactions", txs_clone)
+        }).await?;
 
         process_result(response)
             .map_err(|e| anyhow!("Failed to process result: {}", e))?
@@ -2475,70 +2576,68 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, confi
             .collect()
     };
 
-
     let pb = ProgressBar::new(txids.len() as u64);
-
     pb.set_style(ProgressStyle::default_bar()
         .progress_chars("#>-")
         .template("{spinner:.green}[{elapsed_precise:.blue}] {msg:.blue} [{bar:100.green/blue}] {pos}/{len} ({eta})").unwrap());
-
-    pb.set_message("Successfully Processed Deployment Transactions :");
+    pb.set_message("Processing Deployment Transactions:");
 
     for txid in txids {
-        let _processed_tx = task::spawn_blocking(move || get_processed_transaction(NODE1_ADDRESS, txid.clone())).await;
+        let url_clone = url.clone();
+        let txid_clone = txid.clone();
+        task::spawn_blocking(move || {
+            get_processed_transaction(&url_clone, txid_clone)
+        }).await??;
         pb.inc(1);
-        pb.set_message("Successfully Processed Deployment Transactions :");
     }
 
     pb.finish();
-
     Ok(())
 }
 
 async fn deploy_program_txs_with_folder(
     program_keypair: &Keypair,
-    _program_pubkey: &Pubkey,
+    program_pubkey: &Pubkey,
     deploy_folder: Option<String>,
     config: &Config,
+    rpc_url: Option<String>,
 ) -> Result<()> {
     println!("    Deploying program transactions...");
 
-    let so_folder = deploy_folder
-        .ok_or_else(|| anyhow!("No deploy folder specified"))?
-        .to_string();
-    let so_folder = format!("{}/target/sbf-solana-solana/release", so_folder);
+    let program_dir = deploy_folder
+        .ok_or_else(|| anyhow!("No deploy folder specified"))?;
 
-    // Scan the deploy_folder for the .so file in the folder and set so_file to that
-    let so_file = {
-        let mut so_file = None;
-        for file in fs::read_dir(&so_folder)? {
-            let path = file?.path();
-            if path.is_file() && path.extension().unwrap_or_default() == "so" {
-                so_file = path.to_str().map(|s| s.to_string());
-                break;
-            }
-        }
-        so_file.ok_or_else(|| anyhow!("No .so file found in the specified folder"))?
-    };
+    println!("  ℹ Program directory: {}", program_dir);
 
-    if let Err(e) = deploy_program_txs(program_keypair, &so_file, config).await {
+    // Pass the program directory directly without modifying the path
+    let program_dir = PathBuf::from(program_dir);
+
+    if let Err(e) = deploy_program_txs(
+        &program_dir,
+        config,
+        Some((program_keypair.clone(), *program_pubkey)),
+        rpc_url,
+    ).await {
         println!("Failed to deploy program transactions: {}", e);
         return Err(e);
     }
     println!("    Program transactions deployed successfully");
     Ok(())
 }
+
 async fn create_program_account(
     program_keypair: &Keypair,
     program_pubkey: &Pubkey,
     txid: &str,
     vout: u32,
+    rpc_url: Option<String>,
 ) -> Result<()> {
     println!("    Creating program account...");
 
     let program_keypair_clone = program_keypair.clone();
     let program_pubkey_clone = *program_pubkey;
     let txid_clone = txid.to_string();
+    let url = rpc_url.clone();
 
     let (txid, _) = tokio::task::spawn_blocking(move || {
         sign_and_send_instruction(
@@ -2548,15 +2647,24 @@ async fn create_program_account(
                 program_pubkey_clone,
             ),
             vec![program_keypair_clone],
+            url,
         )
     }).await??;
 
-    let _ = tokio::task::spawn_blocking(move || get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())).await;
-    println!("    Program account created successfully");
     Ok(())
 }
 
-pub async fn demo_start(config: &Config) -> Result<()> {
+pub async fn demo_start(args: &DemoStartArgs, config: &Config) -> Result<()> {
+    println!("{}", "Starting the demo application...".bold().green());
+
+    match args.target.as_str() {
+        "local" => start_local_demo(args, config).await,
+        "gcp" => start_gcp_demo(args, config).await,
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
 
     // Get the selected network from the config
@@ -2679,6 +2787,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         create_account(&CreateAccountArgs {
             name: graffiti_key_name.clone(),
             program_id: None,
+            rpc_url: Some(args.rpc_url.clone().unwrap_or_default()),
         }, config).await?;
 
         // Set the program_pubkey to the pubkey of the graffiti account
@@ -2703,11 +2812,12 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     deploy_program_from_path(
         &PathBuf::from(&demo_dir).join("app/program"),
         config,
-        Some((program_keypair.clone(), program_pubkey))
+        Some((program_keypair.clone(), program_pubkey)),
+        Some(args.rpc_url.clone().unwrap_or_default()),
     ).await?;
 
     // Make the program executable
-    make_program_executable(&program_keypair, &program_pubkey).await?;
+    make_program_executable(&program_keypair, &program_pubkey, Some(args.rpc_url.clone().unwrap_or_default())).await?;
 
     let graffiti_wall_state_exists = key_name_exists(&keys_file, "graffiti_wall_state")?;
 
@@ -2718,6 +2828,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         create_account(&CreateAccountArgs {
             name: "graffiti_wall_state".to_string(),
             program_id: Some(hex::encode(program_pubkey.serialize())),
+            rpc_url: Some(args.rpc_url.clone().unwrap_or_default()),
         }, config).await?;
     }
 
@@ -2816,6 +2927,116 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     // Open the browser with the demo application
     if let Err(e) = open_browser(webbrowser::Browser::Default, &format!("http://localhost:5173")) {
         return Err(anyhow!("Failed to open the browser: {}", e));
+    }
+
+    Ok(())
+}
+
+async fn start_gcp_demo(args: &DemoStartArgs, config: &Config) -> Result<()> {
+    println!("Starting GCP deployment...");
+
+    // Setup demo environment first
+    let (demo_dir, _, _, rpc_url) = setup_demo_environment(args, config).await?;
+
+    let project_id = args.gcp_project.clone()
+        .ok_or_else(|| anyhow!("GCP project ID is required for GCP deployment"))?;
+
+    // Build and deploy the demo container
+    println!("Building and deploying demo container...");
+
+    let demo_app_dir = demo_dir.join("app");
+
+    println!("  {} Changing to demo app directory: {:?}", "→".bold().blue(), demo_app_dir);
+
+    std::env::set_current_dir(&demo_app_dir)
+        .context("Failed to change to demo app directory")?;
+
+    // Build the container
+    let image_name = format!("gcr.io/{}/arch-demo", project_id);
+    let build_status = Command::new("docker")
+        .args([
+            "build",
+            "-t", &image_name,
+            "-f", "Dockerfile.cloudrun",
+            "."
+        ])
+        .status()
+        .context("Failed to build demo container")?;
+
+    if !build_status.success() {
+        return Err(anyhow!("Failed to build demo container"));
+    }
+
+    // Push to GCR
+    let push_status = Command::new("docker")
+        .args(["push", &image_name])
+        .status()
+        .context("Failed to push demo container")?;
+
+    if !push_status.success() {
+        return Err(anyhow!("Failed to push demo container"));
+    }
+
+    // Deploy to Cloud Run
+    let deploy_status = Command::new("gcloud")
+        .args([
+            "run", "deploy", "arch-demo",
+            "--image", &image_name,
+            "--platform", "managed",
+            "--region", "us-central1",
+            "--port", "8080",
+            "--allow-unauthenticated",
+            "--project", &project_id,
+            "--set-env-vars", &format!("ARCH_RPC_URL={}", rpc_url),
+        ])
+        .status()
+        .context("Failed to deploy to Cloud Run")?;
+
+    if !deploy_status.success() {
+        return Err(anyhow!("Failed to deploy to Cloud Run"));
+    }
+
+    println!("✓ Demo application deployed successfully to Cloud Run");
+    Ok(())
+}
+
+async fn deploy_to_cloud_run(project_id: &str, region: &str, demo_dir: &Path) -> Result<()> {
+    // Build and push Docker image
+    let image_name = format!("gcr.io/{}/arch-demo", project_id);
+
+    println!("  {} Building Docker image...", "→".bold().blue());
+    let build_output = ShellCommand::new("docker")
+        .args(["build", "--platform", "linux/amd64", "-t", &image_name, "."])
+        .current_dir(demo_dir.join("app/frontend"))
+        .output()?;
+
+    if !build_output.status.success() {
+        return Err(anyhow!("Failed to build Docker image"));
+    }
+
+    println!("  {} Pushing image to Container Registry...", "→".bold().blue());
+    let push_output = ShellCommand::new("docker")
+        .args(["push", &image_name])
+        .output()?;
+
+    if !push_output.status.success() {
+        return Err(anyhow!("Failed to push Docker image"));
+    }
+
+    println!("  {} Deploying to Cloud Run...", "→".bold().blue());
+    let deploy_output = ShellCommand::new("gcloud")
+        .args([
+            "run", "deploy", "arch-demo",
+            "--image", &image_name,
+            "--platform", "managed",
+            "--region", region,
+            "--project", project_id,
+            "--allow-unauthenticated"
+        ])
+        .output()?;
+
+    if !deploy_output.status.success() {
+        return Err(anyhow!("Failed to deploy to Cloud Run"));
     }
 
     Ok(())
@@ -3117,7 +3338,7 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     let caller_pubkey = Pubkey::from_slice(&public_key_bytes[1..33]); // Skip the first byte and take the next 32
 
     // Get account address
-    let account_address = generate_account_address(caller_pubkey).await?;
+    let account_address = generate_account_address(&args.rpc_url.clone().unwrap_or_default(), caller_pubkey).await?;
 
     // Set up Bitcoin RPC client
     let wallet_manager = WalletManager::new(config)?;
@@ -3132,7 +3353,7 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     println!(
         "  {} Minimum required: {} satoshis",
         "ℹ".bold().blue(),
-        "3000".yellow()
+        "5000".yellow()
     );
     println!("  {} Waiting for funds...", "⏳".bold().blue());
 
@@ -3142,6 +3363,7 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
         &account_address,
         &wallet_manager,
         config,
+        Some(args.rpc_url.clone().unwrap_or_default()),
     )
     .await?;
 
@@ -3167,7 +3389,12 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     };
 
     // Transfer ownership to the program
-    transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id).await?;
+    transfer_account_ownership(
+        &caller_keypair,
+        &caller_pubkey,
+        &program_id,
+        Some(args.rpc_url.clone().unwrap_or_default()),  // Add RPC URL
+    ).await?;
 
     // Save the account information to keys.json
     save_keypair_to_json(&keys_file, &caller_keypair, &caller_pubkey, &args.name)?;
@@ -3373,9 +3600,14 @@ pub fn ensure_keys_dir() -> Result<PathBuf> {
     Ok(keys_dir)
 }
 
-async fn generate_account_address(caller_pubkey: Pubkey) -> Result<String> {
+async fn generate_account_address(rpc_url: &str, caller_pubkey: Pubkey) -> Result<String> {
+    let rpc_url_clone = rpc_url.to_string();
+
     // Get program account address from network
-    let account_address = tokio::task::spawn_blocking(move || get_account_address(caller_pubkey)).await.unwrap();
+    let account_address = tokio::task::spawn_blocking(move || {
+        get_account_address(&rpc_url_clone, caller_pubkey)
+    }).await.unwrap();
+
     println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
 
     Ok(account_address)
@@ -3405,15 +3637,15 @@ async fn create_arch_account(
     account_address: &str,
     wallet_manager: &WalletManager,
     config: &Config,
+    rpc_url: Option<String>,
 ) -> Result<()> {
     let tx_info = fund_address(&wallet_manager.client, account_address, config).await?;
-
-    // Output the bitcoin transaction info
-    // println!("  {} Transaction info: {:?}", "ℹ".bold().blue(), tx_info);
 
     if let Some(info) = tx_info {
         let caller_keypair = caller_keypair.clone();
         let caller_pubkey = *caller_pubkey;
+        let rpc_url_clone = rpc_url.clone();
+
         let (txid, _) = tokio::task::spawn_blocking(move || {
             sign_and_send_instruction(
                 SystemInstruction::new_create_account_instruction(
@@ -3425,6 +3657,7 @@ async fn create_arch_account(
                     caller_pubkey,
                 ),
                 vec![caller_keypair],
+                rpc_url_clone,
             )
             .expect("signing and sending a transaction should not fail")
         })
@@ -3442,14 +3675,16 @@ async fn create_arch_account(
             "  {} Warning: No transaction info available for deployment",
             "⚠".bold().yellow()
         );
-        // You might want to implement an alternative deployment method for non-REGTEST networks
+
         Ok(())
     }
 }
+
 async fn transfer_account_ownership(
     caller_keypair: &Keypair,
     account_pubkey: &Pubkey,
     program_pubkey: &Pubkey,
+    rpc_url: Option<String>,
 ) -> Result<()> {
     let mut instruction_data = vec![3]; // Transfer instruction
     instruction_data.extend(program_pubkey.serialize());
@@ -3463,6 +3698,7 @@ async fn transfer_account_ownership(
     let instruction_data_clone = instruction_data.clone();
     let account_pubkey_clone = *account_pubkey;
     let caller_keypair_clone = caller_keypair.clone();
+    let rpc_url_clone = rpc_url.clone();
 
     let (_txid, _) = tokio::task::spawn_blocking(move || {
         sign_and_send_instruction(
@@ -3476,6 +3712,7 @@ async fn transfer_account_ownership(
                 data: instruction_data_clone,
             },
             vec![caller_keypair_clone],
+            rpc_url_clone,
         )
         .expect("signing and sending a transaction should not fail")
     })
@@ -3792,6 +4029,15 @@ async fn start_gcp_validator(args: &ValidatorStartArgs, config: &Config) -> Resu
         .map_or("e2-medium".to_string(), |m| m.to_string());
     let instance_name = "arch-validator";
 
+    // Get network from ValidatorStartArgs, but if development then network is "devnet", if testnet then network is "testnet", if mainnet then network is "mainnet"
+    let network = match args.network.as_str() {
+        "development" => "devnet",
+        "testnet" => "testnet",
+        "mainnet" => "mainnet",
+        _ => "devnet",
+    }.to_string();
+    println!("Network: {}", network.bold().green());
+
     println!("{}", "Starting validator deployment to GCP...".bold().green());
 
     // Check if instance already exists
@@ -3874,7 +4120,7 @@ async fn start_gcp_validator(args: &ValidatorStartArgs, config: &Config) -> Resu
 EXPOSE 9001
 
 ENV RUST_LOG=info
-ENV NETWORK_MODE=devnet
+ENV NETWORK_MODE=$network
 
 ENTRYPOINT ["/usr/bin/local_validator"]
 "#;
@@ -3939,7 +4185,7 @@ images: ['gcr.io/{}/arch-validator:latest']
             "--machine-type", &machine_type,
             "--container-image", &image_name,
             "--container-env",
-            &format!("RUST_LOG=info,NETWORK_MODE={}", "devnet"),
+            &format!("RUST_LOG=info,NETWORK_MODE={}", network),
             "--container-command=/usr/bin/local_validator",
             "--container-arg=--rpc-bind-ip=0.0.0.0",
             "--container-arg=--rpc-bind-port=9001",
@@ -3998,7 +4244,6 @@ images: ['gcr.io/{}/arch-validator:latest']
 
     Ok(())
 }
-
 // Update the validator_stop function signature and implementation
 pub async fn validator_stop(args: &ValidatorStartArgs) -> Result<()> {
     println!("{}", "Stopping the validator...".bold().green());
@@ -4317,7 +4562,7 @@ pub async fn project_deploy(config: &Config) -> Result<()> {
 
     // Here, call your existing deploy function with the program_dir
     // You may need to modify your existing deploy function to accept a PathBuf instead of DeployArgs
-    if let Err(e) = deploy_program_from_path(&program_dir, config, None).await {
+    if let Err(e) = deploy_program_from_path(&program_dir, config, None, None).await {
         println!("Failed to deploy program: {}", e);
         return Err(e);
     }

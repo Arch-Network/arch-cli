@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
         Commands::Deploy(args) => deploy(args, &config).await,
         Commands::Dkg(DkgCommands::Start) => start_dkg(&config).await,
         Commands::Bitcoin(BitcoinCommands::SendCoins(args)) => send_coins(args, &config).await,
-        Commands::Demo(DemoCommands::Start) => demo_start(&config).await,
+        Commands::Demo(DemoCommands::Start(args)) => demo_start(args, &config).await,
         Commands::Demo(DemoCommands::Stop) => demo_stop(&config).await,
         Commands::Account(AccountCommands::Create(args)) => create_account(args, &config).await,
         Commands::Account(AccountCommands::List) => list_accounts().await,
