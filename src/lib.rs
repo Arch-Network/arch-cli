@@ -4227,6 +4227,9 @@ images: ['gcr.io/{}/arch-validator:latest']
     println!("Instance zone: {}", &format!("{}-a", region));
     println!("External IP: {}", instance_ip);
     println!("Validator RPC endpoint: {}", format!("http://{}:9001", instance_ip).yellow());
+
+    println!("\n{}", "Setting up HTTPS access...".bold().blue());
+    setup_ssl_proxy(project_id, &region, &instance_ip).await?;
     
     println!("\nTo view logs, run:");
     println!("  {}", format!("gcloud compute instances get-serial-port-output {} --zone {} --project {}", 
@@ -4326,6 +4329,17 @@ async fn stop_gcp_validator(project_id: &str, region: &str) -> Result<()> {
                     println!("  {} Operation cancelled", "ℹ".bold().blue());
                     return Ok(());
                 }
+
+                // Delete proxy instance first
+                println!("  {} Deleting HTTPS proxy...", "→".bold().blue());
+                let _ = ShellCommand::new("gcloud")
+                    .args([
+                        "compute", "instances", "delete", "arch-validator-proxy",
+                        "--project", project_id,
+                        "--zone", &zone,
+                        "--quiet"
+                    ])
+                    .output();
 
                 println!("  {} Deleting GCP validator...", "→".bold().blue());
                 let delete_output = ShellCommand::new("gcloud")
@@ -4638,6 +4652,191 @@ fn copy_template_files() -> Result<()> {
             println!("Created {} at {:?}", dest, dest_path);
         }
     }
+
+    Ok(())
+}
+
+// Add after the start_gcp_validator function
+async fn setup_ssl_proxy(project_id: &str, region: &str, validator_ip: &str) -> Result<()> {
+    println!("  {} Setting up HTTPS proxy...", "→".bold().blue());
+
+    // Create a temporary directory for the build
+    let temp_dir = tempfile::tempdir()?;
+
+    // Create nginx.conf
+    let nginx_conf = format!(r#"
+events {{
+    worker_connections 1024;
+}}
+http {{
+    # Error log configuration
+    error_log /dev/stderr debug;
+    access_log /dev/stdout combined;
+
+    # Longer timeouts
+    proxy_connect_timeout 60;
+    proxy_send_timeout 60;
+    proxy_read_timeout 60;
+
+    server {{
+        listen 443 ssl;
+        server_name _;
+        
+        ssl_certificate /etc/nginx/ssl/nginx.crt;
+        ssl_certificate_key /etc/nginx/ssl/nginx.key;
+        
+        location / {{
+            proxy_pass http://{}:9001;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Debug headers
+            add_header X-Debug-Target "http://{}:9001" always;
+            add_header X-Debug-Host $host always;
+        }}
+    }}
+}}
+"#, validator_ip, validator_ip);
+
+    fs::write(temp_dir.path().join("nginx.conf"), nginx_conf)?;
+
+    // Create Dockerfile for SSL proxy
+    let dockerfile_content = r#"FROM --platform=linux/amd64 nginx:alpine
+COPY nginx.conf /etc/nginx/nginx.conf
+RUN mkdir -p /etc/nginx/ssl
+RUN apk add --no-cache openssl
+RUN openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/nginx/ssl/nginx.key \
+    -out /etc/nginx/ssl/nginx.crt \
+    -subj "/CN=arch-validator/O=Arch Network/C=US"
+EXPOSE 443
+"#;
+
+    fs::write(temp_dir.path().join("Dockerfile"), dockerfile_content)?;
+
+    // Create and push the proxy image
+    let proxy_image = format!("gcr.io/{}/arch-validator-proxy:latest", project_id);
+
+    println!("  {} Building and pushing proxy image...", "→".bold().blue());
+    let build_status = Command::new("docker")
+        .args([
+            "build",
+            "-t", &proxy_image,
+            temp_dir.path().to_str().unwrap(),
+        ])
+        .status()
+        .context("Failed to build proxy image")?;
+
+    if !build_status.success() {
+        return Err(anyhow!("Failed to build proxy image"));
+    }
+
+    let push_status = Command::new("docker")
+        .args(["push", &proxy_image])
+        .status()
+        .context("Failed to push proxy image")?;
+
+    if !push_status.success() {
+        return Err(anyhow!("Failed to push proxy image"));
+    }
+
+    // Create firewall rule for internal communication
+    println!("  {} Creating firewall rule for internal communication...", "→".bold().blue());
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", "allow-validator-internal",
+            "--project", project_id,
+            "--allow", "tcp:9001",
+            "--source-tags", "validator-proxy",
+            "--target-tags", "validator",
+            "--description", "Allow proxy to validator communication",
+        ])
+        .output();
+
+    // Create firewall rule for HTTPS
+    println!("  {} Creating firewall rule for HTTPS...", "→".bold().blue());
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", "allow-validator-https",
+            "--project", project_id,
+            "--allow", "tcp:443",
+            "--target-tags", "validator-proxy",
+            "--description", "Allow incoming HTTPS traffic for validator proxy",
+        ])
+        .output();
+
+    // Deploy the proxy container
+    println!("  {} Deploying HTTPS proxy...", "→".bold().blue());
+    let create_proxy_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "create-with-container", "arch-validator-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--machine-type", "e2-micro",
+            "--container-image", &proxy_image,
+            "--tags", "validator-proxy",
+            // "--platform", "linux/amd64",
+        ])
+        .output()
+        .context("Failed to create proxy instance")?;
+
+    if !create_proxy_output.status.success() {
+        return Err(anyhow!(
+            "Failed to create proxy instance: {}",
+            String::from_utf8_lossy(&create_proxy_output.stderr)
+        ));
+    }
+
+    // Get the proxy's external IP
+    let proxy_ip = String::from_utf8_lossy(&ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", "arch-validator-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(networkInterfaces[0].accessConfigs[0].natIP)"
+        ])
+        .output()?
+        .stdout).trim().to_string();
+
+    // Add after getting the proxy's external IP
+    println!("\n{}", "Running connectivity tests...".bold().blue());
+
+    // Test if validator is reachable from proxy
+    let test_connection = ShellCommand::new("gcloud")
+        .args([
+            "compute", "ssh", "arch-validator-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--command", &format!("curl -v http://{}:9001", validator_ip)
+        ])
+        .output()
+        .context("Failed to test connection")?;
+
+    println!("Connection test result:");
+    println!("{}", String::from_utf8_lossy(&test_connection.stdout));
+    println!("{}", String::from_utf8_lossy(&test_connection.stderr));
+
+    // Check nginx logs
+    let check_logs = ShellCommand::new("gcloud")
+        .args([
+            "compute", "ssh", "arch-validator-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--command", "docker logs $(docker ps -q)"
+        ])
+        .output()
+        .context("Failed to check nginx logs")?;
+
+    println!("\nNginx logs:");
+    println!("{}", String::from_utf8_lossy(&check_logs.stdout));
+    println!("{}", String::from_utf8_lossy(&check_logs.stderr));
+
+    println!("\n{}", "HTTPS proxy setup complete!".bold().green());
+    println!("Proxy IP: {}", proxy_ip);
+    println!("HTTPS endpoint: {}", format!("https://{}", proxy_ip).yellow());
+    println!("\nNote: Using self-signed certificate. You may need to accept the security warning in your browser.");
 
     Ok(())
 }
