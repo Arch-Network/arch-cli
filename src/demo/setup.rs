@@ -1,7 +1,8 @@
 use crate::{
-    create_account, deploy_program_from_path, extract_project_files, find_key_name_by_pubkey,
-    get_config_dir, get_keypair_from_name, get_pubkey_from_name, key_name_exists,
-    make_program_executable, Config, CreateAccountArgs, DemoStartArgs, PROJECT_DIR, build_frontend
+    build_frontend, create_account, deploy_program_from_path, extract_project_files,
+    find_key_name_by_pubkey, get_config_dir, get_keypair_from_name, get_pubkey_from_name,
+    key_name_exists, make_program_executable, Config, CreateAccountArgs, DemoStartArgs,
+    PROJECT_DIR,
 };
 use anyhow::{Context, Result};
 use arch_program::pubkey::Pubkey;
@@ -16,7 +17,8 @@ pub async fn setup_demo_environment(
     println!("{}", "Setting up demo environment...".bold().green());
 
     // Get network type from config
-    let network = config.get_string("bitcoin.network")
+    let network = config
+        .get_string("bitcoin.network")
         .unwrap_or_else(|_| "regtest".to_string());
     println!("Network type: {}", network);
 
@@ -148,7 +150,7 @@ pub async fn setup_demo_environment(
         Some(&rpc_url),
         &program_pubkey,
         &wall_pubkey,
-        &network
+        &network,
     )?;
 
     Ok((demo_dir, program_pubkey, wall_pubkey, rpc_url))
