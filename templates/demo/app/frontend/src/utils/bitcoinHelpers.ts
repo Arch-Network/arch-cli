@@ -7,7 +7,7 @@ export interface UtxoInfo {
   satoshis: number;
 }
 
-const client = new ArchRpcClient((import.meta as any).env.VITE_ARCH_NODE_URL); // Replace with your actual Arch node URL
+const client = new ArchRpcClient((import.meta as any).env.VITE_RPC_URL); // Replace with your actual Arch node URL
 
 export async function getAccountAddress(pubkey: Pubkey): Promise<string> {
   console.log("pubkey", pubkey.toString());

@@ -9,7 +9,7 @@ import * as borsh from 'borsh';
 window.Buffer = Buffer;
 
 // Environment variables for configuration
-const client = new RpcConnection((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
+const client = new RpcConnection((import.meta as any).env.VITE_RPC_URL || 'http://localhost:9002');
 const PROGRAM_PUBKEY = (import.meta as any).env.VITE_PROGRAM_PUBKEY;
 const WALL_ACCOUNT_PUBKEY = (import.meta as any).env.VITE_WALL_ACCOUNT_PUBKEY;
 
