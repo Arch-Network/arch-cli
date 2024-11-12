@@ -85,7 +85,11 @@ pub fn post(url: &str, method: &str) -> String {
 }
 
 pub fn post_data<T: Serialize + std::fmt::Debug>(url: &str, method: &str, params: T) -> String {
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .danger_accept_invalid_certs(true)  // Ignore SSL certificate validation
+        .build()
+        .expect("client should be built");
+
     let res = client
         .post(url)
         .header("content-type", "application/json")

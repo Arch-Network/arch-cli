@@ -2239,7 +2239,19 @@ fn generate_new_keypair() -> Result<(secp256k1::Keypair, Pubkey)> {
     let secp = Secp256k1::new();
     let (secret_key, _) = secp.generate_keypair(&mut OsRng);
     let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
-    let pubkey = Pubkey::from_slice(&keypair.public_key().serialize());
+
+    // Handle the public key format consistently
+    let serialized_pubkey = keypair.public_key().serialize();
+    let pubkey = if serialized_pubkey.len() == 33 {
+        // Compressed key format
+        Pubkey::from_slice(&serialized_pubkey[1..33])
+    } else if serialized_pubkey.len() == 65 {
+        // Uncompressed key format
+        Pubkey::from_slice(&serialized_pubkey[1..33])
+    } else {
+        return Err(anyhow!("Invalid public key length: {}", serialized_pubkey.len()));
+    };
+
     Ok((keypair, pubkey))
 }
 
@@ -2285,7 +2297,7 @@ async fn fund_address(
         .require_network(bitcoin_network)
         .context("Account address does not match the configured Bitcoin network")?;
 
-    if bitcoin_network == Network::Regtest {
+    if bitcoin_network == Network::Regtest || bitcoin_network == Network::Testnet {
         // Ensure the wallet has funds
         let balance = rpc.get_balance(None, None)?;
         if balance == Amount::ZERO {
@@ -2312,8 +2324,8 @@ async fn fund_address(
             None,                           // comment_to
             Some(false),                    // subtract_fee_from_amount
             None,                           // replaceable (RBF)
-            Some(10),                        // conf_target (1 block for high priority)
-            Some(bitcoincore_rpc::json::EstimateMode::Unset), // estimate_mode
+            Some(1),                        // conf_target (1 block for high priority)
+            Some(bitcoincore_rpc::json::EstimateMode::Economical), // estimate_mode
         )?;
 
         println!(
@@ -2326,25 +2338,49 @@ async fn fund_address(
         let checked_new_address = new_address.require_network(bitcoin_network)?;
         rpc.generate_to_address(1, &checked_new_address)?;
 
+        // Create a progress bar for waiting
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.blue} {msg}")
+                .unwrap()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈"),
+        );
+
+        let start_time = std::time::Instant::now();
+        let timeout = Duration::from_secs(3600); // 60 minutes timeout
+
         // Wait for transaction confirmation
         loop {
+            if start_time.elapsed() > timeout {
+                pb.finish_with_message("❌ Transaction confirmation timed out after 60 minutes");
+                return Err(anyhow!("Transaction confirmation timed out"));
+            }
+
             match rpc.get_transaction(&tx, None) {
                 Ok(info) if info.info.confirmations > 0 => {
-                    println!(
-                        "  {} Transaction confirmed with {} confirmations",
-                        "✓".bold().green(),
+                    pb.finish_with_message(format!(
+                        "✓ Transaction confirmed with {} confirmations",
                         info.info.confirmations.to_string().yellow()
-                    );
+                    ));
                     return Ok(Some(info));
                 }
-                Ok(_) => println!("  {} Waiting for confirmation...", "⏳".bold().blue()),
-                Err(e) => println!(
-                    "  {} Error checking transaction: {}",
-                    "⚠".bold().yellow(),
-                    e.to_string().red()
-                ),
+                Ok(_) => {
+                    let elapsed = start_time.elapsed().as_secs();
+                    pb.set_message(format!(
+                        "Waiting for confirmation... ({:02}:{:02})",
+                        elapsed / 60,
+                        elapsed % 60
+                    ));
+                }
+                Err(e) => {
+                    pb.set_message(format!(
+                        "⚠ Error checking transaction: {}. Retrying...",
+                        e.to_string()
+                    ));
+                }
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(5)).await; // Check every 5 seconds instead of 1
         }
     } else {
         println!("{}", "Please deposit funds to continue:".bold());
