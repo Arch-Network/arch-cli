@@ -7,6 +7,7 @@ use arch_program::instruction::Instruction;
 use arch_program::message::Message;
 use arch_program::pubkey::Pubkey;
 use arch_program::system_instruction::SystemInstruction;
+use rand::{distributions::Alphanumeric, Rng};
 use bitcoin::key::UntweakedKeypair;
 use bitcoin::Amount;
 use bitcoin::Network;
@@ -193,15 +194,40 @@ pub enum ProjectCommands {
 pub enum IndexerCommands {
     /// Start the indexer
     #[clap(long_about = "Starts the arch-indexer using Docker Compose.")]
-    Start,
+    Start(IndexerStartArgs),
 
     /// Stop the indexer
     #[clap(long_about = "Stops the arch-indexer using Docker Compose.")]
-    Stop,
+    Stop(IndexerStartArgs),
 
     /// Clean the indexer
     #[clap(long_about = "Removes the indexer data and configuration files.")]
     Clean,
+}
+
+#[derive(Args)]
+pub struct IndexerStartArgs {
+    /// Deployment target (local or gcp)
+    #[clap(
+        long,
+        default_value = "local",
+        help = "Specifies where to deploy the indexer: local or gcp"
+    )]
+    target: String,
+
+    /// GCP configuration (required for GCP deployment)
+    #[clap(long, help = "GCP project ID")]
+    gcp_project: Option<String>,
+
+    #[clap(long, help = "GCP region")]
+    gcp_region: Option<String>,
+
+    #[clap(long, help = "GCP machine type")]
+    gcp_machine_type: Option<String>,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -3758,7 +3784,15 @@ async fn transfer_account_ownership(
     Ok(())
 }
 
-pub async fn indexer_start(config: &Config) -> Result<()> {
+pub async fn indexer_start(args: &IndexerStartArgs, config: &Config) -> Result<()> {
+    match args.target.as_str() {
+        "local" => start_local_indexer(config).await,
+        "gcp" => start_gcp_indexer(args, config).await,
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+pub async fn start_local_indexer(config: &Config) -> Result<()> {
     println!("{}", "Starting the arch-indexer...".bold().green());
 
     let arch_node_url = config.get_string("leader_rpc_endpoint")?;
@@ -3809,6 +3843,400 @@ pub async fn indexer_start(config: &Config) -> Result<()> {
     Ok(())
 }
 
+async fn prepare_indexer_files(temp_dir: &Path) -> Result<()> {
+    println!("  {} Preparing indexer files...", "→".bold().blue());
+
+    // Clone the repository
+    let clone_status = Command::new("git")
+        .args([
+            "clone",
+            "https://github.com/arch-network/arch-indexer.git",
+            temp_dir.to_str().unwrap()
+        ])
+        .status()
+        .context("Failed to clone indexer repository")?;
+
+    if !clone_status.success() {
+        return Err(anyhow!("Failed to clone indexer repository"));
+    }
+
+    // Create docker-compose.yml for GCP
+    let docker_compose = r#"version: '3'
+services:
+  indexer:
+    build: .
+    environment:
+      - DB_USER=postgres
+      - DB_HOST=127.0.0.1
+      - DB_NAME=archindexer
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=5432
+      - ARCH_NODE_URL=${ARCH_NODE_URL}
+    ports:
+      - "5175:5175"
+    restart: always
+
+  db:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=archindexer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: always
+
+volumes:
+  pgdata:"#;
+
+    fs::write(temp_dir.join("docker-compose.yml"), docker_compose)?;
+
+    // Create Dockerfile
+    let dockerfile = r#"FROM node:18-slim
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm install
+COPY . .
+EXPOSE 5175
+CMD ["node", "src/index.js"]"#;
+
+    fs::write(temp_dir.join("Dockerfile"), dockerfile)?;
+
+    // Create init.sql
+    let init_sql = r#"CREATE TABLE IF NOT EXISTS blocks (
+    height BIGINT PRIMARY KEY,
+    hash TEXT NOT NULL,
+    timestamp BIGINT,
+    bitcoin_block_height BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+    txid TEXT PRIMARY KEY,
+    block_height BIGINT REFERENCES blocks(height),
+    data JSONB,
+    status INTEGER,
+    bitcoin_txids TEXT[]
+);"#;
+
+    fs::write(temp_dir.join("init.sql"), init_sql)?;
+
+    Ok(())
+}
+
+async fn stop_gcp_indexer(args: &IndexerStartArgs) -> Result<()> {
+    let project_id = args.gcp_project.as_ref()
+        .ok_or_else(|| anyhow!("GCP project ID is required"))?;
+    let zone = &"us-central1".to_string();
+    let region = args.gcp_region.as_ref().unwrap_or(zone);
+
+    println!("{}", "Stopping GCP indexer...".bold().green());
+
+    // Stop and delete the indexer instance
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "delete", "arch-indexer",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--quiet"
+        ])
+        .output()?;
+
+    // Stop and delete the proxy instance
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "delete", "arch-indexer-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--quiet"
+        ])
+        .output()?;
+
+    println!("{}", "GCP indexer stopped successfully!".bold().green());
+    Ok(())
+}
+
+pub async fn start_gcp_indexer(args: &IndexerStartArgs, config: &Config) -> Result<()> {
+    let project_id = args.gcp_project.as_ref()
+        .ok_or_else(|| anyhow!("GCP project ID is required for GCP deployment"))?;
+    let zone = &"us-central1".to_string();
+    let machine = &"e2-medium".to_string();
+    let region = args.gcp_region.as_ref().unwrap_or(zone);
+    let machine_type = args.gcp_machine_type.as_ref().unwrap_or(machine);
+
+    println!("Starting indexer deployment to GCP...");
+
+    let temp_dir = tempfile::tempdir()?;
+    prepare_indexer_files(temp_dir.path()).await?;
+
+    // Modify the Dockerfile to include PostgreSQL
+    let dockerfile = r#"FROM node:18-slim
+
+# Install PostgreSQL
+RUN apt-get update && apt-get install -y postgresql postgresql-contrib
+
+# Create directory for PostgreSQL data
+RUN mkdir -p /var/lib/postgresql/data && chown -R postgres:postgres /var/lib/postgresql/data
+
+# Copy application files
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm install
+COPY . .
+
+# Copy init script
+COPY init.sql /docker-entrypoint-initdb.d/
+COPY start.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/start.sh
+
+EXPOSE 5175
+CMD ["/usr/local/bin/start.sh"]"#;
+
+    fs::write(temp_dir.path().join("Dockerfile"), dockerfile)?;
+
+    // Create start.sh script
+    let start_script = r#"#!/bin/bash
+# Start PostgreSQL
+service postgresql start
+
+# Initialize database
+su - postgres -c "createdb archindexer"
+su - postgres -c "psql archindexer < /docker-entrypoint-initdb.d/init.sql"
+
+# Start the indexer
+node src/index.js"#;
+
+    fs::write(temp_dir.path().join("start.sh"), start_script)?;
+
+    // Build and push using Cloud Build
+    let cloudbuild_content = format!(r#"steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/{}/arch-indexer:latest', '.']
+images: ['gcr.io/{}/arch-indexer:latest']
+"#, project_id, project_id);
+
+    fs::write(temp_dir.path().join("cloudbuild.yaml"), cloudbuild_content)?;
+
+    println!("  {} Building and pushing indexer image...", "→".bold().blue());
+    let build_output = ShellCommand::new("gcloud")
+        .args([
+            "builds", "submit",
+            "--config", temp_dir.path().join("cloudbuild.yaml").to_str().unwrap(),
+            "--project", project_id,
+            temp_dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .context("Failed to build and push image")?;
+
+    if !build_output.status.success() {
+        return Err(anyhow!(
+            "Failed to build indexer image: {}",
+            String::from_utf8_lossy(&build_output.stderr)
+        ));
+    }
+
+    // Deploy the indexer container
+    println!("  {} Deploying indexer to GCP...", "→".bold().blue());
+    let rpc_url = args.rpc_url.as_deref().unwrap_or("http://localhost:9001");
+    let create_instance_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "create-with-container", "arch-indexer",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--machine-type", machine_type,
+            "--container-image", &format!("gcr.io/{}/arch-indexer:latest", project_id),
+            "--tags", "indexer",
+            "--container-env", &format!("ARCH_NODE_URL={}", rpc_url),
+            "--container-env", "DB_HOST=localhost",
+            "--container-env", "DB_USER=postgres",
+            "--container-env", "DB_NAME=archindexer",
+            "--container-env", "DB_PORT=5432"
+        ])
+        .output()
+        .context("Failed to create indexer instance")?;
+
+    // Rest of the function (SSL proxy setup) remains the same
+    let indexer_ip = String::from_utf8_lossy(&ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", "arch-indexer",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(networkInterfaces[0].networkIP)"
+        ])
+        .output()?
+        .stdout).trim().to_string();
+
+    setup_indexer_ssl_proxy(project_id, region, &indexer_ip).await?;
+
+    Ok(())
+}
+
+async fn setup_indexer_ssl_proxy(project_id: &str, region: &str, indexer_ip: &str) -> Result<()> {
+    println!("  {} Setting up HTTPS proxy for indexer...", "→".bold().blue());
+
+    let temp_dir = tempfile::tempdir()?;
+
+    // Create nginx.conf for indexer
+    let nginx_conf = format!(r#"
+events {{
+    worker_connections 1024;
+}}
+http {{
+    error_log /dev/stderr debug;
+    access_log /dev/stdout combined;
+
+    proxy_connect_timeout 60;
+    proxy_send_timeout 60;
+    proxy_read_timeout 60;
+
+    server {{
+        listen 443 ssl;
+        server_name _;
+
+        ssl_certificate /etc/nginx/ssl/nginx.crt;
+        ssl_certificate_key /etc/nginx/ssl/nginx.key;
+
+        location / {{
+            proxy_pass http://{}:5175;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Enable CORS
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' '*' always;
+
+            if ($request_method = 'OPTIONS') {{
+                add_header 'Access-Control-Allow-Origin' '*';
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+                add_header 'Access-Control-Allow-Headers' '*';
+                add_header 'Access-Control-Max-Age' 1728000;
+                add_header 'Content-Type' 'text/plain charset=UTF-8';
+                add_header 'Content-Length' 0;
+                return 204;
+            }}
+        }}
+    }}
+}}
+"#, indexer_ip);
+
+    // Write nginx.conf (your existing config is good)
+    fs::write(temp_dir.path().join("nginx.conf"), &nginx_conf)?;
+
+    // Create Dockerfile for SSL proxy
+    let dockerfile_content = r#"FROM --platform=linux/amd64 nginx:alpine
+COPY nginx.conf /etc/nginx/nginx.conf
+RUN mkdir -p /etc/nginx/ssl
+RUN apk add --no-cache openssl
+RUN openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/nginx/ssl/nginx.key \
+    -out /etc/nginx/ssl/nginx.crt \
+    -subj "/CN=arch-indexer/O=Arch Network/C=US"
+EXPOSE 443
+"#;
+
+    fs::write(temp_dir.path().join("Dockerfile"), dockerfile_content)?;
+
+    // Build and push the proxy image
+    let proxy_image = format!("gcr.io/{}/arch-indexer-proxy:latest", project_id);
+
+    println!("  {} Building and pushing proxy image...", "→".bold().blue());
+    let build_status = Command::new("docker")
+        .args([
+            "build",
+            "-t", &proxy_image,
+            temp_dir.path().to_str().unwrap(),
+        ])
+        .status()
+        .context("Failed to build proxy image")?;
+
+    if !build_status.success() {
+        return Err(anyhow!("Failed to build proxy image"));
+    }
+
+    let push_status = Command::new("docker")
+        .args(["push", &proxy_image])
+        .status()
+        .context("Failed to push proxy image")?;
+
+    if !push_status.success() {
+        return Err(anyhow!("Failed to push proxy image"));
+    }
+
+    // Create firewall rules
+    println!("  {} Creating firewall rules...", "→".bold().blue());
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", "allow-indexer-internal",
+            "--project", project_id,
+            "--allow", "tcp:5175",
+            "--source-tags", "indexer-proxy",
+            "--target-tags", "indexer",
+            "--description", "Allow proxy to indexer communication",
+        ])
+        .output();
+
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", "allow-indexer-https",
+            "--project", project_id,
+            "--allow", "tcp:443",
+            "--target-tags", "indexer-proxy",
+            "--description", "Allow incoming HTTPS traffic for indexer proxy",
+        ])
+        .output();
+
+    // Deploy the proxy container
+    println!("  {} Deploying HTTPS proxy...", "→".bold().blue());
+    let create_proxy_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "create-with-container", "arch-indexer-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--machine-type", "e2-micro",
+            "--container-image", &proxy_image,
+            "--tags", "indexer-proxy",
+        ])
+        .output()
+        .context("Failed to create proxy instance")?;
+
+    if !create_proxy_output.status.success() {
+        return Err(anyhow!(
+            "Failed to create proxy instance: {}",
+            String::from_utf8_lossy(&create_proxy_output.stderr)
+        ));
+    }
+
+    // Get the proxy's external IP
+    let proxy_ip = String::from_utf8_lossy(&ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", "arch-indexer-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(networkInterfaces[0].accessConfigs[0].natIP)"
+        ])
+        .output()?
+        .stdout).trim().to_string();
+
+    println!("\n{}", "HTTPS proxy setup complete!".bold().green());
+    println!("Proxy IP: {}", proxy_ip);
+    println!("HTTPS endpoint: {}", format!("https://{}", proxy_ip).yellow());
+
+    Ok(())
+}
+
+fn generate_random_password() -> String {
+    // Generate a random password with:
+    // - Length of 16 characters
+    // - Mix of uppercase, lowercase, numbers
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(16)
+        .map(char::from)
+        .collect()
+}
+
 fn get_indexer_dir() -> Result<PathBuf> {
     let config_dir = get_config_dir()?;
     let indexer_dir = config_dir.join("arch-indexer");
@@ -3850,7 +4278,15 @@ fn clone_or_update_repo(indexer_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn indexer_stop(config: &Config) -> Result<()> {
+pub async fn indexer_stop(args: &IndexerStartArgs, config: &Config) -> Result<()> {
+    match args.target.as_str() {
+        "local" => stop_local_indexer(config).await,
+        "gcp" => stop_gcp_indexer(args).await,
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+pub async fn stop_local_indexer(config: &Config) -> Result<()> {
     println!("{}", "Stopping the arch-indexer...".bold().green());
 
     // Get the selected network from the config
