@@ -3144,8 +3144,6 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
         ("INDEXER_PORT", &indexer_port_str),
     ];
 
-    println!("  {} Environment variables: {:?}", "ℹ".bold().blue(), env_vars);
-
     // Start the demo application
     println!("  {} Starting demo containers...", "→".bold().blue());
 
