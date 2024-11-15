@@ -134,6 +134,13 @@ const GraffitiWallComponent: React.FC = () => {
         const wallData = userAccount.data;
         
         console.log(`Wall data: ${wallData}`);
+
+        // If data is empty or invalid length, just set empty messages without error
+        if (!wallData || wallData.length < 4) {
+            setWallData([]);
+            setError(null); // Clear any existing errors
+            return;
+        }
         
         // Deserialize the wall data using borsh
         // Read data directly from the buffer
