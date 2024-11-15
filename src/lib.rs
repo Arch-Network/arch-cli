@@ -55,6 +55,7 @@ use common::wallet_manager::*;
 
 static PROJECT_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/demo");
 static SAMPLE_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/sample");
+static TEMPLATES_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
 #[derive(Deserialize)]
 pub struct ServiceConfig {
@@ -546,17 +547,13 @@ fn extract_project_files(project_dir: &Dir, target_dir: &Path) -> Result<()> {
             }
             include_dir::DirEntry::Dir(dir) => {
                 let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
-                match dir_name {
-                    // Add bip322 to the list of top-level directories
-                    "app" | "program" | "common" | "bip322" => {
-                        // These directories should be at the top level
-                        extract_dir_contents(dir, &target_dir.join(dir_name))?;
-                    }
-                    _ => {
-                        // Other directories follow the original structure
-                        let new_target_dir = target_dir.join(dir.path());
-                        extract_dir_contents(dir, &new_target_dir)?;
-                    }
+                if dir_name == "app" {
+                    // App directory should be at the top level
+                    extract_dir_contents(dir, &target_dir.join(dir_name))?;
+                } else {
+                    // Other directories follow the original structure
+                    let new_target_dir = target_dir.join(dir.path());
+                    extract_dir_contents(dir, &new_target_dir)?;
                 }
             }
         }
@@ -564,17 +561,21 @@ fn extract_project_files(project_dir: &Dir, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn extract_dir_contents(dir: &Dir, target_dir: &Path) -> Result<()> {
-    fs::create_dir_all(target_dir)?;
+fn extract_dir_contents(dir: &Dir, target_path: &Path) -> Result<()> {
     for entry in dir.entries() {
         match entry {
             include_dir::DirEntry::File(file) => {
-                let target_path = target_dir.join(file.path().file_name().unwrap());
-                fs::write(target_path, file.contents())?;
+                let relative_path = file.path();
+                let target_file = target_path.join(relative_path);
+                if let Some(parent) = target_file.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(target_file, file.contents())?;
             }
             include_dir::DirEntry::Dir(subdir) => {
-                let new_target_dir = target_dir.join(subdir.path().file_name().unwrap());
-                extract_dir_contents(subdir, &new_target_dir)?;
+                let new_target = target_path.join(subdir.path());
+                fs::create_dir_all(&new_target)?;
+                extract_dir_contents(subdir, &new_target)?;
             }
         }
     }
@@ -691,20 +692,190 @@ fn prompt_for_project_dir(default_dir: &Path) -> Result<PathBuf> {
     }
 }
 
-fn create_project_dir(project_dir: &Path) -> Result<()> {
-    if !project_dir.exists() {
-        println!(
-            "  {} Directory does not exist. Creating it now...",
-            "ℹ".bold().blue()
-        );
-        match fs::create_dir_all(project_dir) {
-            Ok(_) => println!("  {} Directory created successfully", "✓".bold().green()),
-            Err(e) => {
-                return Err(anyhow!(
-                    "Failed to create directory '{}': {}",
-                    project_dir.display(),
-                    e
-                ))
+pub async fn create_project(args: &CreateProjectArgs, config: &Config) -> Result<()> {
+    println!("{}", "Creating new project...".bold().green());
+
+    // Get base project directory from config
+    let base_dir = PathBuf::from(config.get_string("project.directory")?);
+
+    // Create base directory if it doesn't exist
+    if !base_dir.exists() {
+        fs::create_dir_all(&base_dir)?;
+        println!("  {} Created base directory at {:?}", "✓".bold().green(), base_dir);
+    }
+
+    // Create shared libraries at base directory level
+    println!("  {} Setting up shared libraries...", "ℹ".bold().blue());
+    for lib in &["bip322", "common", "program"] {
+        let source_dir = TEMPLATES_DIR.get_dir(lib)
+            .ok_or_else(|| anyhow!("Template directory '{}' not found", lib))?;
+        let lib_dir = base_dir.join(lib);
+
+        // Create the library directory
+        fs::create_dir_all(&lib_dir)?;
+        
+        // Extract contents directly to the library directory, maintaining original structure
+        for entry in source_dir.entries() {
+            match entry {
+                include_dir::DirEntry::Dir(subdir) => {
+                    let target_dir = lib_dir.join(subdir.path().file_name().unwrap());
+                    fs::create_dir_all(&target_dir)?;
+                    extract_recursive(subdir, &target_dir)?;
+                }
+                include_dir::DirEntry::File(file) => {
+                    let target_file = lib_dir.join(file.path().file_name().unwrap());
+                    fs::write(target_file, file.contents())?;
+                }
+            }
+        }
+
+        println!("  {} Created shared library {} at {:?}", "✓".bold().green(), lib, lib_dir);
+    }
+
+    // Ensure projects directory exists within the base directory
+    let projects_dir = base_dir.join("projects");
+    if !projects_dir.exists() {
+        fs::create_dir_all(&projects_dir)?;
+        println!("  {} Created projects directory at {:?}", "✓".bold().green(), projects_dir);
+    }
+
+    // Get project name
+    let project_name = args.name.clone().unwrap_or_else(|| {
+        Input::<String>::new()
+            .with_prompt("Enter a name for your project")
+            .interact()
+            .unwrap()
+    });
+
+    // Create project directory within projects directory
+    let project_dir = projects_dir.join(&project_name);
+    if project_dir.exists() {
+        return Err(anyhow!("Project {} already exists", project_name));
+    }
+
+    // Create the project directory and extract sample contents
+    fs::create_dir_all(&project_dir)?;
+
+    for entry in SAMPLE_DIR.entries() {
+        match entry {
+            include_dir::DirEntry::File(file) => {
+                let target_path = project_dir.join(file.path().file_name().unwrap());
+                println!("    {} Extracting file: {:?}", "📄".bold().blue(), target_path);
+                fs::write(target_path, file.contents())?;
+            }
+            include_dir::DirEntry::Dir(dir) => {
+                let dir_name = dir.path().file_name().unwrap();
+                let target_path = project_dir.join(dir_name);
+                println!("    {} Extracting directory: {:?}", "📁".bold().blue(), target_path);
+
+                fs::create_dir_all(&target_path)?;
+                for subentry in dir.entries() {
+                    match subentry {
+                        include_dir::DirEntry::File(file) => {
+                            let file_path = target_path.join(file.path().file_name().unwrap());
+                            println!("      {} Extracting file: {:?}", "📄".bold().blue(), file_path);
+                            fs::write(file_path, file.contents())?;
+                        }
+                        include_dir::DirEntry::Dir(subdir) => {
+                            let subdir_name = subdir.path().file_name().unwrap();
+                            let subdir_path = target_path.join(subdir_name);
+                            println!("      {} Extracting directory: {:?}", "📁".bold().blue(), subdir_path);
+
+                            // Create subdirectory and copy its contents directly
+                            fs::create_dir_all(&subdir_path)?;
+                            for item in subdir.entries() {
+                                match item {
+                                    include_dir::DirEntry::File(file) => {
+                                        let file_path = subdir_path.join(file.path().file_name().unwrap());
+                                        fs::write(file_path, file.contents())?;
+                                    }
+                                    include_dir::DirEntry::Dir(d) => {
+                                        let d_path = subdir_path.join(d.path().file_name().unwrap());
+                                        fs::create_dir_all(&d_path)?;
+                                        for f in d.entries() {
+                                            if let include_dir::DirEntry::File(file) = f {
+                                                fs::write(d_path.join(file.path().file_name().unwrap()), file.contents())?;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Create Vite app using npm
+    println!("Creating Vite application...");
+    let create_vite_output = std::process::Command::new("npm")
+        .args(["create", "vite@latest", "frontend", "--", "--template", "react"])
+        .current_dir(&project_dir.join("app"))
+        .output()
+        .context("Failed to create Vite application")?;
+
+    if !create_vite_output.status.success() {
+        return Err(anyhow!("Failed to create Vite application: {}",
+            String::from_utf8_lossy(&create_vite_output.stderr)));
+    }
+    println!("  {} Created Vite application", "✓".bold().green());
+
+    // Change to frontend directory and install base dependencies
+    let frontend_dir = project_dir.join("app/frontend");
+    let install_output = std::process::Command::new("npm")
+        .arg("install")
+        .current_dir(&frontend_dir)
+        .output()
+        .context("Failed to install base dependencies")?;
+
+    if !install_output.status.success() {
+        return Err(anyhow!("Failed to install base dependencies: {}",
+            String::from_utf8_lossy(&install_output.stderr)));
+    }
+    println!("  {} Installed base dependencies", "✓".bold().green());
+
+    // Install additional packages
+    let additional_packages = ["sats-connect", "@saturnbtcio/arch-sdk"];
+    let install_additional_output = std::process::Command::new("npm")
+        .arg("install")
+        .args(&additional_packages)
+        .current_dir(&frontend_dir)
+        .output()
+        .context("Failed to install additional packages")?;
+
+    if !install_additional_output.status.success() {
+        return Err(anyhow!("Failed to install additional packages: {}",
+            String::from_utf8_lossy(&install_additional_output.stderr)));
+    }
+    println!("  {} Installed additional packages", "✓".bold().green());
+
+    println!("{}", "Project created successfully! 🎉".bold().green());
+    println!("Project location: {:?}", project_dir);
+
+    println!("\n{}", "Next steps:".bold().yellow());
+    println!(
+        "  1. Navigate to {} to find the Rust program template",
+        project_dir.join("app").join("program").display().to_string().yellow()
+    );
+    println!("  2. Edit the source code to implement your program logic");
+    println!("  3. When ready, run {} to compile and deploy your program to the network", "arch-cli deploy".cyan());
+    println!("\n{}", "Need help? Check out our documentation at https://arch-network.github.io/docs/".italic());
+
+    Ok(())
+}
+
+fn extract_recursive(dir: &Dir, target_path: &Path) -> Result<()> {
+    for entry in dir.entries() {
+        match entry {
+            include_dir::DirEntry::Dir(subdir) => {
+                let target_dir = target_path.join(subdir.path().file_name().unwrap());
+                fs::create_dir_all(&target_dir)?;
+                extract_recursive(subdir, &target_dir)?;
+            }
+            include_dir::DirEntry::File(file) => {
+                let target_file = target_path.join(file.path().file_name().unwrap());
+                fs::write(target_file, file.contents())?;
             }
         }
     }
@@ -993,12 +1164,12 @@ pub async fn server_start(config: &Config) -> Result<()> {
 pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
 
-    // Get the project directory from the config
+    // Get the project directory from the config and append "/projects" to the end
     let project_dir = PathBuf::from(
         config
             .get_string("project.directory")
-            .context("Failed to get project directory from config")?,
-    );
+            .context("Failed to get project directory from config")?
+    ).join("projects");
 
     // Determine the deploy folder
     let deploy_folder = if let Some(folder) = &args.folder {
@@ -1052,7 +1223,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
 
     // Create a new DeployArgs with the updated folder
     let updated_args = DeployArgs {
-        folder: Some(deploy_folder.to_str().unwrap().to_string()),
+        folder: Some(deploy_folder.join("app/program").to_str().unwrap().to_string()),
         ..args.clone()
     };
 
@@ -2075,9 +2246,13 @@ fn get_program_path(args: &DeployArgs) -> PathBuf {
 
 fn build_program(args: &DeployArgs) -> Result<()> {
     println!("  ℹ Building program...");
-
-    // Print out the path to the Cargo.toml file
-    println!("  ℹ Cargo.toml found at: {}", args.folder.clone().unwrap());
+    // Check if the Cargo.toml file exists
+    let cargo_toml_path = PathBuf::from(args.folder.clone().unwrap()).join("Cargo.toml");
+    if cargo_toml_path.exists() {
+        println!("  ℹ Cargo.toml found at: {}", cargo_toml_path.display());
+    } else {
+        println!("  ℹ Cargo.toml not found in the specified directory.");
+    }
 
     // Change to the program directory
     let program_dir = args.folder.clone().unwrap();
@@ -2090,7 +2265,7 @@ fn build_program(args: &DeployArgs) -> Result<()> {
     );
 
     let output = std::process::Command::new("cargo")
-        .args(["build-sbf", "--manifest-path", "app/program/Cargo.toml"])
+        .args(["build-sbf", "--manifest-path", "Cargo.toml"])
         .output()
         .context("Failed to execute cargo build-sbf")?;
 
@@ -3951,6 +4126,15 @@ async fn stop_gcp_indexer(args: &IndexerStartArgs) -> Result<()> {
         ])
         .output()?;
 
+    // Delete Cloud SQL instance
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "sql", "instances", "delete", "arch-indexer-db",
+            "--project", project_id,
+            "--quiet"
+        ])
+        .output()?;
+
     println!("{}", "GCP indexer stopped successfully!".bold().green());
     Ok(())
 }
@@ -3965,47 +4149,14 @@ pub async fn start_gcp_indexer(args: &IndexerStartArgs, config: &Config) -> Resu
 
     println!("Starting indexer deployment to GCP...");
 
+    // Setup Cloud SQL
+    let (sql_connection_name, db_password) = setup_cloud_sql(project_id, region).await?;
+
+    // Initialize schema
+    initialize_cloud_sql_schema(project_id, "arch-indexer-db").await?;
+
     let temp_dir = tempfile::tempdir()?;
     prepare_indexer_files(temp_dir.path()).await?;
-
-    // Modify the Dockerfile to include PostgreSQL
-    let dockerfile = r#"FROM node:18-slim
-
-# Install PostgreSQL
-RUN apt-get update && apt-get install -y postgresql postgresql-contrib
-
-# Create directory for PostgreSQL data
-RUN mkdir -p /var/lib/postgresql/data && chown -R postgres:postgres /var/lib/postgresql/data
-
-# Copy application files
-WORKDIR /usr/src/app
-COPY package*.json ./
-RUN npm install
-COPY . .
-
-# Copy init script
-COPY init.sql /docker-entrypoint-initdb.d/
-COPY start.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/start.sh
-
-EXPOSE 5175
-CMD ["/usr/local/bin/start.sh"]"#;
-
-    fs::write(temp_dir.path().join("Dockerfile"), dockerfile)?;
-
-    // Create start.sh script
-    let start_script = r#"#!/bin/bash
-# Start PostgreSQL
-service postgresql start
-
-# Initialize database
-su - postgres -c "createdb archindexer"
-su - postgres -c "psql archindexer < /docker-entrypoint-initdb.d/init.sql"
-
-# Start the indexer
-node src/index.js"#;
-
-    fs::write(temp_dir.path().join("start.sh"), start_script)?;
 
     // Build and push using Cloud Build
     let cloudbuild_content = format!(r#"steps:
@@ -4046,10 +4197,12 @@ images: ['gcr.io/{}/arch-indexer:latest']
             "--container-image", &format!("gcr.io/{}/arch-indexer:latest", project_id),
             "--tags", "indexer",
             "--container-env", &format!("ARCH_NODE_URL={}", rpc_url),
-            "--container-env", "DB_HOST=localhost",
+            "--container-env", &format!("DB_HOST=/cloudsql/{}", sql_connection_name),
             "--container-env", "DB_USER=postgres",
             "--container-env", "DB_NAME=archindexer",
-            "--container-env", "DB_PORT=5432"
+            "--container-env", &format!("DB_PASSWORD={}", db_password),
+            "--container-env", "DB_PORT=5432",
+            "--container-mount-host-path=mount-path=/cloudsql,host-path=/cloudsql,mode=rw",
         ])
         .output()
         .context("Failed to create indexer instance")?;
@@ -4066,6 +4219,154 @@ images: ['gcr.io/{}/arch-indexer:latest']
         .stdout).trim().to_string();
 
     setup_indexer_ssl_proxy(project_id, region, &indexer_ip).await?;
+
+    Ok(())
+}
+
+async fn setup_cloud_sql(project_id: &str, region: &str) -> Result<(String, String)> {
+    println!("  {} Setting up Cloud SQL instance...", "→".bold().blue());
+
+    let instance_name = "arch-indexer-db";
+    let db_password = generate_random_password();
+
+    // Check if instance exists
+    println!("  {} Checking if Cloud SQL instance exists...", "→".bold().blue());
+    let instance_exists = ShellCommand::new("gcloud")
+        .args([
+            "sql", "instances", "describe", instance_name,
+            "--project", project_id,
+        ])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+
+    if !instance_exists {
+        println!("  {} Creating new Cloud SQL instance...", "→".bold().blue());
+        let create_output = ShellCommand::new("gcloud")
+            .args([
+                "sql", "instances", "create", instance_name,
+                "--project", project_id,
+                "--database-version", "POSTGRES_13",
+                "--tier", "db-f1-micro",
+                "--region", region,
+                "--root-password", &db_password,
+                "--availability-type", "ZONAL",
+            ])
+            .output()
+            .context("Failed to execute gcloud sql instances create command")?;
+
+        if !create_output.status.success() {
+            return Err(anyhow!(
+                "Failed to create Cloud SQL instance: {}",
+                String::from_utf8_lossy(&create_output.stderr)
+            ));
+        }
+
+        // Create database
+        println!("  {} Creating database...", "→".bold().blue());
+        let db_output = ShellCommand::new("gcloud")
+            .args([
+                "sql", "databases", "create", "archindexer",
+                "--instance", instance_name,
+                "--project", project_id,
+            ])
+            .output()
+            .context("Failed to execute gcloud sql databases create command")?;
+
+        if !db_output.status.success() {
+            return Err(anyhow!(
+                "Failed to create database: {}",
+                String::from_utf8_lossy(&db_output.stderr)
+            ));
+        }
+
+        // Create user
+        println!("  {} Creating database user...", "→".bold().blue());
+        let user_output = ShellCommand::new("gcloud")
+            .args([
+                "sql", "users", "create", "postgres",
+                "--instance", instance_name,
+                "--project", project_id,
+                "--password", &db_password,
+            ])
+            .output()
+            .context("Failed to execute gcloud sql users create command")?;
+
+        if !user_output.status.success() {
+            return Err(anyhow!(
+                "Failed to create database user: {}",
+                String::from_utf8_lossy(&user_output.stderr)
+            ));
+        }
+    } else {
+        println!("  {} Using existing Cloud SQL instance", "✓".bold().green());
+    }
+
+    // Get connection name
+    println!("  {} Getting connection details...", "→".bold().blue());
+    let conn_output = ShellCommand::new("gcloud")
+        .args([
+            "sql", "instances", "describe", instance_name,
+            "--project", project_id,
+            "--format", "get(connectionName)",
+        ])
+        .output()
+        .context("Failed to get Cloud SQL connection name")?;
+
+    if !conn_output.status.success() {
+        return Err(anyhow!(
+            "Failed to get Cloud SQL connection name: {}",
+            String::from_utf8_lossy(&conn_output.stderr)
+        ));
+    }
+
+    let connection_name = String::from_utf8_lossy(&conn_output.stdout).trim().to_string();
+
+    println!("  {} Cloud SQL setup complete", "✓".bold().green());
+    Ok((connection_name, db_password))
+}
+
+async fn initialize_cloud_sql_schema(project_id: &str, instance_name: &str) -> Result<()> {
+    println!("  {} Initializing database schema...", "→".bold().blue());
+
+    let temp_file = tempfile::NamedTempFile::new()?;
+
+    // Use the same schema as in prepare_indexer_files
+    let init_sql = r#"CREATE TABLE IF NOT EXISTS blocks (
+    height INTEGER PRIMARY KEY,
+    hash TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    bitcoin_block_height INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+    txid TEXT PRIMARY KEY,
+    block_height INTEGER NOT NULL,
+    data JSONB NOT NULL,
+    status INTEGER NOT NULL DEFAULT 0,
+    bitcoin_txids TEXT[] DEFAULT '{}',
+    FOREIGN KEY (block_height) REFERENCES blocks(height)
+);
+
+CREATE INDEX IF NOT EXISTS idx_transactions_block_height ON transactions(block_height);
+CREATE INDEX IF NOT EXISTS idx_blocks_bitcoin_block_height ON blocks(bitcoin_block_height);"#;
+
+    fs::write(&temp_file, init_sql)?;
+
+    let import_output = ShellCommand::new("gcloud")
+        .args([
+            "sql", "import", "sql",
+            instance_name,
+            temp_file.path().to_str().unwrap(),
+            "--project", project_id,
+            "--database", "archindexer",
+        ])
+        .output()
+        .context("Failed to import SQL schema")?;
+
+    if !import_output.status.success() {
+        return Err(anyhow!("Failed to initialize database schema"));
+    }
 
     Ok(())
 }
@@ -4088,6 +4389,17 @@ http {{
     proxy_send_timeout 60;
     proxy_read_timeout 60;
 
+    # SSL settings
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers off;
+
+    # CORS settings
+    map $request_method $cors_method {{
+        OPTIONS 'true';
+        default 'false';
+    }}
+
     server {{
         listen 443 ssl;
         server_name _;
@@ -4095,27 +4407,35 @@ http {{
         ssl_certificate /etc/nginx/ssl/nginx.crt;
         ssl_certificate_key /etc/nginx/ssl/nginx.key;
 
+        # Global CORS headers
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
+        add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;
+
         location / {{
+            if ($cors_method = 'true') {{
+                add_header 'Access-Control-Max-Age' 1728000;
+                add_header 'Content-Type' 'text/plain charset=UTF-8';
+                add_header 'Content-Length' 0;
+                return 204;
+            }}
+
             proxy_pass http://{}:5175;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
 
-            # Enable CORS
-            add_header 'Access-Control-Allow-Origin' '*' always;
-            add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
-            add_header 'Access-Control-Allow-Headers' '*' always;
+            # Handle SSL termination properly
+            proxy_ssl_server_name on;
+            proxy_redirect off;
 
-            if ($request_method = 'OPTIONS') {{
-                add_header 'Access-Control-Allow-Origin' '*';
-                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
-                add_header 'Access-Control-Allow-Headers' '*';
-                add_header 'Access-Control-Max-Age' 1728000;
-                add_header 'Content-Type' 'text/plain charset=UTF-8';
-                add_header 'Content-Length' 0;
-                return 204;
-            }}
+            # Additional security headers
+            add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-Frame-Options "SAMEORIGIN" always;
+            add_header X-XSS-Protection "1; mode=block" always;
         }}
     }}
 }}
@@ -4895,7 +5215,8 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
         }
     };
 
-    // Ensure the project directory exists
+    // Ensure the project directory and its projects subfolder exist
+    let projects_subfolder = project_dir.join("projects");
     if !project_dir.exists() {
         fs::create_dir_all(&project_dir).context(format!(
             "Failed to create project directory: {:?}",
@@ -4905,6 +5226,17 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
             "  {} Created project directory at {:?}",
             "✓".bold().green(),
             project_dir
+        );
+    }
+    if !projects_subfolder.exists() {
+        fs::create_dir_all(&projects_subfolder).context(format!(
+            "Failed to create projects subfolder within project directory: {:?}",
+            projects_subfolder
+        ))?;
+        println!(
+            "  {} Created projects subfolder within project directory at {:?}",
+            "✓".bold().green(),
+            projects_subfolder
         );
     }
 
@@ -4920,7 +5252,7 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     }
 
     // Check if the project already exists
-    let new_project_dir = project_dir.join(&project_name);
+    let new_project_dir = projects_subfolder.join(&project_name);
     if new_project_dir.exists() {
         println!(
             "{}",

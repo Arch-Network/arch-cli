@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use arch_program::pubkey::Pubkey;
 use colored::*;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub async fn setup_demo_environment(
     args: &DemoStartArgs,
@@ -25,11 +25,35 @@ pub async fn setup_demo_environment(
     let rpc_url = get_rpc_url(args, config);
     println!("Using RPC URL: {}", rpc_url);
 
-    // Get project directory
-    let project_dir = config
+    // Get base project directory
+    let base_dir = config
         .get_string("project.directory")
         .context("Failed to get project directory from config")?;
-    let demo_dir = PathBuf::from(&project_dir).join("demo");
+    let base_dir = PathBuf::from(&base_dir);
+
+    // Ensure shared libraries exist at root level
+    if !base_dir.join("common").exists() {
+        println!("  {} Setting up shared libraries...", "ℹ".bold().blue());
+
+        let common_dir = PROJECT_DIR.get_dir("common").unwrap();
+        let program_dir = PROJECT_DIR.get_dir("program").unwrap();
+        let bip322_dir = PROJECT_DIR.get_dir("bip322").unwrap();
+
+        extract_project_files(common_dir, &base_dir.join("common"))?;
+        extract_project_files(program_dir, &base_dir.join("program"))?;
+        extract_project_files(bip322_dir, &base_dir.join("bip322"))?;
+
+        println!(
+            "  {} Shared libraries set up successfully",
+            "✓".bold().green()
+        );
+    }
+
+    // Set up projects directory and demo project
+    let projects_dir = base_dir.join("projects");
+    fs::create_dir_all(&projects_dir)?;
+
+    let demo_dir = projects_dir.join("demo");
 
     // Create demo directory if it doesn't exist
     if !demo_dir.exists() {
@@ -45,23 +69,24 @@ pub async fn setup_demo_environment(
             demo_dir
         );
 
-        // Extract demo files from binary
-        extract_project_files(&PROJECT_DIR, &demo_dir)?;
+        // Extract demo-specific files (frontend, backend, etc.)
+        let demo_files_dir = PROJECT_DIR.get_dir("app").unwrap();
+        extract_project_files(&demo_files_dir, &demo_dir.join("app"))?;
+
+        // Update Cargo.toml to reference shared libraries
+        update_demo_cargo_toml(&demo_dir, &base_dir)?;
 
         // Rename the .env.example file to .env if it exists
-        let env_example_file = PathBuf::from(&demo_dir).join("app/frontend/.env.example");
+        let env_example_file = demo_dir.join("app/frontend/.env.example");
         if env_example_file.exists() {
-            fs::rename(
-                &env_example_file,
-                PathBuf::from(&demo_dir).join("app/frontend/.env"),
-            )?;
+            fs::rename(&env_example_file, demo_dir.join("app/frontend/.env"))?;
         }
     }
 
     // Change to the demo directory
     std::env::set_current_dir(&demo_dir).context("Failed to change to demo directory")?;
 
-    let env_file = PathBuf::from(&demo_dir).join("app/frontend/.env");
+    let env_file = demo_dir.join("app/frontend/.env");
     println!(
         "  {} Reading .env file from: {:?}",
         "ℹ".bold().blue(),
@@ -106,8 +131,9 @@ pub async fn setup_demo_environment(
     let program_keypair = get_keypair_from_name(&graffiti_key_name, &keys_file)?;
     let program_pubkey_bytes = Pubkey::from_slice(&program_keypair.public_key().serialize()[1..33]);
 
+    // Note: Using shared program directory for deployment
     deploy_program_from_path(
-        &PathBuf::from(&demo_dir).join("app/program"),
+        &base_dir.join("program"), // Using shared program directory
         config,
         Some((program_keypair.clone(), program_pubkey_bytes)),
         Some(rpc_url.clone()),
@@ -172,4 +198,21 @@ fn get_rpc_url(args: &DemoStartArgs, config: &Config) -> String {
         .clone()
         .or_else(|| config.get_string("leader_rpc_endpoint").ok())
         .unwrap_or_else(|| common::constants::NODE1_ADDRESS.to_string())
+}
+
+fn update_demo_cargo_toml(demo_dir: &Path, base_dir: &Path) -> Result<()> {
+    let cargo_path = demo_dir.join("Cargo.toml");
+    let cargo_content = r#"[package]
+name = "arch-demo-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../../common" }
+program = { path = "../../program" }
+bip322 = { path = "../../bip322" }
+"#;
+
+    fs::write(cargo_path, cargo_content)?;
+    Ok(())
 }

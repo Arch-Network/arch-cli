@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
         Commands::Indexer(IndexerCommands::Start(args)) => indexer_start(args, &config).await,
         Commands::Indexer(IndexerCommands::Stop(args)) => indexer_stop(args, &config).await,
         Commands::Indexer(IndexerCommands::Clean) => indexer_clean(&config).await,
-        Commands::Project(ProjectCommands::Create(args)) => project_create(args, &config).await,
+        Commands::Project(ProjectCommands::Create(args)) => create_project(args, &config).await,
         Commands::Project(ProjectCommands::Deploy) => project_deploy(&config).await,
         Commands::Validator(ValidatorCommands::Start(args)) => validator_start(args, &config).await,
         Commands::Validator(ValidatorCommands::Stop(args)) => validator_stop(&args).await,
