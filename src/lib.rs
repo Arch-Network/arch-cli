@@ -424,57 +424,28 @@ pub async fn init() -> Result<()> {
     // Ask the user where they want to create the project
     let mut project_dir = prompt_for_project_dir(&default_dir)?;
 
-    // Ensure the project directory is empty or create it
-    loop {
-        if !project_dir.exists() {
-            println!(
-                "  {} Directory does not exist. Do you want to create it? (Y/n)",
-                "ℹ".bold().blue()
-            );
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            if input.trim().to_lowercase() != "n" {
-                fs::create_dir_all(&project_dir)?;
-                println!("  {} Directory created successfully", "✓".bold().green());
-                break;
-            } else {
-                project_dir = prompt_for_project_dir(&default_dir)?;
-            }
-        } else if is_directory_empty(&project_dir)? {
-            break;
-        } else {
-            println!(
-                "  {} Directory is not empty. Do you want to use this existing project folder? (y/N)",
-                "⚠".bold().yellow()
-            );
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            if input.trim().to_lowercase() == "y" {
-                println!("  {} Using existing project folder", "✓".bold().green());
-                break;
-            } else {
-                project_dir = prompt_for_project_dir(&default_dir)?;
-            }
-        }
-    }
-
     // Get the configuration file path
     let config_path = get_config_path()?;
+    update_config_with_project_dir(&config_path, &project_dir)?;
 
     // Create the arch-data directory
     let config_dir = config_path.parent().unwrap();
     let arch_data_dir = config_dir.join("arch-data");
     fs::create_dir_all(&arch_data_dir)?;
+
     println!(
         "  {} Created arch-data directory at {:?}",
         "✓".bold().green(),
         arch_data_dir
     );
 
-    update_config_with_project_dir(&config_path, &project_dir)?;
+    let config = Config::builder()
+        .add_source(File::with_name(config_path.to_str().unwrap()))
+        .build()?;
+    let (_, _projects_dir) = setup_base_structure(&config)?;
 
     // Create the 'demo' folder within the project directory if it doesn't exist
-    let demo_dir = project_dir.join("demo");
+    let demo_dir = project_dir.join("projects/demo");
     if !demo_dir.exists() {
         // Create the 'demo' folder within the project directory
         fs::create_dir_all(&demo_dir)?;
@@ -485,7 +456,7 @@ pub async fn init() -> Result<()> {
         );
 
         // Extract project files from binary
-        extract_project_files(&PROJECT_DIR, &demo_dir)?;
+        extract_recursive(&PROJECT_DIR, &demo_dir)?;
 
         // Rename the .env.example file to .env
         let env_example_file = PathBuf::from(&demo_dir).join("app/frontend/.env.example");
@@ -494,7 +465,7 @@ pub async fn init() -> Result<()> {
         }
 
         // Change to the demo directory
-        std::env::set_current_dir(&demo_dir)?;
+        std::env::set_current_dir(&project_dir)?;
 
         // Build the program
         println!("{}", "Building Arch Network program...".bold().blue());
@@ -695,49 +666,8 @@ fn prompt_for_project_dir(default_dir: &Path) -> Result<PathBuf> {
 pub async fn create_project(args: &CreateProjectArgs, config: &Config) -> Result<()> {
     println!("{}", "Creating new project...".bold().green());
 
-    // Get base project directory from config
-    let base_dir = PathBuf::from(config.get_string("project.directory")?);
-
-    // Create base directory if it doesn't exist
-    if !base_dir.exists() {
-        fs::create_dir_all(&base_dir)?;
-        println!("  {} Created base directory at {:?}", "✓".bold().green(), base_dir);
-    }
-
-    // Create shared libraries at base directory level
-    println!("  {} Setting up shared libraries...", "ℹ".bold().blue());
-    for lib in &["bip322", "common", "program"] {
-        let source_dir = TEMPLATES_DIR.get_dir(lib)
-            .ok_or_else(|| anyhow!("Template directory '{}' not found", lib))?;
-        let lib_dir = base_dir.join(lib);
-
-        // Create the library directory
-        fs::create_dir_all(&lib_dir)?;
-        
-        // Extract contents directly to the library directory, maintaining original structure
-        for entry in source_dir.entries() {
-            match entry {
-                include_dir::DirEntry::Dir(subdir) => {
-                    let target_dir = lib_dir.join(subdir.path().file_name().unwrap());
-                    fs::create_dir_all(&target_dir)?;
-                    extract_recursive(subdir, &target_dir)?;
-                }
-                include_dir::DirEntry::File(file) => {
-                    let target_file = lib_dir.join(file.path().file_name().unwrap());
-                    fs::write(target_file, file.contents())?;
-                }
-            }
-        }
-
-        println!("  {} Created shared library {} at {:?}", "✓".bold().green(), lib, lib_dir);
-    }
-
-    // Ensure projects directory exists within the base directory
-    let projects_dir = base_dir.join("projects");
-    if !projects_dir.exists() {
-        fs::create_dir_all(&projects_dir)?;
-        println!("  {} Created projects directory at {:?}", "✓".bold().green(), projects_dir);
-    }
+    // Set up base structure
+    let (base_dir, projects_dir) = setup_base_structure(config)?;
 
     // Get project name
     let project_name = args.name.clone().unwrap_or_else(|| {
@@ -880,6 +810,52 @@ fn extract_recursive(dir: &Dir, target_path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub fn setup_base_structure(config: &Config) -> Result<(PathBuf, PathBuf)> {
+    // Get base project directory from config
+    let base_dir = PathBuf::from(config.get_string("project.directory")?);
+
+    // Create base directory if it doesn't exist
+    if !base_dir.exists() {
+        fs::create_dir_all(&base_dir)?;
+        println!("  {} Created base directory at {:?}", "✓".bold().green(), base_dir);
+    }
+
+    // Create shared libraries at base directory level
+    println!("  {} Setting up shared libraries...", "ℹ".bold().blue());
+    for lib in &["bip322", "common", "program"] {
+        let source_dir = TEMPLATES_DIR.get_dir(lib)
+            .ok_or_else(|| anyhow!("Template directory '{}' not found", lib))?;
+        let lib_dir = base_dir.join(lib);
+
+        // Create the library directory
+        fs::create_dir_all(&lib_dir)?;
+
+        // Extract contents directly to the library directory, maintaining original structure
+        for entry in source_dir.entries() {
+            match entry {
+                include_dir::DirEntry::Dir(subdir) => {
+                    let target_dir = lib_dir.join(subdir.path().file_name().unwrap());
+                    fs::create_dir_all(&target_dir)?;
+                    extract_recursive(subdir, &target_dir)?;
+                }
+                include_dir::DirEntry::File(file) => {
+                    let target_file = lib_dir.join(file.path().file_name().unwrap());
+                    fs::write(target_file, file.contents())?;
+                }
+            }
+        }
+
+        println!("  {} Created shared library {} at {:?}", "✓".bold().green(), lib, lib_dir);
+    }
+
+    // Create projects directory
+    let projects_dir = base_dir.join("projects");
+    fs::create_dir_all(&projects_dir)?;
+    println!("  {} Created projects directory at {:?}", "✓".bold().green(), projects_dir);
+
+    Ok((base_dir, projects_dir))
 }
 
 fn get_config_path() -> Result<PathBuf> {
@@ -1240,13 +1216,13 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     let wallet_manager = WalletManager::new(config)?;
     ensure_wallet_balance(&wallet_manager.client).await?;
 
-    let rpc_url_clone = args.rpc_url.clone().unwrap_or_default();
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
 
     // Get account address and fund it
+    let rpc_url_clone = rpc_url.clone();
     let account_address =
         task::spawn_blocking(move || get_account_address(&rpc_url_clone, program_pubkey.clone())).await?;
     let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
-
     // Deploy the program
     deploy_program_with_tx_info(
         &program_keypair,
@@ -1254,7 +1230,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         tx_info,
         deploy_folder.to_str().map(String::from),
         config,
-        args.rpc_url.clone(),
+        rpc_url,
     )
     .await?;
 
@@ -2075,6 +2051,8 @@ pub fn load_config(network: &str) -> Result<Config> {
     };
     builder = builder.set_override("bitcoin.network", bitcoin_network)?;
 
+    builder = builder.set_override("leader_rpc_endpoint", "http://localhost:9002")?;
+
     // Build the final configuration
     let final_config = builder
         .build()
@@ -2294,7 +2272,7 @@ async fn deploy_program_with_tx_info(
     tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>,
     deploy_folder: Option<String>,
     config: &Config,
-    rpc_url: Option<String>,
+    rpc_url: String,
 ) -> Result<()> {
     if let Some(info) = tx_info {
         deploy_program(
@@ -2611,6 +2589,20 @@ async fn fund_address(
     Ok(None)
 }
 
+pub fn get_rpc_url_with_fallback(rpc_url: Option<String>, config: &Config) -> Result<String> {
+    // Check if rpc_url is Some and not empty
+    match rpc_url {
+        Some(url) if !url.trim().is_empty() => Ok(url),
+        _ => {
+            // If rpc_url is None or empty, try getting from config
+            match config.get_string("leader_rpc_endpoint") {
+                Ok(url) if !url.trim().is_empty() => Ok(url),
+                _ => Ok(common::constants::NODE1_ADDRESS.to_string())
+            }
+        }
+    }
+}
+
 async fn deploy_program(
     program_keypair: &Keypair,
     program_pubkey: &Pubkey,
@@ -2618,7 +2610,7 @@ async fn deploy_program(
     vout: u32,
     deploy_folder: Option<String>,
     config: &Config,
-    rpc_url: Option<String>,
+    rpc_url: String,
 ) -> Result<()> {
     // Create a new account for the program
     create_program_account(program_keypair, program_pubkey, txid, vout, rpc_url.clone()).await?;
@@ -2660,7 +2652,7 @@ pub async fn deploy_program_from_path(
     program_dir: &PathBuf,
     config: &Config,
     keypair: Option<(Keypair, Pubkey)>,
-    rpc_url: Option<String>,
+    rpc_url: String,
 ) -> Result<()> {
     println!("  ℹ Deploying program...");
 
@@ -2695,10 +2687,9 @@ pub async fn deploy_program_from_path(
 async fn make_program_executable(
     program_keypair: &Keypair,
     program_pubkey: &Pubkey,
-    rpc_url: Option<String>,
+    rpc_url: String,
 ) -> Result<()> {
     println!("    Making program executable...");
-    let url = rpc_url.unwrap_or_else(|| common::constants::NODE1_ADDRESS.to_string());
 
     let instruction = Instruction {
         program_id: Pubkey::system_program(),
@@ -2711,17 +2702,16 @@ async fn make_program_executable(
     };
 
     let keypair = program_keypair.clone();
-    let url_clone = url.clone(); // Clone for first closure
-
+    let rpc_url_clone = rpc_url.clone();
     let (txid, _) = tokio::task::spawn_blocking(move || {
-        sign_and_send_instruction(instruction, vec![keypair], Some(url_clone))
+        sign_and_send_instruction(instruction, vec![keypair], rpc_url_clone)
     }).await??;
 
     println!("    Transaction sent: {}", txid);
 
-    let url_clone = url.clone(); // Clone for second closure
+    let rpc_url_clone = rpc_url.clone();
     tokio::task::spawn_blocking(move || {
-        get_processed_transaction(&url_clone, txid.clone())
+        get_processed_transaction(&rpc_url_clone, txid.clone())
     }).await??;
 
     println!("    Program made executable successfully");
@@ -2837,7 +2827,7 @@ async fn deploy_program_txs_with_folder(
     program_pubkey: &Pubkey,
     deploy_folder: Option<String>,
     config: &Config,
-    rpc_url: Option<String>,
+    rpc_url: String,
 ) -> Result<()> {
     println!("    Deploying program transactions...");
 
@@ -2853,7 +2843,7 @@ async fn deploy_program_txs_with_folder(
         &program_dir,
         config,
         Some((program_keypair.clone(), *program_pubkey)),
-        rpc_url,
+        Some(rpc_url),
     ).await {
         println!("Failed to deploy program transactions: {}", e);
         return Err(e);
@@ -2867,7 +2857,7 @@ async fn create_program_account(
     program_pubkey: &Pubkey,
     txid: &str,
     vout: u32,
-    rpc_url: Option<String>,
+    rpc_url: String,
 ) -> Result<()> {
     println!("    Creating program account...");
 
@@ -2917,7 +2907,7 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
         .context("Failed to get project directory from config")?;
 
     // Define the demo directory in the project
-    let demo_dir = PathBuf::from(&project_dir).join("demo");
+    let demo_dir = PathBuf::from(&project_dir).join("projects/demo");
 
     // Check if the demo directory exists, if not, copy it from the CLI directory
     if !demo_dir.exists() {
@@ -2935,7 +2925,7 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
         );
 
         // Extract demo files from binary
-        extract_project_files(&PROJECT_DIR, &demo_dir)?;
+        extract_recursive(&PROJECT_DIR, &demo_dir)?;
 
         // Rename the .env.example file to .env
         let env_example_file = PathBuf::from(&demo_dir).join("app/frontend/.env.example");
@@ -3050,11 +3040,12 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
         &PathBuf::from(&demo_dir).join("app/program"),
         config,
         Some((program_keypair.clone(), program_pubkey)),
-        Some(args.rpc_url.clone().unwrap_or_default()),
+        get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap(),
     ).await?;
 
     // Make the program executable
-    make_program_executable(&program_keypair, &program_pubkey, Some(args.rpc_url.clone().unwrap_or_default())).await?;
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+    make_program_executable(&program_keypair, &program_pubkey, rpc_url).await?;
 
     let graffiti_wall_state_exists = key_name_exists(&keys_file, "graffiti_wall_state")?;
 
@@ -3093,6 +3084,8 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
         .arg("down")
         .output()
         .context("Failed to stop existing demo containers")?;
+
+    
 
     if !stop_output.status.success() {
         println!(
@@ -3138,14 +3131,39 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
 
     println!("  {} arch-network created or already exists", "✓".bold().green());
 
+    // Creating longer-lived values for the environment variables to avoid temporary value drop errors
+    let program_pubkey_str = hex::encode(program_pubkey.serialize());
+    let graffiti_wall_state_pubkey_str = graffiti_wall_state_pubkey.to_string();
+    let demo_frontend_port_str = "5173".to_string();
+    let indexer_port_str = "5175".to_string();
+
+    let env_vars = vec![
+        ("VITE_PROGRAM_PUBKEY", &program_pubkey_str),
+        ("VITE_WALL_ACCOUNT_PUBKEY", &graffiti_wall_state_pubkey_str),
+        ("DEMO_FRONTEND_PORT", &demo_frontend_port_str),
+        ("INDEXER_PORT", &indexer_port_str),
+    ];
+
+    println!("  {} Environment variables: {:?}", "ℹ".bold().blue(), env_vars);
+
     // Start the demo application
     println!("  {} Starting demo containers...", "→".bold().blue());
-    let start_output = ShellCommand::new("docker-compose")
+
+    // Create the docker-compose command with environment variables
+    let mut command = ShellCommand::new("docker-compose");
+    command
         .arg("-f")
         .arg("app/demo-docker-compose.yml")
         .arg("up")
         .arg("--build")
-        .arg("-d")
+        .arg("-d");
+
+    // Add environment variables to the command
+    for (key, value) in env_vars {
+        command.env(key, value);
+    }
+
+    let start_output = command
         .output()
         .context("Failed to start the demo application using Docker Compose")?;
 
@@ -3574,8 +3592,11 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     let public_key_bytes = public_key.serialize_uncompressed();
     let caller_pubkey = Pubkey::from_slice(&public_key_bytes[1..33]); // Skip the first byte and take the next 32
 
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+    println!("  {} RPC URL: {}", "ℹ".bold().blue(), rpc_url.yellow());
+
     // Get account address
-    let account_address = generate_account_address(&args.rpc_url.clone().unwrap_or_default(), caller_pubkey).await?;
+    let account_address = generate_account_address(&rpc_url, caller_pubkey).await?;
 
     // Set up Bitcoin RPC client
     let wallet_manager = WalletManager::new(config)?;
@@ -3625,12 +3646,14 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
         Pubkey::system_program()
     };
 
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+
     // Transfer ownership to the program
     transfer_account_ownership(
         &caller_keypair,
         &caller_pubkey,
         &program_id,
-        Some(args.rpc_url.clone().unwrap_or_default()),  // Add RPC URL
+        rpc_url,
     ).await?;
 
     // Save the account information to keys.json
@@ -3881,7 +3904,7 @@ async fn create_arch_account(
     if let Some(info) = tx_info {
         let caller_keypair = caller_keypair.clone();
         let caller_pubkey = *caller_pubkey;
-        let rpc_url_clone = rpc_url.clone();
+        let rpc_url = get_rpc_url_with_fallback(rpc_url, config).unwrap();
 
         let (txid, _) = tokio::task::spawn_blocking(move || {
             sign_and_send_instruction(
@@ -3894,7 +3917,7 @@ async fn create_arch_account(
                     caller_pubkey,
                 ),
                 vec![caller_keypair],
-                rpc_url_clone,
+                rpc_url,
             )
             .expect("signing and sending a transaction should not fail")
         })
@@ -3921,7 +3944,7 @@ async fn transfer_account_ownership(
     caller_keypair: &Keypair,
     account_pubkey: &Pubkey,
     program_pubkey: &Pubkey,
-    rpc_url: Option<String>,
+    rpc_url: String,
 ) -> Result<()> {
     let mut instruction_data = vec![3]; // Transfer instruction
     instruction_data.extend(program_pubkey.serialize());
@@ -3935,7 +3958,6 @@ async fn transfer_account_ownership(
     let instruction_data_clone = instruction_data.clone();
     let account_pubkey_clone = *account_pubkey;
     let caller_keypair_clone = caller_keypair.clone();
-    let rpc_url_clone = rpc_url.clone();
 
     let (_txid, _) = tokio::task::spawn_blocking(move || {
         sign_and_send_instruction(
@@ -3949,7 +3971,7 @@ async fn transfer_account_ownership(
                 data: instruction_data_clone,
             },
             vec![caller_keypair_clone],
-            rpc_url_clone,
+            rpc_url,
         )
         .expect("signing and sending a transaction should not fail")
     })
@@ -3970,7 +3992,7 @@ pub async fn indexer_start(args: &IndexerStartArgs, config: &Config) -> Result<(
 pub async fn start_local_indexer(config: &Config) -> Result<()> {
     println!("{}", "Starting the arch-indexer...".bold().green());
 
-    let arch_node_url = config.get_string("leader_rpc_endpoint")?;
+    let arch_node_url = "http://host.docker.internal:9002";
 
     // Get the selected network from the config
     let selected_network = config.get_string("selected_network")
@@ -5380,7 +5402,8 @@ pub async fn project_deploy(config: &Config) -> Result<()> {
 
     // Here, call your existing deploy function with the program_dir
     // You may need to modify your existing deploy function to accept a PathBuf instead of DeployArgs
-    if let Err(e) = deploy_program_from_path(&program_dir, config, None, None).await {
+    let rpc_url = "";
+    if let Err(e) = deploy_program_from_path(&program_dir, config, None, rpc_url.to_string()).await {
         println!("Failed to deploy program: {}", e);
         return Err(e);
     }

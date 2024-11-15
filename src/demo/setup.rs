@@ -1,8 +1,8 @@
 use crate::{
-    build_frontend, create_account, deploy_program_from_path, extract_project_files,
+    build_frontend, create_account, deploy_program_from_path, extract_recursive,
     find_key_name_by_pubkey, get_config_dir, get_keypair_from_name, get_pubkey_from_name,
-    key_name_exists, make_program_executable, Config, CreateAccountArgs, DemoStartArgs,
-    PROJECT_DIR,
+    key_name_exists, make_program_executable, setup_base_structure, Config, CreateAccountArgs,
+    DemoStartArgs, PROJECT_DIR,
 };
 use anyhow::{Context, Result};
 use arch_program::pubkey::Pubkey;
@@ -22,61 +22,26 @@ pub async fn setup_demo_environment(
         .unwrap_or_else(|_| "regtest".to_string());
     println!("Network type: {}", network);
 
-    let rpc_url = get_rpc_url(args, config);
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
     println!("Using RPC URL: {}", rpc_url);
 
-    // Get base project directory
-    let base_dir = config
-        .get_string("project.directory")
-        .context("Failed to get project directory from config")?;
-    let base_dir = PathBuf::from(&base_dir);
+    // Set up base structure
+    let (_, projects_dir) = setup_base_structure(config)?;
 
-    // Ensure shared libraries exist at root level
-    if !base_dir.join("common").exists() {
-        println!("  {} Setting up shared libraries...", "ℹ".bold().blue());
-
-        let common_dir = PROJECT_DIR.get_dir("common").unwrap();
-        let program_dir = PROJECT_DIR.get_dir("program").unwrap();
-        let bip322_dir = PROJECT_DIR.get_dir("bip322").unwrap();
-
-        extract_project_files(common_dir, &base_dir.join("common"))?;
-        extract_project_files(program_dir, &base_dir.join("program"))?;
-        extract_project_files(bip322_dir, &base_dir.join("bip322"))?;
-
-        println!(
-            "  {} Shared libraries set up successfully",
-            "✓".bold().green()
-        );
-    }
-
-    // Set up projects directory and demo project
-    let projects_dir = base_dir.join("projects");
-    fs::create_dir_all(&projects_dir)?;
-
+    // Set up demo project
     let demo_dir = projects_dir.join("demo");
-
-    // Create demo directory if it doesn't exist
     if !demo_dir.exists() {
         println!(
             "  {} Demo directory not found. Creating it...",
             "ℹ".bold().blue()
         );
-
         fs::create_dir_all(&demo_dir)?;
-        println!(
-            "  {} Created demo directory at {:?}",
-            "✓".bold().green(),
-            demo_dir
-        );
 
-        // Extract demo-specific files (frontend, backend, etc.)
+        // Extract demo-specific files
         let demo_files_dir = PROJECT_DIR.get_dir("app").unwrap();
-        extract_project_files(&demo_files_dir, &demo_dir.join("app"))?;
+        extract_recursive(&demo_files_dir, &demo_dir.join("app"))?;
 
-        // Update Cargo.toml to reference shared libraries
-        update_demo_cargo_toml(&demo_dir, &base_dir)?;
-
-        // Rename the .env.example file to .env if it exists
+        // Handle .env file
         let env_example_file = demo_dir.join("app/frontend/.env.example");
         if env_example_file.exists() {
             fs::rename(&env_example_file, demo_dir.join("app/frontend/.env"))?;
@@ -132,20 +97,19 @@ pub async fn setup_demo_environment(
     let program_pubkey_bytes = Pubkey::from_slice(&program_keypair.public_key().serialize()[1..33]);
 
     // Note: Using shared program directory for deployment
+    // Clone the rpc_url before using it to avoid the "use of moved value" error
+    let rpc_url_clone = rpc_url.clone();
     deploy_program_from_path(
-        &base_dir.join("program"), // Using shared program directory
+        &projects_dir.join("program"), // Using shared program directory
         config,
         Some((program_keypair.clone(), program_pubkey_bytes)),
-        Some(rpc_url.clone()),
+        rpc_url_clone,
     )
     .await?;
 
-    make_program_executable(
-        &program_keypair,
-        &program_pubkey_bytes,
-        Some(rpc_url.clone()),
-    )
-    .await?;
+    // Clone the rpc_url before using it to avoid the "use of moved value" error
+    let rpc_url_clone = rpc_url.clone();
+    make_program_executable(&program_keypair, &program_pubkey_bytes, rpc_url_clone).await?;
 
     // Setup wall account
     let wall_pubkey = if key_name_exists(&keys_file, "graffiti_wall_state")? {
@@ -192,12 +156,20 @@ fn create_unique_key_name(keys_file: &PathBuf) -> Result<String> {
     Ok(name)
 }
 
-fn get_rpc_url(args: &DemoStartArgs, config: &Config) -> String {
-    // Priority: 1. Command line arg, 2. Config file, 3. Default constant
-    args.rpc_url
-        .clone()
-        .or_else(|| config.get_string("leader_rpc_endpoint").ok())
-        .unwrap_or_else(|| common::constants::NODE1_ADDRESS.to_string())
+fn get_rpc_url(args: &DemoStartArgs, config: &Config) -> Result<String> {
+    get_rpc_url_with_fallback(args.rpc_url.clone(), config)
+}
+
+pub fn get_rpc_url_with_fallback(rpc_url: Option<String>, config: &Config) -> Result<String> {
+    println!(
+        "config.leader_rpc_endpoint: {}",
+        config.get_string("leader_rpc_endpoint").unwrap()
+    );
+    Ok(rpc_url.unwrap_or_else(|| {
+        config
+            .get_string("leader_rpc_endpoint")
+            .unwrap_or_else(|_| common::constants::NODE1_ADDRESS.to_string())
+    }))
 }
 
 fn update_demo_cargo_toml(demo_dir: &Path, base_dir: &Path) -> Result<()> {

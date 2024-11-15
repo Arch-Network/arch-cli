@@ -160,7 +160,7 @@ pub fn extend_bytes_max_len() -> usize {
 pub fn sign_and_send_instruction(
     instruction: Instruction,
     signers: Vec<Keypair>,
-    rpc_url: Option<String>,
+    rpc_url: String,
 ) -> Result<(String, String)> {
     // Get public keys from signers
     let pubkeys = signers
@@ -198,10 +198,11 @@ pub fn sign_and_send_instruction(
         message: message.clone(),       // Clone for logging purposes
     };
 
-    let url = rpc_url.unwrap_or_else(|| constants::NODE1_ADDRESS.to_string());
+    // Correcting the error by using the `unwrap_or` method instead of `unwrap_or_else`
+    let url = rpc_url;
 
     //println!("Runtime Transaction constructed : {:?} ",params);
-    // Step 7: Send transaction to node for processeing
+    // Step 7: Send transaction to node for processing
     let result = process_result(post_data(&url, "send_transaction", params))
         .expect("send_transaction should not fail")
         .as_str()
