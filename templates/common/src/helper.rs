@@ -1,3 +1,4 @@
+use crate::constants;
 use anyhow::{anyhow, Result};
 use bip322::sign_message_bip322;
 use bitcoin::Txid;
@@ -9,7 +10,6 @@ use bitcoin::{
     transaction::Version,
     Network, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, Witness,
 };
-use crate::constants;
 use bitcoin::{Address, Amount};
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -86,7 +86,7 @@ pub fn post(url: &str, method: &str) -> String {
 
 pub fn post_data<T: Serialize + std::fmt::Debug>(url: &str, method: &str, params: T) -> String {
     let client = reqwest::blocking::Client::builder()
-        .danger_accept_invalid_certs(true)  // Ignore SSL certificate validation
+        .danger_accept_invalid_certs(true) // Ignore SSL certificate validation
         .build()
         .expect("client should be built");
 
@@ -676,15 +676,11 @@ pub fn send_utxo_2(url: &str, pubkey: Pubkey) -> (Txid, u32) {
 }
 
 pub fn get_account_address(url: &str, pubkey: Pubkey) -> String {
-    process_result(post_data(
-        url,
-        GET_ACCOUNT_ADDRESS,
-        pubkey.serialize(),
-    ))
-    .expect("get_account_address should not fail")
-    .as_str()
-    .expect("cannot convert result to string")
-    .to_string()
+    process_result(post_data(url, GET_ACCOUNT_ADDRESS, pubkey.serialize()))
+        .expect("get_account_address should not fail")
+        .as_str()
+        .expect("cannot convert result to string")
+        .to_string()
 }
 
 fn _get_address_utxos(rpc: &Client, address: String) -> Vec<Value> {
