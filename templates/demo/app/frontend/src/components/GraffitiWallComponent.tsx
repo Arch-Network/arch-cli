@@ -11,7 +11,7 @@ import { truncateBtcAddress } from '@/lib/utils';
 window.Buffer = Buffer;
 
 // Environment variables for configuration
-const client = new RpcConnection((import.meta as any).env.VITE_ARCH_NODE_URL || 'http://localhost:9002');
+const client = new RpcConnection((import.meta as any).env.VITE_RPC_URL || 'http://localhost:9002');
 const PROGRAM_PUBKEY = (import.meta as any).env.VITE_PROGRAM_PUBKEY;
 const WALL_ACCOUNT_PUBKEY = (import.meta as any).env.VITE_WALL_ACCOUNT_PUBKEY;
 
@@ -132,12 +132,52 @@ const GraffitiWallComponent: React.FC = () => {
   // Fetch and parse wall messages
   const fetchWallData = useCallback(async () => {
     try {
-      const userAccount = await client.readAccountInfo(accountPubkey);
-      if (!userAccount) {
-        setError('Account not found.');
-        return;
-      }
-      const wallData = userAccount.data;
+        const userAccount = await client.readAccountInfo(accountPubkey);
+        if (!userAccount) {
+            setError('Account not found.');
+            return;
+        }
+        const wallData = userAccount.data;
+        
+        console.log(`Wall data: ${wallData}`);
+
+        // If data is empty or invalid length, just set empty messages without error
+        if (!wallData || wallData.length < 4) {
+            setWallData([]);
+            setError(null); // Clear any existing errors
+            return;
+        }
+        
+        // Deserialize the wall data using borsh
+        // Read data directly from the buffer
+        const messages = [];
+        let offset = 0;
+
+        // First 4 bytes are the array length
+        const messageCount = new DataView(wallData.buffer).getUint32(offset, true);
+        offset += 4;
+
+        for (let i = 0; i < messageCount; i++) {
+            // Read timestamp (8 bytes)
+            const timestamp = new DataView(wallData.buffer).getBigInt64(offset, true);
+            offset += 8;
+
+            // Read name (16 bytes)
+            const nameBytes = wallData.slice(offset, offset + 16);
+            const name = new TextDecoder().decode(nameBytes.filter(x => x !== 0));
+            offset += 16;
+
+            // Read message (64 bytes)
+            const messageBytes = wallData.slice(offset, offset + 64);
+            const message = new TextDecoder().decode(messageBytes.filter(x => x !== 0));
+            offset += 64;
+
+            messages.push(new GraffitiMessage(
+                Number(timestamp),
+                name,
+                message
+            ));
+        }
 
       console.log(`Wall data: ${wallData}`);
 

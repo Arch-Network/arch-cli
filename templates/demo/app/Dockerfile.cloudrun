@@ -1,0 +1,30 @@
+# Build stage
+FROM --platform=linux/amd64 node:18 as builder
+WORKDIR /app
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+# Production stage - using nginx to serve static files
+FROM --platform=linux/amd64 nginx:alpine
+WORKDIR /usr/share/nginx/html
+
+# Copy the built files from builder stage
+COPY --from=builder /app/dist .
+
+# Copy nginx configuration template
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+
+# Cloud Run injects PORT
+ENV PORT=8080
+EXPOSE ${PORT}
+
+# Create a shell script to handle nginx startup
+RUN echo '#!/bin/sh' > /docker-entrypoint.sh && \
+    echo 'envsubst \$PORT < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo 'nginx -g "daemon off;"' >> /docker-entrypoint.sh && \
+    chmod +x /docker-entrypoint.sh
+
+# Start nginx using the entrypoint script
+CMD ["/docker-entrypoint.sh"]

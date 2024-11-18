@@ -1,6 +1,6 @@
 [package]
 name = "arch-cli"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 include = ["templates/**/*"]
 
@@ -9,7 +9,7 @@ include = ["templates/**/*"]
 clap = { version = "3.2", features = ["derive"] }
 anyhow = "1.0.78"
 bitcoin = "0.32.4"
-bip322 = { path = "./templates/demo/bip322" }
+bip322 = { path = "./templates/bip322" }
 tokio = { version = "1.x", features = ["rt-multi-thread", "macros", "process"] }
 hex = { version = "0.4.3", default-features = false }
 memoffset = "0.9.1"
@@ -18,11 +18,11 @@ serde = { version = "1.0.162", default-features = false, features = ["derive"] }
 thiserror = "1.0.42"
 borsh = { version = "1.4.0", features = ["derive"] }
 secp256k1 = { version = "0.29.1", features = ["global-context", "rand-std"] }
-common = { path = "./templates/demo/common" }
+common = { path = "./templates/common" }
 bitcoincore-rpc = "0.19.0"
 colored = "2.0"
 config = "0.13"
-arch_program = { path = "./templates/demo/program" }
+arch_program = { path = "./templates/program" }
 dotenv = "0.15.0"
 reqwest = "0.12.5"
 webbrowser = "1.0.2"
@@ -35,3 +35,4 @@ dialoguer = "0.10.1"
 indicatif = "0.17.7"
 include_dir = "0.7.3"
 regex = "1.11.1"
+tempfile = "3.14.0"
