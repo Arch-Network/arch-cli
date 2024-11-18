@@ -1,6 +1,7 @@
 use arch_program::{
     account::AccountInfo,
     entrypoint,
+    entrypoint::MAX_PERMITTED_DATA_LENGTH,
     msg,
     program::next_account_info,
     program_error::ProgramError,
@@ -78,8 +79,8 @@ pub fn process_instruction(
         .map_err(|_| ProgramError::AccountDataTooSmall)?;
 
     // Ensure data fits within 10MB limit
-    if serialized_data.len() > 10 * 1024 * 1024 {
-        return Err(ProgramError::AccountDataTooSmall);
+    if serialized_data.len() > MAX_PERMITTED_DATA_LENGTH {
+        return Err(ProgramError::InvalidAccountData);
     }
 
     let required_len = serialized_data.len();
