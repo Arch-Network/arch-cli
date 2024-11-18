@@ -5357,7 +5357,7 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     );
     println!("  2. Edit the source code to implement your program logic");
     println!("  3. When ready, run {} to compile and deploy your program to the network", "arch-cli deploy".cyan());
-    println!("\n{}", "Need help? Check out our  at https://docs.arch.network".italic());
+    println!("\n{}", "Need help? Check out our documentation at https://docs.arch.network".italic());
 
     Ok(())
 }
