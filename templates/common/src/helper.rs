@@ -1,5 +1,4 @@
-//! This module contains helper methods for interacting with the HelloWorld program
-
+use crate::constants;
 use anyhow::{anyhow, Result};
 use bip322::sign_message_bip322;
 use bitcoin::Txid;
@@ -86,7 +85,11 @@ pub fn post(url: &str, method: &str) -> String {
 }
 
 pub fn post_data<T: Serialize + std::fmt::Debug>(url: &str, method: &str, params: T) -> String {
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .danger_accept_invalid_certs(true) // Ignore SSL certificate validation
+        .build()
+        .expect("client should be built");
+
     let res = client
         .post(url)
         .header("content-type", "application/json")
@@ -157,6 +160,7 @@ pub fn extend_bytes_max_len() -> usize {
 pub fn sign_and_send_instruction(
     instruction: Instruction,
     signers: Vec<Keypair>,
+    rpc_url: String,
 ) -> Result<(String, String)> {
     // Get public keys from signers
     let pubkeys = signers
@@ -194,9 +198,12 @@ pub fn sign_and_send_instruction(
         message: message.clone(),       // Clone for logging purposes
     };
 
+    // Correcting the error by using the `unwrap_or` method instead of `unwrap_or_else`
+    let url = rpc_url;
+
     //println!("Runtime Transaction constructed : {:?} ",params);
-    // Step 7: Send transaction to node for processeing
-    let result = process_result(post_data(NODE1_ADDRESS, "send_transaction", params))
+    // Step 7: Send transaction to node for processing
+    let result = process_result(post_data(&url, "send_transaction", params))
         .expect("send_transaction should not fail")
         .as_str()
         .expect("cannot convert result to string")
@@ -247,14 +254,11 @@ pub fn sign_and_send_transaction(
     Ok(result)
 }
 
-/// Deploys the HelloWorld program using the compiled ELF
 pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) {
     let program_pubkey =
         Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&program_keypair).0.serialize());
 
     let elf = fs::read(elf_path).expect("elf path should be available");
-
-    //println!("Program size is : {} Bytes", elf.len());
 
     let txs = elf
         .chunks(extend_bytes_max_len())
@@ -576,7 +580,7 @@ pub fn prepare_fees() -> String {
     tx.raw_hex()
 }
 
-pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
+pub fn send_utxo(url: &str, pubkey: Pubkey) -> (String, u32) {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
         BITCOIN_NODE_PASSWORD.to_string(),
@@ -587,7 +591,7 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
     let _caller = CallerInfo::with_secret_key_file(CALLER_FILE_PATH)
         .expect("getting caller info should not fail");
 
-    let address = get_account_address(pubkey);
+    let address = get_account_address(url, pubkey);
 
     /*println!(
         "Arch Account Address for Public key {:x} is {}",
@@ -626,7 +630,7 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
     (txid.to_string(), vout)
 }
 
-pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
+pub fn send_utxo_2(url: &str, pubkey: Pubkey) -> (Txid, u32) {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
         BITCOIN_NODE_PASSWORD.to_string(),
@@ -637,7 +641,7 @@ pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
     let _caller = CallerInfo::with_secret_key_file(CALLER_FILE_PATH)
         .expect("getting caller info should not fail");
 
-    let address = get_account_address(pubkey);
+    let address = get_account_address(url, pubkey);
     println!("address {:?}", address);
     let account_address = Address::from_str(&address)
         .unwrap()
@@ -672,16 +676,12 @@ pub fn send_utxo_2(pubkey: Pubkey) -> (Txid, u32) {
     (txid, vout)
 }
 
-pub fn get_account_address(pubkey: Pubkey) -> String {
-    process_result(post_data(
-        NODE1_ADDRESS,
-        GET_ACCOUNT_ADDRESS,
-        pubkey.serialize(),
-    ))
-    .expect("get_account_address should not fail")
-    .as_str()
-    .expect("cannot convert result to string")
-    .to_string()
+pub fn get_account_address(url: &str, pubkey: Pubkey) -> String {
+    process_result(post_data(url, GET_ACCOUNT_ADDRESS, pubkey.serialize()))
+        .expect("get_account_address should not fail")
+        .as_str()
+        .expect("cannot convert result to string")
+        .to_string()
 }
 
 fn _get_address_utxos(rpc: &Client, address: String) -> Vec<Value> {

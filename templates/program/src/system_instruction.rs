@@ -7,6 +7,7 @@ use crate::utxo::UtxoMeta;
 pub enum SystemInstruction {
     CreateAccount(UtxoMeta),
     ExtendBytes(Vec<u8>),
+    MakeExecutable(Vec<u8>),
 }
 
 impl SystemInstruction {
@@ -22,6 +23,10 @@ impl SystemInstruction {
                 serialized.push(1);
                 serialized.extend(bytes);
             }
+            Self::MakeExecutable(bytes) => {
+                serialized.push(2);
+                serialized.extend(bytes);
+            }
         }
 
         serialized
@@ -31,6 +36,7 @@ impl SystemInstruction {
         match data[0] {
             0 => Self::CreateAccount(UtxoMeta::from_slice(&data[1..])),
             1 => Self::ExtendBytes(data[1..].to_vec()),
+            2 => Self::MakeExecutable(data[1..].to_vec()),
             _ => {
                 unreachable!("error deserializing system instruction")
             }
@@ -62,6 +68,18 @@ impl SystemInstruction {
                 is_writable: true,
             }],
             data: SystemInstruction::ExtendBytes(data).serialise(),
+        }
+    }
+
+    pub fn new_make_executable_instruction(data: Vec<u8>, pubkey: Pubkey) -> Instruction {
+        Instruction {
+            program_id: Pubkey::system_program(),
+            accounts: vec![AccountMeta {
+                pubkey,
+                is_signer: true,
+                is_writable: true,
+            }],
+            data: SystemInstruction::MakeExecutable(data).serialise(),
         }
     }
 }

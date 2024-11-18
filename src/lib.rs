@@ -1,11 +1,13 @@
+mod demo;
+use demo::{setup_demo_environment, build_frontend, get_cloud_run_url};
 use anyhow::anyhow;
 use anyhow::{Context, Result};
 use arch_program::account::AccountMeta;
-
 use arch_program::instruction::Instruction;
 use arch_program::message::Message;
 use arch_program::pubkey::Pubkey;
 use arch_program::system_instruction::SystemInstruction;
+use rand::{distributions::Alphanumeric, Rng};
 use bitcoin::key::UntweakedKeypair;
 use bitcoin::Amount;
 use bitcoin::Network;
@@ -53,6 +55,7 @@ use common::wallet_manager::*;
 
 static PROJECT_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/demo");
 static SAMPLE_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/sample");
+static TEMPLATES_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
 #[derive(Deserialize)]
 pub struct ServiceConfig {
@@ -192,15 +195,40 @@ pub enum ProjectCommands {
 pub enum IndexerCommands {
     /// Start the indexer
     #[clap(long_about = "Starts the arch-indexer using Docker Compose.")]
-    Start,
+    Start(IndexerStartArgs),
 
     /// Stop the indexer
     #[clap(long_about = "Stops the arch-indexer using Docker Compose.")]
-    Stop,
+    Stop(IndexerStartArgs),
 
     /// Clean the indexer
     #[clap(long_about = "Removes the indexer data and configuration files.")]
     Clean,
+}
+
+#[derive(Args)]
+pub struct IndexerStartArgs {
+    /// Deployment target (local or gcp)
+    #[clap(
+        long,
+        default_value = "local",
+        help = "Specifies where to deploy the indexer: local or gcp"
+    )]
+    target: String,
+
+    /// GCP configuration (required for GCP deployment)
+    #[clap(long, help = "GCP project ID")]
+    gcp_project: Option<String>,
+
+    #[clap(long, help = "GCP region")]
+    gcp_region: Option<String>,
+
+    #[clap(long, help = "GCP machine type")]
+    gcp_machine_type: Option<String>,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -211,7 +239,7 @@ pub enum ValidatorCommands {
 
     /// Stop the validator
     #[clap(long_about = "Stops the local validator.")]
-    Stop,
+    Stop(ValidatorStartArgs),
 }
 
 #[derive(Subcommand)]
@@ -232,7 +260,7 @@ pub enum BitcoinCommands {
 pub enum DemoCommands {
     /// Start the demo application
     #[clap(long_about = "Starts the demo application.")]
-    Start,
+    Start(DemoStartArgs),
 
     /// Stop the demo application
     #[clap(long_about = "Stops the demo application.")]
@@ -272,6 +300,10 @@ pub struct CreateAccountArgs {
     /// Custom name for the account
     #[clap(long, help = "Specifies a custom name for the account")]
     name: String,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
 }
 
 #[derive(Args)]
@@ -310,6 +342,10 @@ pub struct DeployArgs {
         help = "Specifies the folder within the project directory to deploy"
     )]
     folder: Option<String>,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
 }
 
 #[derive(Args)]
@@ -323,6 +359,28 @@ pub struct SendCoinsArgs {
 }
 
 #[derive(Args)]
+pub struct DemoStartArgs {
+    /// Deployment target (local or gcp)
+    #[clap(
+        long,
+        default_value = "local",
+        help = "Specifies where to deploy the demo: local or gcp"
+    )]
+    target: String,
+
+    /// GCP configuration (required for GCP deployment)
+    #[clap(long, help = "GCP project ID")]
+    gcp_project: Option<String>,
+
+    #[clap(long, help = "GCP region")]
+    gcp_region: Option<String>,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
+}
+
+#[derive(Args)]
 pub struct ValidatorStartArgs {
     /// Network to use (testnet or mainnet)
     #[clap(
@@ -331,6 +389,24 @@ pub struct ValidatorStartArgs {
         help = "Specifies the network to use: development, development2, testnet, or mainnet"
     )]
     network: String,
+
+    /// Deployment target (local or gcp)
+    #[clap(
+        long,
+        default_value = "local",
+        help = "Specifies where to deploy the validator: local or gcp"
+    )]
+    target: String,
+
+    /// GCP configuration (required for GCP deployment)
+    #[clap(long, help = "GCP project ID")]
+    gcp_project: Option<String>,
+
+    #[clap(long, help = "GCP region")]
+    gcp_region: Option<String>,
+
+    #[clap(long, help = "GCP machine type")]
+    gcp_machine_type: Option<String>,
 }
 
 pub async fn init() -> Result<()> {
@@ -348,57 +424,28 @@ pub async fn init() -> Result<()> {
     // Ask the user where they want to create the project
     let mut project_dir = prompt_for_project_dir(&default_dir)?;
 
-    // Ensure the project directory is empty or create it
-    loop {
-        if !project_dir.exists() {
-            println!(
-                "  {} Directory does not exist. Do you want to create it? (Y/n)",
-                "ℹ".bold().blue()
-            );
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            if input.trim().to_lowercase() != "n" {
-                fs::create_dir_all(&project_dir)?;
-                println!("  {} Directory created successfully", "✓".bold().green());
-                break;
-            } else {
-                project_dir = prompt_for_project_dir(&default_dir)?;
-            }
-        } else if is_directory_empty(&project_dir)? {
-            break;
-        } else {
-            println!(
-                "  {} Directory is not empty. Do you want to use this existing project folder? (y/N)",
-                "⚠".bold().yellow()
-            );
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            if input.trim().to_lowercase() == "y" {
-                println!("  {} Using existing project folder", "✓".bold().green());
-                break;
-            } else {
-                project_dir = prompt_for_project_dir(&default_dir)?;
-            }
-        }
-    }
-
     // Get the configuration file path
     let config_path = get_config_path()?;
+    update_config_with_project_dir(&config_path, &project_dir)?;
 
     // Create the arch-data directory
     let config_dir = config_path.parent().unwrap();
     let arch_data_dir = config_dir.join("arch-data");
     fs::create_dir_all(&arch_data_dir)?;
+
     println!(
         "  {} Created arch-data directory at {:?}",
         "✓".bold().green(),
         arch_data_dir
     );
 
-    update_config_with_project_dir(&config_path, &project_dir)?;
+    let config = Config::builder()
+        .add_source(File::with_name(config_path.to_str().unwrap()))
+        .build()?;
+    let (_, _projects_dir) = setup_base_structure(&config)?;
 
     // Create the 'demo' folder within the project directory if it doesn't exist
-    let demo_dir = project_dir.join("demo");
+    let demo_dir = project_dir.join("projects/demo");
     if !demo_dir.exists() {
         // Create the 'demo' folder within the project directory
         fs::create_dir_all(&demo_dir)?;
@@ -409,7 +456,7 @@ pub async fn init() -> Result<()> {
         );
 
         // Extract project files from binary
-        extract_project_files(&PROJECT_DIR, &demo_dir)?;
+        extract_recursive(&PROJECT_DIR, &demo_dir)?;
 
         // Rename the .env.example file to .env
         let env_example_file = PathBuf::from(&demo_dir).join("app/frontend/.env.example");
@@ -418,7 +465,7 @@ pub async fn init() -> Result<()> {
         }
 
         // Change to the demo directory
-        std::env::set_current_dir(&demo_dir)?;
+        std::env::set_current_dir(&project_dir)?;
 
         // Build the program
         println!("{}", "Building Arch Network program...".bold().blue());
@@ -471,17 +518,13 @@ fn extract_project_files(project_dir: &Dir, target_dir: &Path) -> Result<()> {
             }
             include_dir::DirEntry::Dir(dir) => {
                 let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
-                match dir_name {
-                    // Add bip322 to the list of top-level directories
-                    "app" | "program" | "common" | "bip322" => {
-                        // These directories should be at the top level
-                        extract_dir_contents(dir, &target_dir.join(dir_name))?;
-                    }
-                    _ => {
-                        // Other directories follow the original structure
-                        let new_target_dir = target_dir.join(dir.path());
-                        extract_dir_contents(dir, &new_target_dir)?;
-                    }
+                if dir_name == "app" {
+                    // App directory should be at the top level
+                    extract_dir_contents(dir, &target_dir.join(dir_name))?;
+                } else {
+                    // Other directories follow the original structure
+                    let new_target_dir = target_dir.join(dir.path());
+                    extract_dir_contents(dir, &new_target_dir)?;
                 }
             }
         }
@@ -489,17 +532,21 @@ fn extract_project_files(project_dir: &Dir, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn extract_dir_contents(dir: &Dir, target_dir: &Path) -> Result<()> {
-    fs::create_dir_all(target_dir)?;
+fn extract_dir_contents(dir: &Dir, target_path: &Path) -> Result<()> {
     for entry in dir.entries() {
         match entry {
             include_dir::DirEntry::File(file) => {
-                let target_path = target_dir.join(file.path().file_name().unwrap());
-                fs::write(target_path, file.contents())?;
+                let relative_path = file.path();
+                let target_file = target_path.join(relative_path);
+                if let Some(parent) = target_file.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(target_file, file.contents())?;
             }
             include_dir::DirEntry::Dir(subdir) => {
-                let new_target_dir = target_dir.join(subdir.path().file_name().unwrap());
-                extract_dir_contents(subdir, &new_target_dir)?;
+                let new_target = target_path.join(subdir.path());
+                fs::create_dir_all(&new_target)?;
+                extract_dir_contents(subdir, &new_target)?;
             }
         }
     }
@@ -616,24 +663,199 @@ fn prompt_for_project_dir(default_dir: &Path) -> Result<PathBuf> {
     }
 }
 
-fn create_project_dir(project_dir: &Path) -> Result<()> {
-    if !project_dir.exists() {
-        println!(
-            "  {} Directory does not exist. Creating it now...",
-            "ℹ".bold().blue()
-        );
-        match fs::create_dir_all(project_dir) {
-            Ok(_) => println!("  {} Directory created successfully", "✓".bold().green()),
-            Err(e) => {
-                return Err(anyhow!(
-                    "Failed to create directory '{}': {}",
-                    project_dir.display(),
-                    e
-                ))
+pub async fn create_project(args: &CreateProjectArgs, config: &Config) -> Result<()> {
+    println!("{}", "Creating new project...".bold().green());
+
+    // Set up base structure
+    let (base_dir, projects_dir) = setup_base_structure(config)?;
+
+    // Get project name
+    let project_name = args.name.clone().unwrap_or_else(|| {
+        Input::<String>::new()
+            .with_prompt("Enter a name for your project")
+            .interact()
+            .unwrap()
+    });
+
+    // Create project directory within projects directory
+    let project_dir = projects_dir.join(&project_name);
+    if project_dir.exists() {
+        return Err(anyhow!("Project {} already exists", project_name));
+    }
+
+    // Create the project directory and extract sample contents
+    fs::create_dir_all(&project_dir)?;
+
+    for entry in SAMPLE_DIR.entries() {
+        match entry {
+            include_dir::DirEntry::File(file) => {
+                let target_path = project_dir.join(file.path().file_name().unwrap());
+                println!("    {} Extracting file: {:?}", "📄".bold().blue(), target_path);
+                fs::write(target_path, file.contents())?;
+            }
+            include_dir::DirEntry::Dir(dir) => {
+                let dir_name = dir.path().file_name().unwrap();
+                let target_path = project_dir.join(dir_name);
+                println!("    {} Extracting directory: {:?}", "📁".bold().blue(), target_path);
+
+                fs::create_dir_all(&target_path)?;
+                for subentry in dir.entries() {
+                    match subentry {
+                        include_dir::DirEntry::File(file) => {
+                            let file_path = target_path.join(file.path().file_name().unwrap());
+                            println!("      {} Extracting file: {:?}", "📄".bold().blue(), file_path);
+                            fs::write(file_path, file.contents())?;
+                        }
+                        include_dir::DirEntry::Dir(subdir) => {
+                            let subdir_name = subdir.path().file_name().unwrap();
+                            let subdir_path = target_path.join(subdir_name);
+                            println!("      {} Extracting directory: {:?}", "📁".bold().blue(), subdir_path);
+
+                            // Create subdirectory and copy its contents directly
+                            fs::create_dir_all(&subdir_path)?;
+                            for item in subdir.entries() {
+                                match item {
+                                    include_dir::DirEntry::File(file) => {
+                                        let file_path = subdir_path.join(file.path().file_name().unwrap());
+                                        fs::write(file_path, file.contents())?;
+                                    }
+                                    include_dir::DirEntry::Dir(d) => {
+                                        let d_path = subdir_path.join(d.path().file_name().unwrap());
+                                        fs::create_dir_all(&d_path)?;
+                                        for f in d.entries() {
+                                            if let include_dir::DirEntry::File(file) = f {
+                                                fs::write(d_path.join(file.path().file_name().unwrap()), file.contents())?;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Create Vite app using npm
+    println!("Creating Vite application...");
+    let create_vite_output = std::process::Command::new("npm")
+        .args(["create", "vite@latest", "frontend", "--", "--template", "react"])
+        .current_dir(&project_dir.join("app"))
+        .output()
+        .context("Failed to create Vite application")?;
+
+    if !create_vite_output.status.success() {
+        return Err(anyhow!("Failed to create Vite application: {}",
+            String::from_utf8_lossy(&create_vite_output.stderr)));
+    }
+    println!("  {} Created Vite application", "✓".bold().green());
+
+    // Change to frontend directory and install base dependencies
+    let frontend_dir = project_dir.join("app/frontend");
+    let install_output = std::process::Command::new("npm")
+        .arg("install")
+        .current_dir(&frontend_dir)
+        .output()
+        .context("Failed to install base dependencies")?;
+
+    if !install_output.status.success() {
+        return Err(anyhow!("Failed to install base dependencies: {}",
+            String::from_utf8_lossy(&install_output.stderr)));
+    }
+    println!("  {} Installed base dependencies", "✓".bold().green());
+
+    // Install additional packages
+    let additional_packages = ["sats-connect", "@saturnbtcio/arch-sdk"];
+    let install_additional_output = std::process::Command::new("npm")
+        .arg("install")
+        .args(&additional_packages)
+        .current_dir(&frontend_dir)
+        .output()
+        .context("Failed to install additional packages")?;
+
+    if !install_additional_output.status.success() {
+        return Err(anyhow!("Failed to install additional packages: {}",
+            String::from_utf8_lossy(&install_additional_output.stderr)));
+    }
+    println!("  {} Installed additional packages", "✓".bold().green());
+
+    println!("{}", "Project created successfully! 🎉".bold().green());
+    println!("Project location: {:?}", project_dir);
+
+    println!("\n{}", "Next steps:".bold().yellow());
+    println!(
+        "  1. Navigate to {} to find the Rust program template",
+        project_dir.join("app").join("program").display().to_string().yellow()
+    );
+    println!("  2. Edit the source code to implement your program logic");
+    println!("  3. When ready, run {} to compile and deploy your program to the network", "arch-cli deploy".cyan());
+    println!("\n{}", "Need help? Check out our documentation at https://arch-network.github.io/docs/".italic());
+
+    Ok(())
+}
+
+fn extract_recursive(dir: &Dir, target_path: &Path) -> Result<()> {
+    for entry in dir.entries() {
+        match entry {
+            include_dir::DirEntry::Dir(subdir) => {
+                let target_dir = target_path.join(subdir.path().file_name().unwrap());
+                fs::create_dir_all(&target_dir)?;
+                extract_recursive(subdir, &target_dir)?;
+            }
+            include_dir::DirEntry::File(file) => {
+                let target_file = target_path.join(file.path().file_name().unwrap());
+                fs::write(target_file, file.contents())?;
             }
         }
     }
     Ok(())
+}
+
+pub fn setup_base_structure(config: &Config) -> Result<(PathBuf, PathBuf)> {
+    // Get base project directory from config
+    let base_dir = PathBuf::from(config.get_string("project.directory")?);
+
+    // Create base directory if it doesn't exist
+    if !base_dir.exists() {
+        fs::create_dir_all(&base_dir)?;
+        println!("  {} Created base directory at {:?}", "✓".bold().green(), base_dir);
+    }
+
+    // Create shared libraries at base directory level
+    println!("  {} Setting up shared libraries...", "ℹ".bold().blue());
+    for lib in &["bip322", "common", "program"] {
+        let source_dir = TEMPLATES_DIR.get_dir(lib)
+            .ok_or_else(|| anyhow!("Template directory '{}' not found", lib))?;
+        let lib_dir = base_dir.join(lib);
+
+        // Create the library directory
+        fs::create_dir_all(&lib_dir)?;
+
+        // Extract contents directly to the library directory, maintaining original structure
+        for entry in source_dir.entries() {
+            match entry {
+                include_dir::DirEntry::Dir(subdir) => {
+                    let target_dir = lib_dir.join(subdir.path().file_name().unwrap());
+                    fs::create_dir_all(&target_dir)?;
+                    extract_recursive(subdir, &target_dir)?;
+                }
+                include_dir::DirEntry::File(file) => {
+                    let target_file = lib_dir.join(file.path().file_name().unwrap());
+                    fs::write(target_file, file.contents())?;
+                }
+            }
+        }
+
+        println!("  {} Created shared library {} at {:?}", "✓".bold().green(), lib, lib_dir);
+    }
+
+    // Create projects directory
+    let projects_dir = base_dir.join("projects");
+    fs::create_dir_all(&projects_dir)?;
+    println!("  {} Created projects directory at {:?}", "✓".bold().green(), projects_dir);
+
+    Ok((base_dir, projects_dir))
 }
 
 fn get_config_path() -> Result<PathBuf> {
@@ -918,12 +1140,12 @@ pub async fn server_start(config: &Config) -> Result<()> {
 pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("{}", "Deploying your Arch Network app...".bold().green());
 
-    // Get the project directory from the config
+    // Get the project directory from the config and append "/projects" to the end
     let project_dir = PathBuf::from(
         config
             .get_string("project.directory")
-            .context("Failed to get project directory from config")?,
-    );
+            .context("Failed to get project directory from config")?
+    ).join("projects");
 
     // Determine the deploy folder
     let deploy_folder = if let Some(folder) = &args.folder {
@@ -977,7 +1199,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
 
     // Create a new DeployArgs with the updated folder
     let updated_args = DeployArgs {
-        folder: Some(deploy_folder.to_str().unwrap().to_string()),
+        folder: Some(deploy_folder.join("app/program").to_str().unwrap().to_string()),
         ..args.clone()
     };
 
@@ -994,11 +1216,13 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     let wallet_manager = WalletManager::new(config)?;
     ensure_wallet_balance(&wallet_manager.client).await?;
 
-    // Get account address and fund it
-    let account_address =
-        task::spawn_blocking(move || get_account_address(program_pubkey.clone())).await?;
-    let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
 
+    // Get account address and fund it
+    let rpc_url_clone = rpc_url.clone();
+    let account_address =
+        task::spawn_blocking(move || get_account_address(&rpc_url_clone, program_pubkey.clone())).await?;
+    let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
     // Deploy the program
     deploy_program_with_tx_info(
         &program_keypair,
@@ -1006,6 +1230,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         tx_info,
         deploy_folder.to_str().map(String::from),
         config,
+        rpc_url,
     )
     .await?;
 
@@ -1817,6 +2042,17 @@ pub fn load_config(network: &str) -> Result<Config> {
     // Add the network key to the final configuration
     builder = builder.set_override("selected_network", network.to_string())?;
 
+    // Set the bitcoin.network based on the selected network
+    let bitcoin_network = match network {
+        "mainnet" => "bitcoin",
+        "testnet" => "testnet",
+        "development" => "regtest",
+        _ => "regtest", // Default to regtest if unknown
+    };
+    builder = builder.set_override("bitcoin.network", bitcoin_network)?;
+
+    builder = builder.set_override("leader_rpc_endpoint", "http://localhost:9002")?;
+
     // Build the final configuration
     let final_config = builder
         .build()
@@ -1988,9 +2224,13 @@ fn get_program_path(args: &DeployArgs) -> PathBuf {
 
 fn build_program(args: &DeployArgs) -> Result<()> {
     println!("  ℹ Building program...");
-
-    // Print out the path to the Cargo.toml file
-    println!("  ℹ Cargo.toml found at: {}", args.folder.clone().unwrap());
+    // Check if the Cargo.toml file exists
+    let cargo_toml_path = PathBuf::from(args.folder.clone().unwrap()).join("Cargo.toml");
+    if cargo_toml_path.exists() {
+        println!("  ℹ Cargo.toml found at: {}", cargo_toml_path.display());
+    } else {
+        println!("  ℹ Cargo.toml not found in the specified directory.");
+    }
 
     // Change to the program directory
     let program_dir = args.folder.clone().unwrap();
@@ -2003,7 +2243,7 @@ fn build_program(args: &DeployArgs) -> Result<()> {
     );
 
     let output = std::process::Command::new("cargo")
-        .args(["build-sbf", "--manifest-path", "app/program/Cargo.toml"])
+        .args(["build-sbf", "--manifest-path", "Cargo.toml"])
         .output()
         .context("Failed to execute cargo build-sbf")?;
 
@@ -2017,6 +2257,7 @@ fn build_program(args: &DeployArgs) -> Result<()> {
     println!("  ✓ Program built successfully");
     Ok(())
 }
+
 fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
     Ok(args.program_key.clone().unwrap_or_else(|| {
         config
@@ -2031,6 +2272,7 @@ async fn deploy_program_with_tx_info(
     tx_info: Option<bitcoincore_rpc::json::GetTransactionResult>,
     deploy_folder: Option<String>,
     config: &Config,
+    rpc_url: String,
 ) -> Result<()> {
     if let Some(info) = tx_info {
         deploy_program(
@@ -2040,6 +2282,7 @@ async fn deploy_program_with_tx_info(
             0,
             deploy_folder.map(|folder| format!("{}/app/program", folder)),
             config,
+            rpc_url,
         )
         .await?;
         println!("  {} Program deployed successfully", "✓".bold().green());
@@ -2175,7 +2418,19 @@ fn generate_new_keypair() -> Result<(secp256k1::Keypair, Pubkey)> {
     let secp = Secp256k1::new();
     let (secret_key, _) = secp.generate_keypair(&mut OsRng);
     let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
-    let pubkey = Pubkey::from_slice(&keypair.public_key().serialize());
+
+    // Handle the public key format consistently
+    let serialized_pubkey = keypair.public_key().serialize();
+    let pubkey = if serialized_pubkey.len() == 33 {
+        // Compressed key format
+        Pubkey::from_slice(&serialized_pubkey[1..33])
+    } else if serialized_pubkey.len() == 65 {
+        // Uncompressed key format
+        Pubkey::from_slice(&serialized_pubkey[1..33])
+    } else {
+        return Err(anyhow!("Invalid public key length: {}", serialized_pubkey.len()));
+    };
+
     Ok((keypair, pubkey))
 }
 
@@ -2214,12 +2469,14 @@ async fn fund_address(
     let bitcoin_network =
         Network::from_str(&network).context("Invalid Bitcoin network specified in config")?;
 
+        println!("Network: {}", bitcoin_network);
+
     let address = Address::from_str(account_address).context("Invalid account address")?;
     let checked_address = address
         .require_network(bitcoin_network)
         .context("Account address does not match the configured Bitcoin network")?;
 
-    if bitcoin_network == Network::Regtest {
+    if bitcoin_network == Network::Regtest || bitcoin_network == Network::Testnet {
         // Ensure the wallet has funds
         let balance = rpc.get_balance(None, None)?;
         if balance == Amount::ZERO {
@@ -2237,16 +2494,19 @@ async fn fund_address(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
+        println!("Sending funds to address: {}", checked_address.to_string());
+
         let tx = rpc.send_to_address(
             &checked_address,
             Amount::from_sat(5000),
-            None,
-            None,
-            Some(false),
-            None,
-            None,
-            None,
+            None,                           // comment
+            None,                           // comment_to
+            Some(false),                    // subtract_fee_from_amount
+            None,                           // replaceable (RBF)
+            Some(1),                        // conf_target (1 block for high priority)
+            Some(bitcoincore_rpc::json::EstimateMode::Economical), // estimate_mode
         )?;
+
         println!(
             "  {} Transaction sent: {}",
             "✓".bold().green(),
@@ -2257,25 +2517,49 @@ async fn fund_address(
         let checked_new_address = new_address.require_network(bitcoin_network)?;
         rpc.generate_to_address(1, &checked_new_address)?;
 
+        // Create a progress bar for waiting
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.blue} {msg}")
+                .unwrap()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈"),
+        );
+
+        let start_time = std::time::Instant::now();
+        let timeout = Duration::from_secs(3600); // 60 minutes timeout
+
         // Wait for transaction confirmation
         loop {
+            if start_time.elapsed() > timeout {
+                pb.finish_with_message("❌ Transaction confirmation timed out after 60 minutes");
+                return Err(anyhow!("Transaction confirmation timed out"));
+            }
+
             match rpc.get_transaction(&tx, None) {
                 Ok(info) if info.info.confirmations > 0 => {
-                    println!(
-                        "  {} Transaction confirmed with {} confirmations",
-                        "✓".bold().green(),
+                    pb.finish_with_message(format!(
+                        "✓ Transaction confirmed with {} confirmations",
                         info.info.confirmations.to_string().yellow()
-                    );
+                    ));
                     return Ok(Some(info));
                 }
-                Ok(_) => println!("  {} Waiting for confirmation...", "⏳".bold().blue()),
-                Err(e) => println!(
-                    "  {} Error checking transaction: {}",
-                    "⚠".bold().yellow(),
-                    e.to_string().red()
-                ),
+                Ok(_) => {
+                    let elapsed = start_time.elapsed().as_secs();
+                    pb.set_message(format!(
+                        "Waiting for confirmation... ({:02}:{:02})",
+                        elapsed / 60,
+                        elapsed % 60
+                    ));
+                }
+                Err(e) => {
+                    pb.set_message(format!(
+                        "⚠ Error checking transaction: {}. Retrying...",
+                        e.to_string()
+                    ));
+                }
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(5)).await; // Check every 5 seconds instead of 1
         }
     } else {
         println!("{}", "Please deposit funds to continue:".bold());
@@ -2291,8 +2575,31 @@ async fn fund_address(
         );
         println!("  {} Waiting for funds...", "⏳".bold().blue());
 
-        // TODO: Implement balance checking for non-REGTEST networks
-        Ok(None)
+        // Implement balance checking for non-REGTEST networks
+        loop {
+            let balance = rpc.get_balance(None, None)?;
+            if balance > Amount::from_sat(5000) {
+                println!("  {} Funds received", "✓".bold().green());
+                return Ok(None);
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    Ok(None)
+}
+
+pub fn get_rpc_url_with_fallback(rpc_url: Option<String>, config: &Config) -> Result<String> {
+    // Check if rpc_url is Some and not empty
+    match rpc_url {
+        Some(url) if !url.trim().is_empty() => Ok(url),
+        _ => {
+            // If rpc_url is None or empty, try getting from config
+            match config.get_string("leader_rpc_endpoint") {
+                Ok(url) if !url.trim().is_empty() => Ok(url),
+                _ => Ok(common::constants::NODE1_ADDRESS.to_string())
+            }
+        }
     }
 }
 
@@ -2303,16 +2610,17 @@ async fn deploy_program(
     vout: u32,
     deploy_folder: Option<String>,
     config: &Config,
+    rpc_url: String,
 ) -> Result<()> {
     // Create a new account for the program
-    create_program_account(program_keypair, program_pubkey, txid, vout).await?;
+    create_program_account(program_keypair, program_pubkey, txid, vout, rpc_url.clone()).await?;
 
     // Deploy the program transactions
-    deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder, config).await?;
+    deploy_program_txs_with_folder(program_keypair, program_pubkey, deploy_folder, config, rpc_url.clone()).await?;
 
     // Make program executable
-    tokio::task::block_in_place( move || {
-        make_program_executable(program_keypair, program_pubkey)
+    tokio::task::block_in_place(move || {
+        make_program_executable(program_keypair, program_pubkey, rpc_url)
     }).await?;
 
     Ok(())
@@ -2340,11 +2648,16 @@ fn build_program_from_path(program_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config, program_keypair: Option<(Keypair, Pubkey)>) -> Result<()> {
+pub async fn deploy_program_from_path(
+    program_dir: &PathBuf,
+    config: &Config,
+    keypair: Option<(Keypair, Pubkey)>,
+    rpc_url: String,
+) -> Result<()> {
     println!("  ℹ Deploying program...");
 
     // Prepare program keys if not provided
-    let (program_keypair, program_pubkey) = if let Some(keypair) = program_keypair {
+    let (program_keypair, program_pubkey) = if let Some(keypair) = keypair {
         keypair
     } else {
         prepare_program_keys()?
@@ -2353,22 +2666,29 @@ async fn deploy_program_from_path(program_dir: &PathBuf, config: &Config, progra
     // Build-sbf the program (make .so file) in src folder
     build_program_from_path(program_dir)?;
 
-    // Deploy the program
-    let deploy_result = deploy_program_txs_with_folder(
+    let dummy_txid = "0000000000000000000000000000000000000000000000000000000000000000";
+    let dummy_vout = 0;
+
+    deploy_program(
         &program_keypair,
         &program_pubkey,
-        Some(program_dir.to_str().unwrap().to_string()),
+        &dummy_txid,
+        dummy_vout,
+        Some(program_dir.to_string_lossy().to_string()),
         config,
-    );
-
-    deploy_result.await?;
+        rpc_url,
+    ).await?;
 
     println!("  ✓ Program deployed successfully");
     display_program_id(&program_pubkey);
     Ok(())
 }
 
-async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pubkey) -> Result<()> {
+async fn make_program_executable(
+    program_keypair: &Keypair,
+    program_pubkey: &Pubkey,
+    rpc_url: String,
+) -> Result<()> {
     println!("    Making program executable...");
 
     let instruction = Instruction {
@@ -2382,28 +2702,55 @@ async fn make_program_executable(program_keypair: &Keypair, program_pubkey: &Pub
     };
 
     let keypair = program_keypair.clone();
-
+    let rpc_url_clone = rpc_url.clone();
     let (txid, _) = tokio::task::spawn_blocking(move || {
-        sign_and_send_instruction(instruction, vec![keypair])
+        sign_and_send_instruction(instruction, vec![keypair], rpc_url_clone)
     }).await??;
 
     println!("    Transaction sent: {}", txid);
+
+    let rpc_url_clone = rpc_url.clone();
     tokio::task::spawn_blocking(move || {
-        get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())
+        get_processed_transaction(&rpc_url_clone, txid.clone())
     }).await??;
+
     println!("    Program made executable successfully");
     Ok(())
 }
 
-pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, config: &Config) -> Result<()> {
-    let program_pubkey = Pubkey::from_slice(&program_keypair.public_key().serialize()[1..33]);
+async fn deploy_program_txs(
+    program_dir: &PathBuf,
+    config: &Config,
+    keypair: Option<(Keypair, Pubkey)>,
+    rpc_url: Option<String>,
+) -> Result<()> {
+    let (program_keypair, program_pubkey) = keypair.ok_or_else(|| anyhow!("No keypair provided"))?;
 
     let network = config.get_string("bitcoin.network")
         .unwrap_or_else(|_| "regtest".to_string());
     let bitcoin_network =
         Network::from_str(&network).context("Invalid Bitcoin network specified in config")?;
 
-    let elf = fs::read(elf_path).expect("elf path should be available");
+    // Construct the full path to the release directory
+    let release_dir = program_dir.join("target/sbf-solana-solana/release");
+    println!("  ℹ Looking for .so file in release directory: {:?}", release_dir);
+
+    // Find the .so file
+    let elf_path = fs::read_dir(&release_dir)
+        .with_context(|| format!("Failed to read release directory at {:?}", release_dir))?
+        .filter_map(|entry| entry.ok())
+        .find(|entry| {
+            entry.path().extension()
+                .map_or(false, |ext| ext == "so")
+        })
+        .ok_or_else(|| anyhow!("No .so file found in release directory"))?
+        .path();
+
+    println!("  ℹ Found .so file at: {:?}", elf_path);
+
+    // Read the .so file
+    let elf = fs::read(&elf_path)
+        .with_context(|| format!("Failed to read .so file at {:?}", elf_path))?;
 
     let txs = elf
         .chunks(extend_bytes_max_len())
@@ -2426,25 +2773,26 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, confi
                 )],
             };
 
-            let digest_slice =message.hash();
+            let digest_slice = message.hash();
 
             RuntimeTransaction {
                 version: 0,
                 signatures: vec![common::signature::Signature(
-                    sign_message_bip322(program_keypair, &digest_slice, BITCOIN_NETWORK).to_vec(),
+                    sign_message_bip322(&program_keypair, &digest_slice, bitcoin_network).to_vec(),
                 )],
                 message,
             }
         })
         .collect::<Vec<RuntimeTransaction>>();
 
+    let url = rpc_url.unwrap_or_else(|| common::constants::NODE1_ADDRESS.to_string());
+    let url_clone = url.clone();
 
     let txids: Vec<String> = {
-        let node_address = NODE1_ADDRESS.to_string();
-        let txs_clone = txs.clone(); // Clone if necessary
+        let txs_clone = txs.clone();
         let response = task::spawn_blocking(move || {
-            post_data(&node_address, "send_transactions", txs_clone)
-        }).await.expect("Task panicked");
+            post_data(&url_clone, "send_transactions", txs_clone)
+        }).await?;
 
         process_result(response)
             .map_err(|e| anyhow!("Failed to process result: {}", e))?
@@ -2455,70 +2803,68 @@ pub async fn deploy_program_txs(program_keypair: &Keypair, elf_path: &str, confi
             .collect()
     };
 
-
     let pb = ProgressBar::new(txids.len() as u64);
-
     pb.set_style(ProgressStyle::default_bar()
         .progress_chars("#>-")
         .template("{spinner:.green}[{elapsed_precise:.blue}] {msg:.blue} [{bar:100.green/blue}] {pos}/{len} ({eta})").unwrap());
-
-    pb.set_message("Successfully Processed Deployment Transactions :");
+    pb.set_message("Processing Deployment Transactions:");
 
     for txid in txids {
-        let _processed_tx = task::spawn_blocking(move || get_processed_transaction(NODE1_ADDRESS, txid.clone())).await;
+        let url_clone = url.clone();
+        let txid_clone = txid.clone();
+        task::spawn_blocking(move || {
+            get_processed_transaction(&url_clone, txid_clone)
+        }).await??;
         pb.inc(1);
-        pb.set_message("Successfully Processed Deployment Transactions :");
     }
 
     pb.finish();
-
     Ok(())
 }
 
 async fn deploy_program_txs_with_folder(
     program_keypair: &Keypair,
-    _program_pubkey: &Pubkey,
+    program_pubkey: &Pubkey,
     deploy_folder: Option<String>,
     config: &Config,
+    rpc_url: String,
 ) -> Result<()> {
     println!("    Deploying program transactions...");
 
-    let so_folder = deploy_folder
-        .ok_or_else(|| anyhow!("No deploy folder specified"))?
-        .to_string();
-    let so_folder = format!("{}/target/sbf-solana-solana/release", so_folder);
+    let program_dir = deploy_folder
+        .ok_or_else(|| anyhow!("No deploy folder specified"))?;
 
-    // Scan the deploy_folder for the .so file in the folder and set so_file to that
-    let so_file = {
-        let mut so_file = None;
-        for file in fs::read_dir(&so_folder)? {
-            let path = file?.path();
-            if path.is_file() && path.extension().unwrap_or_default() == "so" {
-                so_file = path.to_str().map(|s| s.to_string());
-                break;
-            }
-        }
-        so_file.ok_or_else(|| anyhow!("No .so file found in the specified folder"))?
-    };
+    println!("  ℹ Program directory: {}", program_dir);
 
-    if let Err(e) = deploy_program_txs(program_keypair, &so_file, config).await {
+    // Pass the program directory directly without modifying the path
+    let program_dir = PathBuf::from(program_dir);
+
+    if let Err(e) = deploy_program_txs(
+        &program_dir,
+        config,
+        Some((program_keypair.clone(), *program_pubkey)),
+        Some(rpc_url),
+    ).await {
         println!("Failed to deploy program transactions: {}", e);
         return Err(e);
     }
     println!("    Program transactions deployed successfully");
     Ok(())
 }
+
 async fn create_program_account(
     program_keypair: &Keypair,
     program_pubkey: &Pubkey,
     txid: &str,
     vout: u32,
+    rpc_url: String,
 ) -> Result<()> {
     println!("    Creating program account...");
 
     let program_keypair_clone = program_keypair.clone();
     let program_pubkey_clone = *program_pubkey;
     let txid_clone = txid.to_string();
+    let url = rpc_url.clone();
 
     let (txid, _) = tokio::task::spawn_blocking(move || {
         sign_and_send_instruction(
@@ -2528,15 +2874,24 @@ async fn create_program_account(
                 program_pubkey_clone,
             ),
             vec![program_keypair_clone],
+            url,
         )
     }).await??;
 
-    let _ = tokio::task::spawn_blocking(move || get_processed_transaction(&NODE1_ADDRESS.to_string(), txid.clone())).await;
-    println!("    Program account created successfully");
     Ok(())
 }
 
-pub async fn demo_start(config: &Config) -> Result<()> {
+pub async fn demo_start(args: &DemoStartArgs, config: &Config) -> Result<()> {
+    println!("{}", "Starting the demo application...".bold().green());
+
+    match args.target.as_str() {
+        "local" => start_local_demo(args, config).await,
+        "gcp" => start_gcp_demo(args, config).await,
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<()> {
     println!("{}", "Starting the demo application...".bold().green());
 
     // Get the selected network from the config
@@ -2552,7 +2907,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         .context("Failed to get project directory from config")?;
 
     // Define the demo directory in the project
-    let demo_dir = PathBuf::from(&project_dir).join("demo");
+    let demo_dir = PathBuf::from(&project_dir).join("projects/demo");
 
     // Check if the demo directory exists, if not, copy it from the CLI directory
     if !demo_dir.exists() {
@@ -2570,7 +2925,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         );
 
         // Extract demo files from binary
-        extract_project_files(&PROJECT_DIR, &demo_dir)?;
+        extract_recursive(&PROJECT_DIR, &demo_dir)?;
 
         // Rename the .env.example file to .env
         let env_example_file = PathBuf::from(&demo_dir).join("app/frontend/.env.example");
@@ -2659,6 +3014,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         create_account(&CreateAccountArgs {
             name: graffiti_key_name.clone(),
             program_id: None,
+            rpc_url: Some(args.rpc_url.clone().unwrap_or_default()),
         }, config).await?;
 
         // Set the program_pubkey to the pubkey of the graffiti account
@@ -2683,11 +3039,13 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     deploy_program_from_path(
         &PathBuf::from(&demo_dir).join("app/program"),
         config,
-        Some((program_keypair.clone(), program_pubkey))
+        Some((program_keypair.clone(), program_pubkey)),
+        get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap(),
     ).await?;
 
     // Make the program executable
-    make_program_executable(&program_keypair, &program_pubkey).await?;
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+    make_program_executable(&program_keypair, &program_pubkey, rpc_url).await?;
 
     let graffiti_wall_state_exists = key_name_exists(&keys_file, "graffiti_wall_state")?;
 
@@ -2698,6 +3056,7 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         create_account(&CreateAccountArgs {
             name: "graffiti_wall_state".to_string(),
             program_id: Some(hex::encode(program_pubkey.serialize())),
+            rpc_url: Some(args.rpc_url.clone().unwrap_or_default()),
         }, config).await?;
     }
 
@@ -2725,6 +3084,8 @@ pub async fn demo_start(config: &Config) -> Result<()> {
         .arg("down")
         .output()
         .context("Failed to stop existing demo containers")?;
+
+    
 
     if !stop_output.status.success() {
         println!(
@@ -2770,14 +3131,37 @@ pub async fn demo_start(config: &Config) -> Result<()> {
 
     println!("  {} arch-network created or already exists", "✓".bold().green());
 
+    // Creating longer-lived values for the environment variables to avoid temporary value drop errors
+    let program_pubkey_str = hex::encode(program_pubkey.serialize());
+    let graffiti_wall_state_pubkey_str = graffiti_wall_state_pubkey.to_string();
+    let demo_frontend_port_str = "5173".to_string();
+    let indexer_port_str = "5175".to_string();
+
+    let env_vars = vec![
+        ("VITE_PROGRAM_PUBKEY", &program_pubkey_str),
+        ("VITE_WALL_ACCOUNT_PUBKEY", &graffiti_wall_state_pubkey_str),
+        ("DEMO_FRONTEND_PORT", &demo_frontend_port_str),
+        ("INDEXER_PORT", &indexer_port_str),
+    ];
+
     // Start the demo application
     println!("  {} Starting demo containers...", "→".bold().blue());
-    let start_output = ShellCommand::new("docker-compose")
+
+    // Create the docker-compose command with environment variables
+    let mut command = ShellCommand::new("docker-compose");
+    command
         .arg("-f")
         .arg("app/demo-docker-compose.yml")
         .arg("up")
         .arg("--build")
-        .arg("-d")
+        .arg("-d");
+
+    // Add environment variables to the command
+    for (key, value) in env_vars {
+        command.env(key, value);
+    }
+
+    let start_output = command
         .output()
         .context("Failed to start the demo application using Docker Compose")?;
 
@@ -2796,6 +3180,116 @@ pub async fn demo_start(config: &Config) -> Result<()> {
     // Open the browser with the demo application
     if let Err(e) = open_browser(webbrowser::Browser::Default, &format!("http://localhost:5173")) {
         return Err(anyhow!("Failed to open the browser: {}", e));
+    }
+
+    Ok(())
+}
+
+async fn start_gcp_demo(args: &DemoStartArgs, config: &Config) -> Result<()> {
+    println!("Starting GCP deployment...");
+
+    // Setup demo environment first
+    let (demo_dir, _, _, rpc_url) = setup_demo_environment(args, config).await?;
+
+    let project_id = args.gcp_project.clone()
+        .ok_or_else(|| anyhow!("GCP project ID is required for GCP deployment"))?;
+
+    // Build and deploy the demo container
+    println!("Building and deploying demo container...");
+
+    let demo_app_dir = demo_dir.join("app");
+
+    println!("  {} Changing to demo app directory: {:?}", "→".bold().blue(), demo_app_dir);
+
+    std::env::set_current_dir(&demo_app_dir)
+        .context("Failed to change to demo app directory")?;
+
+    // Build the container
+    let image_name = format!("gcr.io/{}/arch-demo", project_id);
+    let build_status = Command::new("docker")
+        .args([
+            "build",
+            "-t", &image_name,
+            "-f", "Dockerfile.cloudrun",
+            "."
+        ])
+        .status()
+        .context("Failed to build demo container")?;
+
+    if !build_status.success() {
+        return Err(anyhow!("Failed to build demo container"));
+    }
+
+    // Push to GCR
+    let push_status = Command::new("docker")
+        .args(["push", &image_name])
+        .status()
+        .context("Failed to push demo container")?;
+
+    if !push_status.success() {
+        return Err(anyhow!("Failed to push demo container"));
+    }
+
+    // Deploy to Cloud Run
+    let deploy_status = Command::new("gcloud")
+        .args([
+            "run", "deploy", "arch-demo",
+            "--image", &image_name,
+            "--platform", "managed",
+            "--region", "us-central1",
+            "--port", "8080",
+            "--allow-unauthenticated",
+            "--project", &project_id,
+            "--set-env-vars", &format!("ARCH_RPC_URL={}", rpc_url),
+        ])
+        .status()
+        .context("Failed to deploy to Cloud Run")?;
+
+    if !deploy_status.success() {
+        return Err(anyhow!("Failed to deploy to Cloud Run"));
+    }
+
+    println!("✓ Demo application deployed successfully to Cloud Run");
+    Ok(())
+}
+
+async fn deploy_to_cloud_run(project_id: &str, region: &str, demo_dir: &Path) -> Result<()> {
+    // Build and push Docker image
+    let image_name = format!("gcr.io/{}/arch-demo", project_id);
+
+    println!("  {} Building Docker image...", "→".bold().blue());
+    let build_output = ShellCommand::new("docker")
+        .args(["build", "--platform", "linux/amd64", "-t", &image_name, "."])
+        .current_dir(demo_dir.join("app/frontend"))
+        .output()?;
+
+    if !build_output.status.success() {
+        return Err(anyhow!("Failed to build Docker image"));
+    }
+
+    println!("  {} Pushing image to Container Registry...", "→".bold().blue());
+    let push_output = ShellCommand::new("docker")
+        .args(["push", &image_name])
+        .output()?;
+
+    if !push_output.status.success() {
+        return Err(anyhow!("Failed to push Docker image"));
+    }
+
+    println!("  {} Deploying to Cloud Run...", "→".bold().blue());
+    let deploy_output = ShellCommand::new("gcloud")
+        .args([
+            "run", "deploy", "arch-demo",
+            "--image", &image_name,
+            "--platform", "managed",
+            "--region", region,
+            "--project", project_id,
+            "--allow-unauthenticated"
+        ])
+        .output()?;
+
+    if !deploy_output.status.success() {
+        return Err(anyhow!("Failed to deploy to Cloud Run"));
     }
 
     Ok(())
@@ -3096,8 +3590,11 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     let public_key_bytes = public_key.serialize_uncompressed();
     let caller_pubkey = Pubkey::from_slice(&public_key_bytes[1..33]); // Skip the first byte and take the next 32
 
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+    println!("  {} RPC URL: {}", "ℹ".bold().blue(), rpc_url.yellow());
+
     // Get account address
-    let account_address = generate_account_address(caller_pubkey).await?;
+    let account_address = generate_account_address(&rpc_url, caller_pubkey).await?;
 
     // Set up Bitcoin RPC client
     let wallet_manager = WalletManager::new(config)?;
@@ -3112,7 +3609,7 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     println!(
         "  {} Minimum required: {} satoshis",
         "ℹ".bold().blue(),
-        "3000".yellow()
+        "5000".yellow()
     );
     println!("  {} Waiting for funds...", "⏳".bold().blue());
 
@@ -3122,6 +3619,7 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
         &account_address,
         &wallet_manager,
         config,
+        Some(args.rpc_url.clone().unwrap_or_default()),
     )
     .await?;
 
@@ -3146,8 +3644,15 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
         Pubkey::system_program()
     };
 
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+
     // Transfer ownership to the program
-    transfer_account_ownership(&caller_keypair, &caller_pubkey, &program_id).await?;
+    transfer_account_ownership(
+        &caller_keypair,
+        &caller_pubkey,
+        &program_id,
+        rpc_url,
+    ).await?;
 
     // Save the account information to keys.json
     save_keypair_to_json(&keys_file, &caller_keypair, &caller_pubkey, &args.name)?;
@@ -3353,9 +3858,14 @@ pub fn ensure_keys_dir() -> Result<PathBuf> {
     Ok(keys_dir)
 }
 
-async fn generate_account_address(caller_pubkey: Pubkey) -> Result<String> {
+async fn generate_account_address(rpc_url: &str, caller_pubkey: Pubkey) -> Result<String> {
+    let rpc_url_clone = rpc_url.to_string();
+
     // Get program account address from network
-    let account_address = tokio::task::spawn_blocking(move || get_account_address(caller_pubkey)).await.unwrap();
+    let account_address = tokio::task::spawn_blocking(move || {
+        get_account_address(&rpc_url_clone, caller_pubkey)
+    }).await.unwrap();
+
     println!("  {} Account address: {}", "ℹ".bold().blue(), account_address.yellow());
 
     Ok(account_address)
@@ -3385,15 +3895,15 @@ async fn create_arch_account(
     account_address: &str,
     wallet_manager: &WalletManager,
     config: &Config,
+    rpc_url: Option<String>,
 ) -> Result<()> {
     let tx_info = fund_address(&wallet_manager.client, account_address, config).await?;
-
-    // Output the bitcoin transaction info
-    // println!("  {} Transaction info: {:?}", "ℹ".bold().blue(), tx_info);
 
     if let Some(info) = tx_info {
         let caller_keypair = caller_keypair.clone();
         let caller_pubkey = *caller_pubkey;
+        let rpc_url = get_rpc_url_with_fallback(rpc_url, config).unwrap();
+
         let (txid, _) = tokio::task::spawn_blocking(move || {
             sign_and_send_instruction(
                 SystemInstruction::new_create_account_instruction(
@@ -3405,6 +3915,7 @@ async fn create_arch_account(
                     caller_pubkey,
                 ),
                 vec![caller_keypair],
+                rpc_url,
             )
             .expect("signing and sending a transaction should not fail")
         })
@@ -3422,14 +3933,16 @@ async fn create_arch_account(
             "  {} Warning: No transaction info available for deployment",
             "⚠".bold().yellow()
         );
-        // You might want to implement an alternative deployment method for non-REGTEST networks
+
         Ok(())
     }
 }
+
 async fn transfer_account_ownership(
     caller_keypair: &Keypair,
     account_pubkey: &Pubkey,
     program_pubkey: &Pubkey,
+    rpc_url: String,
 ) -> Result<()> {
     let mut instruction_data = vec![3]; // Transfer instruction
     instruction_data.extend(program_pubkey.serialize());
@@ -3456,6 +3969,7 @@ async fn transfer_account_ownership(
                 data: instruction_data_clone,
             },
             vec![caller_keypair_clone],
+            rpc_url,
         )
         .expect("signing and sending a transaction should not fail")
     })
@@ -3465,10 +3979,18 @@ async fn transfer_account_ownership(
     Ok(())
 }
 
-pub async fn indexer_start(config: &Config) -> Result<()> {
+pub async fn indexer_start(args: &IndexerStartArgs, config: &Config) -> Result<()> {
+    match args.target.as_str() {
+        "local" => start_local_indexer(config).await,
+        "gcp" => start_gcp_indexer(args, config).await,
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+pub async fn start_local_indexer(config: &Config) -> Result<()> {
     println!("{}", "Starting the arch-indexer...".bold().green());
 
-    let arch_node_url = config.get_string("leader_rpc_endpoint")?;
+    let arch_node_url = "http://host.docker.internal:9002";
 
     // Get the selected network from the config
     let selected_network = config.get_string("selected_network")
@@ -3516,6 +4038,545 @@ pub async fn indexer_start(config: &Config) -> Result<()> {
     Ok(())
 }
 
+async fn prepare_indexer_files(temp_dir: &Path) -> Result<()> {
+    println!("  {} Preparing indexer files...", "→".bold().blue());
+
+    // Clone the repository
+    let clone_status = Command::new("git")
+        .args([
+            "clone",
+            "https://github.com/arch-network/arch-indexer.git",
+            temp_dir.to_str().unwrap()
+        ])
+        .status()
+        .context("Failed to clone indexer repository")?;
+
+    if !clone_status.success() {
+        return Err(anyhow!("Failed to clone indexer repository"));
+    }
+
+    // Create docker-compose.yml for GCP
+    let docker_compose = r#"version: '3'
+services:
+  indexer:
+    build: .
+    environment:
+      - DB_USER=postgres
+      - DB_HOST=127.0.0.1
+      - DB_NAME=archindexer
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=5432
+      - ARCH_NODE_URL=${ARCH_NODE_URL}
+    ports:
+      - "5175:5175"
+    restart: always
+
+  db:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=archindexer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: always
+
+volumes:
+  pgdata:"#;
+
+    fs::write(temp_dir.join("docker-compose.yml"), docker_compose)?;
+
+    // Create Dockerfile
+    let dockerfile = r#"FROM node:18-slim
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm install
+COPY . .
+EXPOSE 5175
+CMD ["node", "src/index.js"]"#;
+
+    fs::write(temp_dir.join("Dockerfile"), dockerfile)?;
+
+    // Create init.sql
+    let init_sql = r#"CREATE TABLE IF NOT EXISTS blocks (
+    height BIGINT PRIMARY KEY,
+    hash TEXT NOT NULL,
+    timestamp BIGINT,
+    bitcoin_block_height BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+    txid TEXT PRIMARY KEY,
+    block_height BIGINT REFERENCES blocks(height),
+    data JSONB,
+    status INTEGER,
+    bitcoin_txids TEXT[]
+);"#;
+
+    fs::write(temp_dir.join("init.sql"), init_sql)?;
+
+    Ok(())
+}
+
+async fn stop_gcp_indexer(args: &IndexerStartArgs) -> Result<()> {
+    let project_id = args.gcp_project.as_ref()
+        .ok_or_else(|| anyhow!("GCP project ID is required"))?;
+    let zone = &"us-central1".to_string();
+    let region = args.gcp_region.as_ref().unwrap_or(zone);
+
+    println!("{}", "Stopping GCP indexer...".bold().green());
+
+    // Stop and delete the indexer instance
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "delete", "arch-indexer",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--quiet"
+        ])
+        .output()?;
+
+    // Stop and delete the proxy instance
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "delete", "arch-indexer-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--quiet"
+        ])
+        .output()?;
+
+    // Delete Cloud SQL instance
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "sql", "instances", "delete", "arch-indexer-db",
+            "--project", project_id,
+            "--quiet"
+        ])
+        .output()?;
+
+    println!("{}", "GCP indexer stopped successfully!".bold().green());
+    Ok(())
+}
+
+pub async fn start_gcp_indexer(args: &IndexerStartArgs, config: &Config) -> Result<()> {
+    let project_id = args.gcp_project.as_ref()
+        .ok_or_else(|| anyhow!("GCP project ID is required for GCP deployment"))?;
+    let zone = &"us-central1".to_string();
+    let machine = &"e2-medium".to_string();
+    let region = args.gcp_region.as_ref().unwrap_or(zone);
+    let machine_type = args.gcp_machine_type.as_ref().unwrap_or(machine);
+
+    println!("Starting indexer deployment to GCP...");
+
+    // Setup Cloud SQL
+    let (sql_connection_name, db_password) = setup_cloud_sql(project_id, region).await?;
+
+    // Initialize schema
+    initialize_cloud_sql_schema(project_id, "arch-indexer-db").await?;
+
+    let temp_dir = tempfile::tempdir()?;
+    prepare_indexer_files(temp_dir.path()).await?;
+
+    // Build and push using Cloud Build
+    let cloudbuild_content = format!(r#"steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/{}/arch-indexer:latest', '.']
+images: ['gcr.io/{}/arch-indexer:latest']
+"#, project_id, project_id);
+
+    fs::write(temp_dir.path().join("cloudbuild.yaml"), cloudbuild_content)?;
+
+    println!("  {} Building and pushing indexer image...", "→".bold().blue());
+    let build_output = ShellCommand::new("gcloud")
+        .args([
+            "builds", "submit",
+            "--config", temp_dir.path().join("cloudbuild.yaml").to_str().unwrap(),
+            "--project", project_id,
+            temp_dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .context("Failed to build and push image")?;
+
+    if !build_output.status.success() {
+        return Err(anyhow!(
+            "Failed to build indexer image: {}",
+            String::from_utf8_lossy(&build_output.stderr)
+        ));
+    }
+
+    // Deploy the indexer container
+    println!("  {} Deploying indexer to GCP...", "→".bold().blue());
+    let rpc_url = args.rpc_url.as_deref().unwrap_or("http://localhost:9001");
+    let create_instance_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "create-with-container", "arch-indexer",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--machine-type", machine_type,
+            "--container-image", &format!("gcr.io/{}/arch-indexer:latest", project_id),
+            "--tags", "indexer",
+            "--container-env", &format!("ARCH_NODE_URL={}", rpc_url),
+            "--container-env", &format!("DB_HOST=/cloudsql/{}", sql_connection_name),
+            "--container-env", "DB_USER=postgres",
+            "--container-env", "DB_NAME=archindexer",
+            "--container-env", &format!("DB_PASSWORD={}", db_password),
+            "--container-env", "DB_PORT=5432",
+            "--container-mount-host-path=mount-path=/cloudsql,host-path=/cloudsql,mode=rw",
+        ])
+        .output()
+        .context("Failed to create indexer instance")?;
+
+    // Rest of the function (SSL proxy setup) remains the same
+    let indexer_ip = String::from_utf8_lossy(&ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", "arch-indexer",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(networkInterfaces[0].networkIP)"
+        ])
+        .output()?
+        .stdout).trim().to_string();
+
+    setup_indexer_ssl_proxy(project_id, region, &indexer_ip).await?;
+
+    Ok(())
+}
+
+async fn setup_cloud_sql(project_id: &str, region: &str) -> Result<(String, String)> {
+    println!("  {} Setting up Cloud SQL instance...", "→".bold().blue());
+
+    let instance_name = "arch-indexer-db";
+    let db_password = generate_random_password();
+
+    // Check if instance exists
+    println!("  {} Checking if Cloud SQL instance exists...", "→".bold().blue());
+    let instance_exists = ShellCommand::new("gcloud")
+        .args([
+            "sql", "instances", "describe", instance_name,
+            "--project", project_id,
+        ])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+
+    if !instance_exists {
+        println!("  {} Creating new Cloud SQL instance...", "→".bold().blue());
+        let create_output = ShellCommand::new("gcloud")
+            .args([
+                "sql", "instances", "create", instance_name,
+                "--project", project_id,
+                "--database-version", "POSTGRES_13",
+                "--tier", "db-f1-micro",
+                "--region", region,
+                "--root-password", &db_password,
+                "--availability-type", "ZONAL",
+            ])
+            .output()
+            .context("Failed to execute gcloud sql instances create command")?;
+
+        if !create_output.status.success() {
+            return Err(anyhow!(
+                "Failed to create Cloud SQL instance: {}",
+                String::from_utf8_lossy(&create_output.stderr)
+            ));
+        }
+
+        // Create database
+        println!("  {} Creating database...", "→".bold().blue());
+        let db_output = ShellCommand::new("gcloud")
+            .args([
+                "sql", "databases", "create", "archindexer",
+                "--instance", instance_name,
+                "--project", project_id,
+            ])
+            .output()
+            .context("Failed to execute gcloud sql databases create command")?;
+
+        if !db_output.status.success() {
+            return Err(anyhow!(
+                "Failed to create database: {}",
+                String::from_utf8_lossy(&db_output.stderr)
+            ));
+        }
+
+        // Create user
+        println!("  {} Creating database user...", "→".bold().blue());
+        let user_output = ShellCommand::new("gcloud")
+            .args([
+                "sql", "users", "create", "postgres",
+                "--instance", instance_name,
+                "--project", project_id,
+                "--password", &db_password,
+            ])
+            .output()
+            .context("Failed to execute gcloud sql users create command")?;
+
+        if !user_output.status.success() {
+            return Err(anyhow!(
+                "Failed to create database user: {}",
+                String::from_utf8_lossy(&user_output.stderr)
+            ));
+        }
+    } else {
+        println!("  {} Using existing Cloud SQL instance", "✓".bold().green());
+    }
+
+    // Get connection name
+    println!("  {} Getting connection details...", "→".bold().blue());
+    let conn_output = ShellCommand::new("gcloud")
+        .args([
+            "sql", "instances", "describe", instance_name,
+            "--project", project_id,
+            "--format", "get(connectionName)",
+        ])
+        .output()
+        .context("Failed to get Cloud SQL connection name")?;
+
+    if !conn_output.status.success() {
+        return Err(anyhow!(
+            "Failed to get Cloud SQL connection name: {}",
+            String::from_utf8_lossy(&conn_output.stderr)
+        ));
+    }
+
+    let connection_name = String::from_utf8_lossy(&conn_output.stdout).trim().to_string();
+
+    println!("  {} Cloud SQL setup complete", "✓".bold().green());
+    Ok((connection_name, db_password))
+}
+
+async fn initialize_cloud_sql_schema(project_id: &str, instance_name: &str) -> Result<()> {
+    println!("  {} Initializing database schema...", "→".bold().blue());
+
+    let temp_file = tempfile::NamedTempFile::new()?;
+
+    // Use the same schema as in prepare_indexer_files
+    let init_sql = r#"CREATE TABLE IF NOT EXISTS blocks (
+    height INTEGER PRIMARY KEY,
+    hash TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    bitcoin_block_height INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+    txid TEXT PRIMARY KEY,
+    block_height INTEGER NOT NULL,
+    data JSONB NOT NULL,
+    status INTEGER NOT NULL DEFAULT 0,
+    bitcoin_txids TEXT[] DEFAULT '{}',
+    FOREIGN KEY (block_height) REFERENCES blocks(height)
+);
+
+CREATE INDEX IF NOT EXISTS idx_transactions_block_height ON transactions(block_height);
+CREATE INDEX IF NOT EXISTS idx_blocks_bitcoin_block_height ON blocks(bitcoin_block_height);"#;
+
+    fs::write(&temp_file, init_sql)?;
+
+    let import_output = ShellCommand::new("gcloud")
+        .args([
+            "sql", "import", "sql",
+            instance_name,
+            temp_file.path().to_str().unwrap(),
+            "--project", project_id,
+            "--database", "archindexer",
+        ])
+        .output()
+        .context("Failed to import SQL schema")?;
+
+    if !import_output.status.success() {
+        return Err(anyhow!("Failed to initialize database schema"));
+    }
+
+    Ok(())
+}
+
+async fn setup_indexer_ssl_proxy(project_id: &str, region: &str, indexer_ip: &str) -> Result<()> {
+    println!("  {} Setting up HTTPS proxy for indexer...", "→".bold().blue());
+
+    let temp_dir = tempfile::tempdir()?;
+
+    // Create nginx.conf for indexer
+    let nginx_conf = format!(r#"
+events {{
+    worker_connections 1024;
+}}
+http {{
+    error_log /dev/stderr debug;
+    access_log /dev/stdout combined;
+
+    proxy_connect_timeout 60;
+    proxy_send_timeout 60;
+    proxy_read_timeout 60;
+
+    # SSL settings
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers off;
+
+    # CORS settings
+    map $request_method $cors_method {{
+        OPTIONS 'true';
+        default 'false';
+    }}
+
+    server {{
+        listen 443 ssl;
+        server_name _;
+
+        ssl_certificate /etc/nginx/ssl/nginx.crt;
+        ssl_certificate_key /etc/nginx/ssl/nginx.key;
+
+        # Global CORS headers
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
+        add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;
+
+        location / {{
+            if ($cors_method = 'true') {{
+                add_header 'Access-Control-Max-Age' 1728000;
+                add_header 'Content-Type' 'text/plain charset=UTF-8';
+                add_header 'Content-Length' 0;
+                return 204;
+            }}
+
+            proxy_pass http://{}:5175;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Handle SSL termination properly
+            proxy_ssl_server_name on;
+            proxy_redirect off;
+
+            # Additional security headers
+            add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-Frame-Options "SAMEORIGIN" always;
+            add_header X-XSS-Protection "1; mode=block" always;
+        }}
+    }}
+}}
+"#, indexer_ip);
+
+    // Write nginx.conf (your existing config is good)
+    fs::write(temp_dir.path().join("nginx.conf"), &nginx_conf)?;
+
+    // Create Dockerfile for SSL proxy
+    let dockerfile_content = r#"FROM --platform=linux/amd64 nginx:alpine
+COPY nginx.conf /etc/nginx/nginx.conf
+RUN mkdir -p /etc/nginx/ssl
+RUN apk add --no-cache openssl
+RUN openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/nginx/ssl/nginx.key \
+    -out /etc/nginx/ssl/nginx.crt \
+    -subj "/CN=arch-indexer/O=Arch Network/C=US"
+EXPOSE 443
+"#;
+
+    fs::write(temp_dir.path().join("Dockerfile"), dockerfile_content)?;
+
+    // Build and push the proxy image
+    let proxy_image = format!("gcr.io/{}/arch-indexer-proxy:latest", project_id);
+
+    println!("  {} Building and pushing proxy image...", "→".bold().blue());
+    let build_status = Command::new("docker")
+        .args([
+            "build",
+            "-t", &proxy_image,
+            temp_dir.path().to_str().unwrap(),
+        ])
+        .status()
+        .context("Failed to build proxy image")?;
+
+    if !build_status.success() {
+        return Err(anyhow!("Failed to build proxy image"));
+    }
+
+    let push_status = Command::new("docker")
+        .args(["push", &proxy_image])
+        .status()
+        .context("Failed to push proxy image")?;
+
+    if !push_status.success() {
+        return Err(anyhow!("Failed to push proxy image"));
+    }
+
+    // Create firewall rules
+    println!("  {} Creating firewall rules...", "→".bold().blue());
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", "allow-indexer-internal",
+            "--project", project_id,
+            "--allow", "tcp:5175",
+            "--source-tags", "indexer-proxy",
+            "--target-tags", "indexer",
+            "--description", "Allow proxy to indexer communication",
+        ])
+        .output();
+
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", "allow-indexer-https",
+            "--project", project_id,
+            "--allow", "tcp:443",
+            "--target-tags", "indexer-proxy",
+            "--description", "Allow incoming HTTPS traffic for indexer proxy",
+        ])
+        .output();
+
+    // Deploy the proxy container
+    println!("  {} Deploying HTTPS proxy...", "→".bold().blue());
+    let create_proxy_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "create-with-container", "arch-indexer-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--machine-type", "e2-micro",
+            "--container-image", &proxy_image,
+            "--tags", "indexer-proxy",
+        ])
+        .output()
+        .context("Failed to create proxy instance")?;
+
+    if !create_proxy_output.status.success() {
+        return Err(anyhow!(
+            "Failed to create proxy instance: {}",
+            String::from_utf8_lossy(&create_proxy_output.stderr)
+        ));
+    }
+
+    // Get the proxy's external IP
+    let proxy_ip = String::from_utf8_lossy(&ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", "arch-indexer-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(networkInterfaces[0].accessConfigs[0].natIP)"
+        ])
+        .output()?
+        .stdout).trim().to_string();
+
+    println!("\n{}", "HTTPS proxy setup complete!".bold().green());
+    println!("Proxy IP: {}", proxy_ip);
+    println!("HTTPS endpoint: {}", format!("https://{}", proxy_ip).yellow());
+
+    Ok(())
+}
+
+fn generate_random_password() -> String {
+    // Generate a random password with:
+    // - Length of 16 characters
+    // - Mix of uppercase, lowercase, numbers
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(16)
+        .map(char::from)
+        .collect()
+}
+
 fn get_indexer_dir() -> Result<PathBuf> {
     let config_dir = get_config_dir()?;
     let indexer_dir = config_dir.join("arch-indexer");
@@ -3557,7 +4618,15 @@ fn clone_or_update_repo(indexer_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn indexer_stop(config: &Config) -> Result<()> {
+pub async fn indexer_stop(args: &IndexerStartArgs, config: &Config) -> Result<()> {
+    match args.target.as_str() {
+        "local" => stop_local_indexer(config).await,
+        "gcp" => stop_gcp_indexer(args).await,
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+pub async fn stop_local_indexer(config: &Config) -> Result<()> {
     println!("{}", "Stopping the arch-indexer...".bold().green());
 
     // Get the selected network from the config
@@ -3655,6 +4724,14 @@ pub async fn indexer_clean(config: &Config) -> Result<()> {
 }
 
 pub async fn validator_start(args: &ValidatorStartArgs, config: &Config) -> Result<()> {
+    match args.target.as_str() {
+        "local" => start_local_validator(&args, config).await,
+        "gcp" => start_gcp_validator(&args, config).await,
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+async fn start_local_validator(args: &ValidatorStartArgs, config: &Config) -> Result<()> {
     println!("{}", "Starting the local validator...".bold().green());
 
     let _network = &args.network;
@@ -3755,8 +4832,359 @@ pub async fn validator_start(args: &ValidatorStartArgs, config: &Config) -> Resu
     Ok(())
 }
 
-pub async fn validator_stop() -> Result<()> {
-    println!("{}", "Stopping and removing the local validator...".bold().green());
+async fn start_gcp_validator(args: &ValidatorStartArgs, config: &Config) -> Result<()> {
+    let project_id = args.gcp_project.as_ref()
+        .ok_or_else(|| anyhow!("GCP project ID is required for GCP deployment"))?;
+    let region = args.gcp_region.as_ref()
+        .map_or("us-central1".to_string(), |r| r.to_string());
+    let machine_type = args.gcp_machine_type.as_ref()
+        .map_or("e2-medium".to_string(), |m| m.to_string());
+    let instance_name = "arch-validator";
+
+    // Get network from ValidatorStartArgs, but if development then network is "devnet", if testnet then network is "testnet", if mainnet then network is "mainnet"
+    let network = match args.network.as_str() {
+        "development" => "devnet",
+        "testnet" => "testnet",
+        "mainnet" => "mainnet",
+        _ => "devnet",
+    }.to_string();
+    println!("Network: {}", network.bold().green());
+
+    println!("{}", "Starting validator deployment to GCP...".bold().green());
+
+    // Check if instance already exists
+    let instance_exists = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", instance_name,
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(name)"
+        ])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+
+    if instance_exists {
+        let proceed = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("A validator instance already exists. Would you like to recreate it?")
+            .default(false)
+            .interact()?;
+
+        if !proceed {
+            // Get the instance's external IP and display current status
+            let describe_output = ShellCommand::new("gcloud")
+                .args([
+                    "compute", "instances", "describe", instance_name,
+                    "--project", project_id,
+                    "--zone", &format!("{}-a", region),
+                    "--format", "get(networkInterfaces[0].accessConfigs[0].natIP,status)"
+                ])
+                .output()?;
+
+            let info = String::from_utf8_lossy(&describe_output.stdout);
+            let mut lines = info.lines();
+            let ip = lines.next().unwrap_or("unknown");
+            let status = lines.next().unwrap_or("unknown");
+
+            println!("\n{}", "Current validator instance:".bold().blue());
+            println!("Status: {}", status);
+            println!("External IP: {}", ip);
+            println!("RPC endpoint: {}", format!("http://{}:9001", ip).yellow());
+            
+            println!("\nTo view logs, run:");
+            println!("  {}", format!("gcloud compute instances get-serial-port-output {} --zone {} --project {}", 
+                instance_name, 
+                &format!("{}-a", region),
+                project_id
+            ).cyan());
+            
+            return Ok(());
+        }
+
+        // Delete the existing instance
+        println!("  {} Removing existing validator instance...", "→".bold().blue());
+        let delete_output = ShellCommand::new("gcloud")
+            .args([
+                "compute", "instances", "delete", instance_name,
+                "--project", project_id,
+                "--zone", &format!("{}-a", region),
+                "--quiet"  // Skip confirmation
+            ])
+            .output()
+            .context("Failed to delete existing instance")?;
+
+        if !delete_output.status.success() {
+            return Err(anyhow!(
+                "Failed to delete existing instance: {}",
+                String::from_utf8_lossy(&delete_output.stderr)
+            ));
+        }
+        println!("  {} Existing instance removed", "✓".bold().green());
+    }
+
+    // Create a temporary directory for the build
+    let temp_dir = tempfile::tempdir()?;
+    println!("  {} Creating build directory", "→".bold().blue());
+
+    // Create Dockerfile
+    let dockerfile_content = r#"FROM ghcr.io/arch-network/local_validator:latest
+
+EXPOSE 9001
+
+ENV RUST_LOG=info
+ENV NETWORK_MODE=$network
+
+ENTRYPOINT ["/usr/bin/local_validator"]
+"#;
+
+    let dockerfile_path = temp_dir.path().join("Dockerfile");
+    fs::write(&dockerfile_path, dockerfile_content)?;
+    println!("  {} Created Dockerfile", "✓".bold().green());
+
+    // Create cloudbuild.yaml
+    let cloudbuild_content = format!(r#"steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/{}/arch-validator:latest', '.']
+images: ['gcr.io/{}/arch-validator:latest']
+"#, project_id, project_id);
+
+    let cloudbuild_path = temp_dir.path().join("cloudbuild.yaml");
+    fs::write(&cloudbuild_path, cloudbuild_content)?;
+    println!("  {} Created Cloud Build configuration", "✓".bold().green());
+
+    // Build and push the validator image to Google Container Registry
+    println!("Building and pushing validator image to GCR...");
+    let build_push_output = ShellCommand::new("gcloud")
+        .args([
+            "builds", "submit",
+            "--config", cloudbuild_path.to_str().unwrap(),
+            "--project", project_id,
+            temp_dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .context("Failed to build and push image to GCR")?;
+
+    let image_name = format!("gcr.io/{}/arch-validator:latest", project_id);
+
+    println!("  {} Image built and pushed successfully", "✓".bold().green());
+
+    // Create firewall rule if it doesn't exist
+    println!("Ensuring firewall rule exists for validator...");
+    let firewall_rule_name = "allow-validator";
+    let create_firewall_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", firewall_rule_name,
+            "--project", project_id,
+            "--allow", "tcp:9001",
+            "--target-tags", "validator",
+            "--description", "Allow incoming traffic on port 9001 for validator",
+        ])
+        .output();
+
+    // Ignore if firewall rule already exists
+    if let Err(e) = create_firewall_output {
+        println!("  {} Firewall rule may already exist: {}", "ℹ".bold().blue(), e);
+    }
+
+    // Create and start the GCE instance
+    println!("Creating GCE instance for validator...");
+    let instance_name = "arch-validator";
+    let create_instance_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "create-with-container", instance_name,
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--machine-type", &machine_type,
+            "--container-image", &image_name,
+            "--container-env",
+            &format!("RUST_LOG=info,NETWORK_MODE={}", network),
+            "--container-command=/usr/bin/local_validator",
+            "--container-arg=--rpc-bind-ip=0.0.0.0",
+            "--container-arg=--rpc-bind-port=9001",
+            "--tags", "validator",
+            &format!("--container-arg=--bitcoin-rpc-endpoint={}", 
+                config.get_string("networks.development.bitcoin_rpc_endpoint")?),
+            &format!("--container-arg=--bitcoin-rpc-port={}", 
+                config.get_string("networks.development.bitcoin_rpc_port")?),
+            &format!("--container-arg=--bitcoin-rpc-username={}", 
+                config.get_string("networks.development.bitcoin_rpc_user")?),
+            &format!("--container-arg=--bitcoin-rpc-password={}", 
+                config.get_string("networks.development.bitcoin_rpc_password")?),
+        ])
+        .output()
+        .context("Failed to create GCE instance")?;
+
+    if !create_instance_output.status.success() {
+        return Err(anyhow!(
+            "Failed to create GCE instance: {}",
+            String::from_utf8_lossy(&create_instance_output.stderr)
+        ));
+    }
+
+    // Get the instance's external IP
+    let describe_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", instance_name,
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(networkInterfaces[0].accessConfigs[0].natIP)"
+        ])
+        .output()
+        .context("Failed to get instance IP")?;
+
+    let instance_ip = String::from_utf8_lossy(&describe_output.stdout).trim().to_string();
+
+    println!("{}", "Validator deployed successfully to GCP!".bold().green());
+    println!("Instance name: {}", instance_name);
+    println!("Instance zone: {}", &format!("{}-a", region));
+    println!("External IP: {}", instance_ip);
+    println!("Validator RPC endpoint: {}", format!("http://{}:9001", instance_ip).yellow());
+
+    println!("\n{}", "Setting up HTTPS access...".bold().blue());
+    setup_ssl_proxy(project_id, &region, &instance_ip).await?;
+    
+    println!("\nTo view logs, run:");
+    println!("  {}", format!("gcloud compute instances get-serial-port-output {} --zone {} --project {}", 
+        instance_name, 
+        &format!("{}-a", region),
+        project_id
+    ).cyan());
+    
+    println!("\nTo SSH into the instance, run:");
+    println!("  {}", format!("gcloud compute ssh {} --zone {} --project {}", 
+        instance_name, 
+        &format!("{}-a", region),
+        project_id
+    ).cyan());
+
+    Ok(())
+}
+// Update the validator_stop function signature and implementation
+pub async fn validator_stop(args: &ValidatorStartArgs) -> Result<()> {
+    println!("{}", "Stopping the validator...".bold().green());
+
+    match args.target.as_str() {
+        "local" => stop_local_validator(),
+        "gcp" => {
+            let project_id = args.gcp_project.as_ref()
+                .ok_or_else(|| anyhow!("GCP project ID is required for GCP deployment"))?;
+            let region = args.gcp_region.as_ref()
+                .map_or("us-central1".to_string(), |r| r.to_string());
+
+            stop_gcp_validator(project_id, &region).await
+        }
+        _ => Err(anyhow!("Invalid deployment target. Use 'local' or 'gcp'"))
+    }
+}
+
+// Update the stop_gcp_validator function signature
+async fn stop_gcp_validator(project_id: &str, region: &str) -> Result<()> {
+    println!("  {} Managing GCP validator...", "→".bold().blue());
+
+    // Get instance details with separate fields
+    let describe_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", "arch-validator",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(status)"
+        ])
+        .output()
+        .context("Failed to get GCP instance details")?;
+
+    let status = String::from_utf8_lossy(&describe_output.stdout).trim().to_string();
+    let zone = format!("{}-a", region);
+
+    if describe_output.status.success() {
+        let options = vec!["Suspend instance", "Delete instance"];
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("What would you like to do with the GCP validator?")
+            .items(&options)
+            .default(0)
+            .interact()?;
+
+        match selection {
+            0 => {
+                if status == "SUSPENDED" {
+                    println!("  {} Instance is already suspended", "ℹ".bold().blue());
+                    return Ok(());
+                }
+
+                println!("  {} Suspending GCP validator...", "→".bold().blue());
+                let suspend_output = ShellCommand::new("gcloud")
+                    .args([
+                        "compute", "instances", "suspend",
+                        "arch-validator",
+                        "--project", project_id,
+                        "--zone", &zone,
+                        "--quiet"
+                    ])
+                    .output()
+                    .context("Failed to suspend GCP instance")?;
+
+                if !suspend_output.status.success() {
+                    return Err(anyhow!(
+                        "Failed to suspend GCP instance: {}",
+                        String::from_utf8_lossy(&suspend_output.stderr)
+                    ));
+                }
+
+                println!("{}", "GCP validator suspended successfully!".bold().green());
+            }
+            1 => {
+                let proceed = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Are you sure you want to delete the GCP validator instance? This action cannot be undone.")
+                    .default(false)
+                    .interact()?;
+
+                if !proceed {
+                    println!("  {} Operation cancelled", "ℹ".bold().blue());
+                    return Ok(());
+                }
+
+                // Delete proxy instance first
+                println!("  {} Deleting HTTPS proxy...", "→".bold().blue());
+                let _ = ShellCommand::new("gcloud")
+                    .args([
+                        "compute", "instances", "delete", "arch-validator-proxy",
+                        "--project", project_id,
+                        "--zone", &zone,
+                        "--quiet"
+                    ])
+                    .output();
+
+                println!("  {} Deleting GCP validator...", "→".bold().blue());
+                let delete_output = ShellCommand::new("gcloud")
+                    .args([
+                        "compute", "instances", "delete",
+                        "arch-validator",
+                        "--project", project_id,
+                        "--zone", &zone,
+                        "--quiet"
+                    ])
+                    .output()
+                    .context("Failed to delete GCP instance")?;
+
+                if !delete_output.status.success() {
+                    return Err(anyhow!(
+                        "Failed to delete GCP instance: {}",
+                        String::from_utf8_lossy(&delete_output.stderr)
+                    ));
+                }
+
+                println!("{}", "GCP validator deleted successfully!".bold().green());
+            }
+            _ => unreachable!()
+        }
+
+        Ok(())
+    } else {
+        Err(anyhow!("Failed to find GCP validator instance in zone {}", zone))
+    }
+}
+
+fn stop_local_validator() -> Result<()> {
+    println!("  {} Stopping local validator...", "→".bold().blue());
 
     // Stop the container
     let stop_output = ShellCommand::new("docker")
@@ -3807,7 +5235,8 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
         }
     };
 
-    // Ensure the project directory exists
+    // Ensure the project directory and its projects subfolder exist
+    let projects_subfolder = project_dir.join("projects");
     if !project_dir.exists() {
         fs::create_dir_all(&project_dir).context(format!(
             "Failed to create project directory: {:?}",
@@ -3817,6 +5246,17 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
             "  {} Created project directory at {:?}",
             "✓".bold().green(),
             project_dir
+        );
+    }
+    if !projects_subfolder.exists() {
+        fs::create_dir_all(&projects_subfolder).context(format!(
+            "Failed to create projects subfolder within project directory: {:?}",
+            projects_subfolder
+        ))?;
+        println!(
+            "  {} Created projects subfolder within project directory at {:?}",
+            "✓".bold().green(),
+            projects_subfolder
         );
     }
 
@@ -3832,7 +5272,7 @@ pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result
     }
 
     // Check if the project already exists
-    let new_project_dir = project_dir.join(&project_name);
+    let new_project_dir = projects_subfolder.join(&project_name);
     if new_project_dir.exists() {
         println!(
             "{}",
@@ -3960,7 +5400,8 @@ pub async fn project_deploy(config: &Config) -> Result<()> {
 
     // Here, call your existing deploy function with the program_dir
     // You may need to modify your existing deploy function to accept a PathBuf instead of DeployArgs
-    if let Err(e) = deploy_program_from_path(&program_dir, config, None).await {
+    let rpc_url = "";
+    if let Err(e) = deploy_program_from_path(&program_dir, config, None, rpc_url.to_string()).await {
         println!("Failed to deploy program: {}", e);
         return Err(e);
     }
@@ -4036,6 +5477,191 @@ fn copy_template_files() -> Result<()> {
             println!("Created {} at {:?}", dest, dest_path);
         }
     }
+
+    Ok(())
+}
+
+// Add after the start_gcp_validator function
+async fn setup_ssl_proxy(project_id: &str, region: &str, validator_ip: &str) -> Result<()> {
+    println!("  {} Setting up HTTPS proxy...", "→".bold().blue());
+
+    // Create a temporary directory for the build
+    let temp_dir = tempfile::tempdir()?;
+
+    // Create nginx.conf
+    let nginx_conf = format!(r#"
+events {{
+    worker_connections 1024;
+}}
+http {{
+    # Error log configuration
+    error_log /dev/stderr debug;
+    access_log /dev/stdout combined;
+
+    # Longer timeouts
+    proxy_connect_timeout 60;
+    proxy_send_timeout 60;
+    proxy_read_timeout 60;
+
+    server {{
+        listen 443 ssl;
+        server_name _;
+        
+        ssl_certificate /etc/nginx/ssl/nginx.crt;
+        ssl_certificate_key /etc/nginx/ssl/nginx.key;
+        
+        location / {{
+            proxy_pass http://{}:9001;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Debug headers
+            add_header X-Debug-Target "http://{}:9001" always;
+            add_header X-Debug-Host $host always;
+        }}
+    }}
+}}
+"#, validator_ip, validator_ip);
+
+    fs::write(temp_dir.path().join("nginx.conf"), nginx_conf)?;
+
+    // Create Dockerfile for SSL proxy
+    let dockerfile_content = r#"FROM --platform=linux/amd64 nginx:alpine
+COPY nginx.conf /etc/nginx/nginx.conf
+RUN mkdir -p /etc/nginx/ssl
+RUN apk add --no-cache openssl
+RUN openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/nginx/ssl/nginx.key \
+    -out /etc/nginx/ssl/nginx.crt \
+    -subj "/CN=arch-validator/O=Arch Network/C=US"
+EXPOSE 443
+"#;
+
+    fs::write(temp_dir.path().join("Dockerfile"), dockerfile_content)?;
+
+    // Create and push the proxy image
+    let proxy_image = format!("gcr.io/{}/arch-validator-proxy:latest", project_id);
+
+    println!("  {} Building and pushing proxy image...", "→".bold().blue());
+    let build_status = Command::new("docker")
+        .args([
+            "build",
+            "-t", &proxy_image,
+            temp_dir.path().to_str().unwrap(),
+        ])
+        .status()
+        .context("Failed to build proxy image")?;
+
+    if !build_status.success() {
+        return Err(anyhow!("Failed to build proxy image"));
+    }
+
+    let push_status = Command::new("docker")
+        .args(["push", &proxy_image])
+        .status()
+        .context("Failed to push proxy image")?;
+
+    if !push_status.success() {
+        return Err(anyhow!("Failed to push proxy image"));
+    }
+
+    // Create firewall rule for internal communication
+    println!("  {} Creating firewall rule for internal communication...", "→".bold().blue());
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", "allow-validator-internal",
+            "--project", project_id,
+            "--allow", "tcp:9001",
+            "--source-tags", "validator-proxy",
+            "--target-tags", "validator",
+            "--description", "Allow proxy to validator communication",
+        ])
+        .output();
+
+    // Create firewall rule for HTTPS
+    println!("  {} Creating firewall rule for HTTPS...", "→".bold().blue());
+    let _ = ShellCommand::new("gcloud")
+        .args([
+            "compute", "firewall-rules", "create", "allow-validator-https",
+            "--project", project_id,
+            "--allow", "tcp:443",
+            "--target-tags", "validator-proxy",
+            "--description", "Allow incoming HTTPS traffic for validator proxy",
+        ])
+        .output();
+
+    // Deploy the proxy container
+    println!("  {} Deploying HTTPS proxy...", "→".bold().blue());
+    let create_proxy_output = ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "create-with-container", "arch-validator-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--machine-type", "e2-micro",
+            "--container-image", &proxy_image,
+            "--tags", "validator-proxy",
+            // "--platform", "linux/amd64",
+        ])
+        .output()
+        .context("Failed to create proxy instance")?;
+
+    if !create_proxy_output.status.success() {
+        return Err(anyhow!(
+            "Failed to create proxy instance: {}",
+            String::from_utf8_lossy(&create_proxy_output.stderr)
+        ));
+    }
+
+    // Get the proxy's external IP
+    let proxy_ip = String::from_utf8_lossy(&ShellCommand::new("gcloud")
+        .args([
+            "compute", "instances", "describe", "arch-validator-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--format", "get(networkInterfaces[0].accessConfigs[0].natIP)"
+        ])
+        .output()?
+        .stdout).trim().to_string();
+
+    // Add after getting the proxy's external IP
+    println!("\n{}", "Running connectivity tests...".bold().blue());
+
+    // Test if validator is reachable from proxy
+    let test_connection = ShellCommand::new("gcloud")
+        .args([
+            "compute", "ssh", "arch-validator-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--command", &format!("curl -v http://{}:9001", validator_ip)
+        ])
+        .output()
+        .context("Failed to test connection")?;
+
+    println!("Connection test result:");
+    println!("{}", String::from_utf8_lossy(&test_connection.stdout));
+    println!("{}", String::from_utf8_lossy(&test_connection.stderr));
+
+    // Check nginx logs
+    let check_logs = ShellCommand::new("gcloud")
+        .args([
+            "compute", "ssh", "arch-validator-proxy",
+            "--project", project_id,
+            "--zone", &format!("{}-a", region),
+            "--command", "docker logs $(docker ps -q)"
+        ])
+        .output()
+        .context("Failed to check nginx logs")?;
+
+    println!("\nNginx logs:");
+    println!("{}", String::from_utf8_lossy(&check_logs.stdout));
+    println!("{}", String::from_utf8_lossy(&check_logs.stderr));
+
+    println!("\n{}", "HTTPS proxy setup complete!".bold().green());
+    println!("Proxy IP: {}", proxy_ip);
+    println!("HTTPS endpoint: {}", format!("https://{}", proxy_ip).yellow());
+    println!("\nNote: Using self-signed certificate. You may need to accept the security warning in your browser.");
 
     Ok(())
 }

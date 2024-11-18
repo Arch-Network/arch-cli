@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
         Commands::Deploy(args) => deploy(args, &config).await,
         Commands::Dkg(DkgCommands::Start) => start_dkg(&config).await,
         Commands::Bitcoin(BitcoinCommands::SendCoins(args)) => send_coins(args, &config).await,
-        Commands::Demo(DemoCommands::Start) => demo_start(&config).await,
+        Commands::Demo(DemoCommands::Start(args)) => demo_start(args, &config).await,
         Commands::Demo(DemoCommands::Stop) => demo_stop(&config).await,
         Commands::Account(AccountCommands::Create(args)) => create_account(args, &config).await,
         Commands::Account(AccountCommands::List) => list_accounts().await,
@@ -47,13 +47,13 @@ async fn main() -> Result<()> {
         Commands::Config(ConfigCommands::Reset) => config_reset().await,
         Commands::Start => server_start(&config).await,
         Commands::Stop => server_stop().await,
-        Commands::Indexer(IndexerCommands::Start) => indexer_start(&config).await,
-        Commands::Indexer(IndexerCommands::Stop) => indexer_stop(&config).await,
+        Commands::Indexer(IndexerCommands::Start(args)) => indexer_start(args, &config).await,
+        Commands::Indexer(IndexerCommands::Stop(args)) => indexer_stop(args, &config).await,
         Commands::Indexer(IndexerCommands::Clean) => indexer_clean(&config).await,
-        Commands::Project(ProjectCommands::Create(args)) => project_create(args, &config).await,
+        Commands::Project(ProjectCommands::Create(args)) => create_project(args, &config).await,
         Commands::Project(ProjectCommands::Deploy) => project_deploy(&config).await,
         Commands::Validator(ValidatorCommands::Start(args)) => validator_start(args, &config).await,
-        Commands::Validator(ValidatorCommands::Stop) => validator_stop().await,
+        Commands::Validator(ValidatorCommands::Stop(args)) => validator_stop(&args).await,
     };
 
     if let Err(e) = result {
