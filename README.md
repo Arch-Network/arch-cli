@@ -34,7 +34,7 @@ These tools are essential for running the development environment and building A
 To install Arch-CLI, make sure you have met all the prerequisites mentioned above. Then, run:
 
 ```sh
-git clone https://github.com/hoffmabc/arch-cli.git
+git clone https://github.com/Arch-Network/arch-cli.git
 cd arch-cli
 cargo install --path .
 ```
