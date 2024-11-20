@@ -24,6 +24,7 @@ colored = "2.0"
 config = "0.13"
 arch_program = { path = "./templates/program" }
 dotenv = "0.15.0"
+nix = "0.26.2"
 reqwest = "0.12.5"
 webbrowser = "1.0.2"
 dirs = "5.0.1"

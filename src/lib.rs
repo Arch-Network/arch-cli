@@ -7,6 +7,7 @@ use arch_program::instruction::Instruction;
 use arch_program::message::Message;
 use arch_program::pubkey::Pubkey;
 use arch_program::system_instruction::SystemInstruction;
+use nix::sys::signal::{kill, Signal};
 use rand::{distributions::Alphanumeric, Rng};
 use bitcoin::key::UntweakedKeypair;
 use bitcoin::Amount;
@@ -4734,101 +4735,72 @@ pub async fn validator_start(args: &ValidatorStartArgs, config: &Config) -> Resu
 async fn start_local_validator(args: &ValidatorStartArgs, config: &Config) -> Result<()> {
     println!("{}", "Starting the local validator...".bold().green());
 
-    let _network = &args.network;
-    let rust_log = config.get_string("arch.rust_log")?;
-    let rpc_bind_ip = "0.0.0.0";
-    let rpc_bind_port = config.get_string("arch.leader_rpc_port")?;
-    let bitcoin_rpc_password = config.get_string("bitcoin_rpc_password")?;
+    // Create necessary directories
+    let data_dir = dirs::home_dir()
+        .map(|h| h.join(".local/share/arch-network/validator"))
+        .ok_or_else(|| anyhow!("Could not determine home directory"))?;
+    fs::create_dir_all(&data_dir)?;
 
-    // Validate Bitcoin RPC endpoint format
+    // Get configuration values
+    let network = &args.network;
+    let rust_log = config.get_string("arch.rust_log")?;
+    let rpc_bind_port = config.get_string("arch.leader_rpc_port")?;
+
+    // Validate Bitcoin RPC configuration
     let bitcoin_rpc_endpoint = {
         let endpoint = config.get_string("bitcoin_rpc_endpoint")?;
-        // Check if endpoint contains protocol or path
         if endpoint.contains("://") || endpoint.contains("/") {
-            return Err(anyhow!("Bitcoin RPC endpoint should not contain protocol (http://) or path. Expected format: domain"));
-        }
-        // Validate format using regex
-        let endpoint_regex = regex::Regex::new(r"^[a-zA-Z0-9.-]+$")?;
-        if !endpoint_regex.is_match(&endpoint) {
-            return Err(anyhow!("Invalid Bitcoin RPC endpoint format. Expected format: domain (e.g., localhost)"));
+            return Err(anyhow!("Bitcoin RPC endpoint should not contain protocol or path"));
         }
         endpoint
     };
+    let bitcoin_rpc_port = config.get_string("bitcoin_rpc_port")?;
+    let bitcoin_rpc_username = config.get_string("bitcoin_rpc_user")?;
+    let bitcoin_rpc_password = config.get_string("bitcoin_rpc_password")?;
 
-    // Validate port number
-    let bitcoin_rpc_port = {
-        let port = config.get_string("bitcoin_rpc_port")?;
-        port.parse::<u16>().map_err(|_| anyhow!("Invalid Bitcoin RPC port number"))?;
-        port
-    };
+    // Download or locate validator binary
+    let validator_path = ensure_validator_binary().await?;
 
-    // Validate credentials are not empty
-    let bitcoin_rpc_username = {
-        let username = config.get_string("bitcoin_rpc_user")?;
-        if username.trim().is_empty() {
-            return Err(anyhow!("Bitcoin RPC username cannot be empty"));
-        }
-        username
-    };
-
-    let container_name = "local_validator";
-    let container_exists = String::from_utf8(
-        ShellCommand::new("docker")
-            .arg("ps")
-            .arg("-a")
-            .arg("--format")
-            .arg("{{.Names}}")
-            .output()
-            .context("Failed to check existing containers")?
-            .stdout,
-    )?
-    .lines()
-    .any(|name| name == container_name);
-
-    let output = if container_exists {
-        ShellCommand::new("docker")
-            .arg("start")
-            .arg(container_name)
-            .output()
-            .context("Failed to start the existing local validator container")?
-    } else {
-        ShellCommand::new("docker")
-            .arg("run")
-            .arg("--platform")
-            .arg("linux/amd64")
-            .arg("-d")
-            .arg("--name")
-            .arg("local_validator")
-            .arg("-e")
-            .arg(format!("RUST_LOG={}", rust_log))
-            .arg("-p")
-            .arg(format!("{}:{}", rpc_bind_port, rpc_bind_port))
-            .arg("ghcr.io/arch-network/local_validator:latest")
-            .arg("/usr/bin/local_validator")
-            .arg("--rpc-bind-ip")
-            .arg(rpc_bind_ip)
-            .arg("--rpc-bind-port")
-            .arg(rpc_bind_port)
-            .arg("--bitcoin-rpc-endpoint")
-            .arg(bitcoin_rpc_endpoint)
-            .arg("--bitcoin-rpc-port")
-            .arg(bitcoin_rpc_port)
-            .arg("--bitcoin-rpc-username")
-            .arg(bitcoin_rpc_username)
-            .arg("--bitcoin-rpc-password")
-            .arg(bitcoin_rpc_password)
-            .output()
-            .context("Failed to start the local validator")?
-    };
-
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Failed to start the local validator: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    // Check if process is already running
+    if let Ok(pid) = fs::read_to_string(data_dir.join("validator.pid")) {
+        println!("  {} Validator process already running with PID {}", "ℹ".bold().blue(), pid);
+        return Ok(());
     }
 
+    // Start the validator process
+    let mut command = tokio::process::Command::new(validator_path);
+    command
+        .env("RUST_LOG", rust_log)
+        .arg("-d")
+        .arg(data_dir.join("data"))
+        .arg("-n")
+        .arg(network)
+        .arg("--rpc-bind-ip")
+        .arg("127.0.0.1")
+        .arg("--rpc-bind-port")
+        .arg(&rpc_bind_port)
+        .arg("--bitcoin-rpc-endpoint")
+        .arg(bitcoin_rpc_endpoint)
+        .arg("--bitcoin-rpc-port")
+        .arg(bitcoin_rpc_port)
+        .arg("--bitcoin-rpc-username")
+        .arg(bitcoin_rpc_username)
+        .arg("--bitcoin-rpc-password")
+        .arg(bitcoin_rpc_password);
+
+    let child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("Failed to start validator process")?;
+
+    // Save PID for later management
+    fs::write(data_dir.join("validator.pid"), child.id().unwrap().to_string())?;
+
     println!("{}", "Local validator started successfully!".bold().green());
+    println!("PID: {:?}", child.id());
+    println!("RPC endpoint: http://127.0.0.1:{}", rpc_bind_port.yellow());
+
     Ok(())
 }
 
@@ -5186,42 +5158,43 @@ async fn stop_gcp_validator(project_id: &str, region: &str) -> Result<()> {
 fn stop_local_validator() -> Result<()> {
     println!("  {} Stopping local validator...", "→".bold().blue());
 
-    // Stop the container
-    let stop_output = ShellCommand::new("docker")
-        .arg("stop")
-        .arg("local_validator")
-        .output()
-        .context("Failed to stop the local validator")?;
+    let data_dir = dirs::home_dir()
+        .map(|h| h.join(".local/share/arch-network/validator"))
+        .ok_or_else(|| anyhow!("Could not determine home directory"))?;
 
-    if !stop_output.status.success() {
-        println!(
-            "  {} Warning: Failed to stop the local validator: {}",
-            "⚠".bold().yellow(),
-            String::from_utf8_lossy(&stop_output.stderr)
-        );
-    } else {
+    let pid_file = data_dir.join("validator.pid");
+
+    if pid_file.exists() {
+        let pid = fs::read_to_string(&pid_file)?.parse::<u32>()?;
+
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+            match kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {
+                Ok(_) => println!("  {} Stopped process {}", "✓".bold().green(), pid),
+                Err(nix::Error::ESRCH) =>
+                    println!("  {} Process {} is not running", "ℹ".bold().blue(), pid),
+                Err(e) => return Err(anyhow!("Failed to stop process {}: {}", pid, e)),
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            use std::process::Command;
+            Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/F"])
+                .output()?;
+        }
+
+        fs::remove_file(pid_file)?;
         println!("  {} Local validator stopped", "✓".bold().green());
+    } else {
+        println!("  {} No running validator found", "ℹ".bold().blue());
     }
 
-    // Remove the container and its volumes
-    let remove_output = ShellCommand::new("docker")
-        .arg("rm")
-        .arg("-v")  // -v flag removes volumes associated with the container
-        .arg("local_validator")
-        .output()
-        .context("Failed to remove the local validator container")?;
-
-    if !remove_output.status.success() {
-        return Err(anyhow!(
-            "Failed to remove the local validator container: {}",
-            String::from_utf8_lossy(&remove_output.stderr)
-        ));
-    }
-
-    println!("{}", "Local validator stopped and removed successfully!".bold().green());
     Ok(())
 }
-
 pub async fn project_create(args: &CreateProjectArgs, config: &Config) -> Result<()> {
     ensure_global_config()?;
     println!("{}", "Creating a new project...".bold().green());
@@ -5664,4 +5637,27 @@ EXPOSE 443
     println!("\nNote: Using self-signed certificate. You may need to accept the security warning in your browser.");
 
     Ok(())
+}
+
+async fn ensure_validator_binary() -> Result<PathBuf> {
+    let bin_dir = dirs::home_dir()
+        .map(|h| h.join(".local/bin"))
+        .ok_or_else(|| anyhow!("Could not determine home directory"))?;
+    
+    fs::create_dir_all(&bin_dir)?;
+    let validator_path = bin_dir.join("arch-validator");
+    
+    if !validator_path.exists() {
+        println!("  {} Downloading validator binary...", "→".bold().blue());
+        
+        let response = reqwest::get("https://github.com/arch-network/validator/releases/latest/download/validator")
+            .await?
+            .bytes()
+            .await?;
+            
+        fs::write(&validator_path, response)?;
+        fs::set_permissions(&validator_path, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+    }
+    
+    Ok(validator_path)
 }
