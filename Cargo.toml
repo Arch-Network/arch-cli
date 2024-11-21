@@ -1,9 +1,19 @@
 [package]
 name = "arch-cli"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
-include = ["templates/**/*"]
-
+include = [
+  "src/**/*",
+  "templates/**/*",
+  "Cargo.toml",
+  "Cargo.lock",
+  "README.md",
+  "LICENSE",
+]
+description = "Arch Network CLI - A tool for managing Arch Network applications"
+authors = ["Arch Network <brian@arch.network>"]
+license = "MIT"
+repository = "https://github.com/Arch-Network/arch-cli"
 
 [dependencies]
 clap = { version = "3.2", features = ["derive"] }
