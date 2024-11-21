@@ -4799,7 +4799,22 @@ async fn start_local_validator(args: &ValidatorStartArgs, config: &Config) -> Re
 
     println!("{}", "Local validator started successfully!".bold().green());
     println!("PID: {:?}", child.id());
-    println!("RPC endpoint: http://127.0.0.1:{}", rpc_bind_port.yellow());
+    // Verify validator is running properly
+    // Convert rpc_bind_port from String to u16 for verify_validator_running function
+    let rpc_bind_port_u16 = rpc_bind_port.parse::<u16>().expect("Invalid port number");
+
+    match verify_validator_running(rpc_bind_port_u16, 10).await {
+        Ok(true) => {
+            println!("  {} Validator started successfully", "✓".bold().green());
+            println!("RPC endpoint: {}", format!("http://127.0.0.1:{}", rpc_bind_port).yellow());
+        }
+        Ok(false) => {
+            return Err(anyhow!("Validator process started but failed to respond to health check"));
+        }
+        Err(e) => {
+            return Err(anyhow!("Failed to verify validator status: {}", e));
+        }
+    }
 
     Ok(())
 }
@@ -5660,4 +5675,29 @@ async fn ensure_validator_binary() -> Result<PathBuf> {
     }
     
     Ok(validator_path)
+}
+
+async fn verify_validator_running(rpc_bind_port: u16, max_retries: u8) -> Result<bool> {
+    use reqwest::Client;
+    use tokio::time::sleep;
+    let client = Client::new();
+    let url = format!("http://127.0.0.1:{}/health", rpc_bind_port);
+    
+    for i in 0..max_retries {
+        if i > 0 {
+            sleep(Duration::from_secs(1)).await;
+        }
+        
+        match client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => {
+                return Ok(true);
+            }
+            _ if i == max_retries - 1 => {
+                return Ok(false);
+            }
+            _ => continue,
+        }
+    }
+    
+    Ok(false)
 }
