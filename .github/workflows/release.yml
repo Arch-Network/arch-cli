@@ -14,8 +14,9 @@ env:
 jobs:
   create-release:
     runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
-      - uses: actions/checkout@v4
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
@@ -37,18 +38,26 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact_name: arch-cli
             asset_name: arch-cli-linux-amd64
+            archive_ext: tar.gz
+            content_type: application/gzip
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: arch-cli
             asset_name: arch-cli-darwin-amd64
+            archive_ext: zip
+            content_type: application/zip
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: arch-cli
             asset_name: arch-cli-darwin-arm64
+            archive_ext: zip
+            content_type: application/zip
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: arch-cli.exe
-            asset_name: arch-cli-windows-amd64.exe
+            asset_name: arch-cli-windows-amd64
+            archive_ext: zip
+            content_type: application/zip
 
     steps:
       - uses: actions/checkout@v4
@@ -102,7 +111,11 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          tar -czf ../../../${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
+          if [[ "${{ matrix.archive_ext }}" == "tar.gz" ]]; then
+            tar -czf ../../../${{ matrix.asset_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
+          else
+            zip ../../../${{ matrix.asset_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
+          fi
           cd -
 
       - name: Upload Release Asset
@@ -111,6 +124,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./${{ matrix.asset_name }}.tar.gz
-          asset_name: ${{ matrix.asset_name }}.tar.gz
-          asset_content_type: application/gzip
+          asset_path: ./${{ matrix.asset_name }}.${{ matrix.archive_ext }}
+          asset_name: ${{ matrix.asset_name }}.${{ matrix.archive_ext }}
+          asset_content_type: ${{ matrix.content_type }}
