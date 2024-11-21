@@ -52,12 +52,6 @@ jobs:
             asset_name: arch-cli-darwin-arm64
             archive_ext: zip
             content_type: application/zip
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: arch-cli.exe
-            asset_name: arch-cli-windows-amd64
-            archive_ext: zip
-            content_type: application/zip
 
     steps:
       - uses: actions/checkout@v4
@@ -78,14 +72,6 @@ jobs:
           brew unlink pkg-config@0.29.2 || true
           brew install pkg-config
           echo 'export PKG_CONFIG_PATH="/opt/homebrew/opt/openssl@3/lib/pkgconfig"' >> $GITHUB_ENV
-
-      # Install OpenSSL for Windows
-      - name: Install OpenSSL (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          choco install openssl
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >> $GITHUB_ENV
-          echo "C:\Program Files\OpenSSL-Win64\bin" >> $GITHUB_PATH
 
       - uses: dtolnay/rust-toolchain@stable
       
