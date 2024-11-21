@@ -69,7 +69,10 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           brew update
-          brew install openssl@3 pkg-config
+          brew install openssl@3
+          brew unlink pkg-config@0.29.2 || true
+          brew install pkg-config
+          echo 'export PKG_CONFIG_PATH="/opt/homebrew/opt/openssl@3/lib/pkgconfig"' >> $GITHUB_ENV
 
       # Install OpenSSL for Windows
       - name: Install OpenSSL (Windows)
