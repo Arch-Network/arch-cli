@@ -1,0 +1,62 @@
+name: Release
+on:
+  release:
+    types: [created]
+
+jobs:
+  build-and-release:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            target: x86_64-unknown-linux-gnu
+            asset_name: arch-cli-linux-x86_64.tar.gz
+          - os: macos-latest
+            platform: darwin
+            target: x86_64-apple-darwin
+            asset_name: arch-cli-darwin-x86_64.tar.gz
+          - os: macos-latest
+            platform: darwin
+            target: aarch64-apple-darwin
+            asset_name: arch-cli-darwin-aarch64.tar.gz
+          - os: windows-latest
+            platform: windows
+            target: x86_64-pc-windows-msvc
+            asset_name: arch-cli-windows-x86_64.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: matrix.platform != 'windows'
+        run: |
+          tar czf ${{ matrix.asset_name }} -C target/${{ matrix.target }}/release arch-cli
+      - name: Package (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          Compress-Archive -Path target/${{ matrix.target }}/release/arch-cli.exe -DestinationPath ${{ matrix.asset_name }}
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./${{ matrix.asset_name }}
+          asset_name: ${{ matrix.asset_name }}
+          asset_content_type: application/octet-stream
