@@ -100,7 +100,7 @@ jobs:
         with:
           command: build
           args: --release --target ${{ matrix.target }}
-          use-cross: ${{ matrix.os == 'ubuntu-latest' }}
+          use-cross: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
 
       - name: Package
         shell: bash
