@@ -18,7 +18,6 @@ trap cleanup EXIT
 # Download URL based on OS and architecture
 BINARY_NAME="arch-cli"
 # DOWNLOAD_URL="https://github.com/arch-network/arch-cli/releases/${VERSION}/${BINARY_NAME}-${OS}-${ARCH}.tar.gz"
-# DOWNLOAD_URL="https://github.com/Perelyn-Arch/arch-cli/tree/feat/add-install-script/assets/${BINARY_NAME}-${OS}-${ARCH}.tar.gz"
 DOWNLOAD_URL="https://raw.githubusercontent.com/Perelyn-Arch/arch-cli/feat/add-install-script/assets/${BINARY_NAME}-${OS}-${ARCH}.tar.gz"
 
 echo "Downloading ${BINARY_NAME} version ${VERSION}..."
