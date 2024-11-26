@@ -71,7 +71,7 @@ export function useWallet() {
     };
 
     const connect = async () => {
-      if (NETWORK === 'deveopment') {
+      if (NETWORK === 'regtest') {
         await connectRegtest();
       } else {
         await connectWallet();
