@@ -3780,24 +3780,25 @@ fn key_name_exists(keys_file: &PathBuf, name: &str) -> Result<bool> {
 }
 
 pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
-    let keys_dir = ensure_keys_dir()?;
-    let accounts_file = keys_dir.join("accounts.json");
+    let keys_dir = get_config_dir()?;
+    let keys_file = keys_dir.join("keys.json");
 
-    if !accounts_file.exists() {
+    if !keys_file.exists() {
         println!("  {} No accounts found", "ℹ".bold().blue());
         return Ok(());
     }
 
-    let file = OpenOptions::new().read(true).open(&accounts_file)?;
+    let file = OpenOptions::new().read(true).open(&keys_file)?;
     let reader = BufReader::new(file);
     let mut accounts: Value = serde_json::from_reader(reader)?;
 
     let accounts_obj = accounts.as_object_mut().unwrap();
     let mut account_to_remove = None;
 
-    for (account_id, account_info) in accounts_obj.iter() {
+    for (account_id, _account_info) in accounts_obj.iter() {
         if account_id == &args.identifier
-            || account_info["name"].as_str().unwrap() == args.identifier
+            // No name field yet
+            // || account_info["name"].as_str().unwrap() == args.identifier
         {
             account_to_remove = Some(account_id.clone());
             break;
@@ -3817,7 +3818,7 @@ pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
             let file = OpenOptions::new()
                 .write(true)
                 .truncate(true)
-                .open(&accounts_file)?;
+                .open(&keys_file)?;
             serde_json::to_writer_pretty(file, &accounts)?;
             println!(
                 "  {} Account '{}' deleted successfully",
