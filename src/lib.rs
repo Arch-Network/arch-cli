@@ -3346,7 +3346,7 @@ pub async fn demo_stop(config: &Config) -> Result<()> {
         .context("Failed to get project directory from config")?;
 
     // Change to the demo directory
-    let demo_dir = PathBuf::from(project_dir).join("demo");
+    let demo_dir = PathBuf::from(project_dir).join("projects/demo");
     std::env::set_current_dir(&demo_dir).context("Failed to change to demo directory")?;
 
     let output = ShellCommand::new("docker-compose")
