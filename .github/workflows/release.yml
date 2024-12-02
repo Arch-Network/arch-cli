@@ -1,62 +1,115 @@
 name: Release
+
+permissions:
+  contents: write
+
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - v*
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  build-and-release:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  build-release:
+    needs: create-release
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
-            platform: linux
             target: x86_64-unknown-linux-gnu
-            asset_name: arch-cli-linux-x86_64.tar.gz
+            artifact_name: arch-cli
+            asset_name: arch-cli-linux-amd64
+            archive_ext: tar.gz
+            content_type: application/gzip
           - os: macos-latest
-            platform: darwin
             target: x86_64-apple-darwin
-            asset_name: arch-cli-darwin-x86_64.tar.gz
+            artifact_name: arch-cli
+            asset_name: arch-cli-darwin-amd64
+            archive_ext: zip
+            content_type: application/zip
           - os: macos-latest
-            platform: darwin
             target: aarch64-apple-darwin
-            asset_name: arch-cli-darwin-aarch64.tar.gz
-          - os: windows-latest
-            platform: windows
-            target: x86_64-pc-windows-msvc
-            asset_name: arch-cli-windows-x86_64.zip
-
-    runs-on: ${{ matrix.os }}
+            artifact_name: arch-cli
+            asset_name: arch-cli-darwin-arm64
+            archive_ext: zip
+            content_type: application/zip
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+
+      # Install OpenSSL for Ubuntu
+      - name: Install OpenSSL (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      # Install OpenSSL for macOS
+      - name: Install OpenSSL (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew update
+          brew install openssl@3
+          brew unlink pkg-config@0.29.2 || true
+          brew install pkg-config
+          echo 'export PKG_CONFIG_PATH="/opt/homebrew/opt/openssl@3/lib/pkgconfig"' >> $GITHUB_ENV
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
 
-      - name: Build
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build target
         uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release --target ${{ matrix.target }}
+          use-cross: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
 
-      - name: Package (Unix)
-        if: matrix.platform != 'windows'
+      - name: Package
+        shell: bash
         run: |
-          tar czf ${{ matrix.asset_name }} -C target/${{ matrix.target }}/release arch-cli
-      - name: Package (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/arch-cli.exe -DestinationPath ${{ matrix.asset_name }}
+          cd target/${{ matrix.target }}/release
+          if [[ "${{ matrix.archive_ext }}" == "tar.gz" ]]; then
+            tar -czf ../../../${{ matrix.asset_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
+          else
+            zip ../../../${{ matrix.asset_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
+          fi
+          cd -
+
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./${{ matrix.asset_name }}
-          asset_name: ${{ matrix.asset_name }}
-          asset_content_type: application/octet-stream
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./${{ matrix.asset_name }}.${{ matrix.archive_ext }}
+          asset_name: ${{ matrix.asset_name }}.${{ matrix.archive_ext }}
+          asset_content_type: ${{ matrix.content_type }}
