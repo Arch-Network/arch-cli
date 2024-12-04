@@ -3781,14 +3781,14 @@ fn key_name_exists(keys_file: &PathBuf, name: &str) -> Result<bool> {
 
 pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
     let keys_dir = ensure_keys_dir()?;
-    let accounts_file = keys_dir.join("accounts.json");
+    let keys_file = keys_dir.join("keys.json");
 
-    if !accounts_file.exists() {
+    if !keys_file.exists() {
         println!("  {} No accounts found", "ℹ".bold().blue());
         return Ok(());
     }
 
-    let file = OpenOptions::new().read(true).open(&accounts_file)?;
+    let file = OpenOptions::new().read(true).open(&keys_file)?;
     let reader = BufReader::new(file);
     let mut accounts: Value = serde_json::from_reader(reader)?;
 
@@ -3817,7 +3817,7 @@ pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
             let file = OpenOptions::new()
                 .write(true)
                 .truncate(true)
-                .open(&accounts_file)?;
+                .open(&keys_file)?;
             serde_json::to_writer_pretty(file, &accounts)?;
             println!(
                 "  {} Account '{}' deleted successfully",
