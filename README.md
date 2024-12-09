@@ -39,6 +39,11 @@ cd arch-cli
 cargo install --path .
 ```
 
+To install via curl
+```sh
+sh -c "$(curl -sSfL https://raw.githubusercontent.com/Perelyn-Arch/arch-cli/feat/add-install-script/install.sh)"
+```
+
 ## Getting Started with the Demo App
 
 To quickly set up and run the demo application, follow these steps:
