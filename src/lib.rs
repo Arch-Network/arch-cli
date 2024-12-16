@@ -3780,7 +3780,7 @@ fn key_name_exists(keys_file: &PathBuf, name: &str) -> Result<bool> {
 }
 
 pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
-    let keys_dir = ensure_keys_dir()?;
+    let keys_dir = get_config_dir()?;  // Changed from ensure_keys_dir()
     let keys_file = keys_dir.join("keys.json");
 
     if !keys_file.exists() {
@@ -3794,25 +3794,39 @@ pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
 
     let accounts_obj = accounts.as_object_mut().unwrap();
     let mut account_to_remove = None;
+    let mut account_name = String::new();
 
-    for (account_id, account_info) in accounts_obj.iter() {
-        if account_id == &args.identifier
-            || account_info["name"].as_str().unwrap() == args.identifier
-        {
-            account_to_remove = Some(account_id.clone());
-            break;
+    // First try to find by public key (account_id)
+    if accounts_obj.contains_key(&args.identifier) {
+        account_to_remove = Some(args.identifier.clone());
+        account_name = accounts_obj[&args.identifier]["name"]
+            .as_str()
+            .unwrap_or(&args.identifier)
+            .to_string();
+    } else {
+        // If not found, try to find by name
+        for (account_id, account_info) in accounts_obj.iter() {
+            if let Some(name) = account_info["name"].as_str() {
+                if name == args.identifier {
+                    account_to_remove = Some(account_id.clone());
+                    account_name = name.to_string();
+                    break;
+                }
+            }
         }
     }
 
     if let Some(account_id) = account_to_remove {
-        println!(
-            "  {} Account '{}' found. Are you sure you want to delete it? (yes/no)",
-            "ℹ".bold().blue(),
-            args.identifier
-        );
-        let mut response = String::new();
-        std::io::stdin().read_line(&mut response)?;
-        if response.trim().to_lowercase() == "yes" {
+        // Use dialoguer for better user interaction
+        let confirm = dialoguer::Confirm::new()
+            .with_prompt(format!(
+                "Are you sure you want to delete account '{}' (public key: {})?",
+                account_name, account_id
+            ))
+            .default(false)
+            .interact()?;
+
+        if confirm {
             accounts_obj.remove(&account_id);
             let file = OpenOptions::new()
                 .write(true)
@@ -3822,13 +3836,13 @@ pub async fn delete_account(args: &DeleteAccountArgs) -> Result<()> {
             println!(
                 "  {} Account '{}' deleted successfully",
                 "✓".bold().green(),
-                args.identifier
+                account_name
             );
         } else {
             println!(
                 "  {} Deletion of account '{}' cancelled",
                 "✗".bold().red(),
-                args.identifier
+                account_name
             );
         }
     } else {
