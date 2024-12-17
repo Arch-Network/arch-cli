@@ -5691,3 +5691,115 @@ EXPOSE 443
 
     Ok(())
 }
+
+pub async fn assign_ownership(args: &AssignOwnershipArgs, config: &Config) -> Result<()> {
+    println!("{}", "Assigning program ownership...".bold().green());
+
+    // Get the keys file
+    let keys_file = get_config_dir()?.join("keys.json");
+
+    // Get the keypair and pubkey for the account
+    let (caller_keypair, caller_pubkey) = if args.identifier.len() == 64 {
+        // If identifier is a public key
+        let key_name = find_key_name_by_pubkey(&keys_file, &args.identifier)?;
+        (
+            get_keypair_from_name(&key_name, &keys_file)?,
+            Pubkey::from_str(&args.identifier)?,
+        )
+    } else {
+        // If identifier is a name
+        let pubkey = get_pubkey_from_name(&args.identifier, &keys_file)?;
+        (
+            get_keypair_from_name(&args.identifier, &keys_file)?,
+            Pubkey::from_str(&pubkey)?,
+        )
+    };
+
+    // Decode program ID
+    let program_id_bytes = hex::decode(&args.program_id)
+        .context("Failed to decode program ID from hex")?;
+    let program_id = Pubkey::from_slice(&program_id_bytes);
+
+    // Get RPC URL
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+    println!("  {} RPC URL: {}", "ℹ".bold().blue(), rpc_url.yellow());
+
+    // Transfer ownership
+    transfer_account_ownership(
+        &caller_keypair,
+        &caller_pubkey,
+        &program_id,
+        rpc_url,
+    ).await?;
+
+    println!(
+        "  {} Successfully transferred ownership to program: {}",
+        "✓".bold().green(),
+        args.program_id.bright_green()
+    );
+
+    Ok(())
+}
+
+pub async fn update_account(args: &UpdateAccountArgs, config: &Config) -> Result<()> {
+    println!("{}", "Updating account data...".bold().green());
+
+    // Get the keys file
+    let keys_file = get_config_dir()?.join("keys.json");
+
+    // Get the keypair and pubkey for the account
+    let (caller_keypair, caller_pubkey) = if args.identifier.len() == 64 {
+        // If identifier is a public key
+        let key_name = find_key_name_by_pubkey(&keys_file, &args.identifier)?;
+        (
+            get_keypair_from_name(&key_name, &keys_file)?,
+            Pubkey::from_str(&args.identifier)?,
+        )
+    } else {
+        // If identifier is a name
+        let pubkey = get_pubkey_from_name(&args.identifier, &keys_file)?;
+        (
+            get_keypair_from_name(&args.identifier, &keys_file)?,
+            Pubkey::from_str(&pubkey)?,
+        )
+    };
+
+    // Read the data file
+    let data = fs::read(&args.data_file)
+        .context(format!("Failed to read data file: {:?}", args.data_file))?;
+
+    // Get RPC URL
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+    println!("  {} RPC URL: {}", "ℹ".bold().blue(), rpc_url.yellow());
+
+    // Create the extend bytes instruction
+    let caller_keypair_clone = caller_keypair.clone();
+    let caller_pubkey_clone = caller_pubkey;
+    let rpc_url_clone = rpc_url.clone();
+    let data_clone = data.clone();
+
+    // Send the extend bytes instruction
+    let (txid, _) = tokio::task::spawn_blocking(move || {
+        sign_and_send_instruction(
+            SystemInstruction::new_extend_bytes_instruction(
+                data_clone,
+                caller_pubkey_clone,
+            ),
+            vec![caller_keypair_clone],
+            rpc_url_clone,
+        )
+    }).await??;
+
+    println!(
+        "  {} Successfully updated account data. Transaction ID: {}",
+        "✓".bold().green(),
+        txid.yellow()
+    );
+    println!(
+        "  {} Updated {} bytes",
+        "ℹ".bold().blue(),
+        data.len().to_string().bright_white()
+    );
+
+    Ok(())
+}
