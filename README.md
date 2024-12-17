@@ -173,9 +173,17 @@ Starts or stops the demo application.
 arch-cli account create [--program-id <program_id>] --name <account_name>
 arch-cli account list
 arch-cli account delete <account_id_or_name>
+arch-cli account transfer-ownership <account_id_or_name> <new_owner_id_or_name>
+arch-cli account update <account_id_or_name> --data-file <path_to_data_file> [--rpc-url <rpc_url>]
 ```
 
 Creates, lists, or deletes accounts for your dapps.
+
+- `create`: Creates a new account with an optional program ID for ownership.
+- `list`: Lists all accounts stored in the accounts file.
+- `delete`: Deletes an account by its ID or name.
+- `transfer-ownership`: Transfers ownership of an account to a specified program.
+- `update`: Updates the account data from a specified file. You need to provide the path to the data file and optionally the RPC URL for the Arch Network node.
 
 ### Manage configuration
 

@@ -269,17 +269,25 @@ pub enum DemoCommands {
 
 #[derive(Subcommand)]
 pub enum AccountCommands {
-    /// Create an account for the dApp
-    #[clap(long_about = "Creates an account for the dApp, prompts for funding, and transfers ownership to the program.")]
+    /// Create a new account
+    #[clap(long_about = "Creates a new account without assigning program ownership")]
     Create(CreateAccountArgs),
 
     /// List all accounts
-    #[clap(long_about = "Lists all accounts stored in the accounts file.")]
+    #[clap(long_about = "Lists all accounts stored in the accounts file")]
     List,
 
     /// Delete an account
-    #[clap(long_about = "Deletes an account from the accounts file.")]
+    #[clap(long_about = "Deletes an account from the accounts file")]
     Delete(DeleteAccountArgs),
+
+    /// Assign program ownership to an account
+    #[clap(long_about = "Transfers ownership of an account to a program")]
+    AssignOwnership(AssignOwnershipArgs),
+
+    /// Update account data
+    #[clap(long_about = "Updates the account data from a file")]
+    Update(UpdateAccountArgs),
 }
 
 #[derive(Subcommand)]
@@ -294,9 +302,10 @@ pub enum ConfigCommands {
 
 #[derive(Args)]
 pub struct CreateAccountArgs {
-    /// Program ID to transfer ownership to
+    /// Program ID to transfer ownership to (optional)
     #[clap(long, help = "Specifies the program ID to transfer ownership to")]
     program_id: Option<String>,
+
     /// Custom name for the account
     #[clap(long, help = "Specifies a custom name for the account")]
     name: String,
@@ -407,6 +416,36 @@ pub struct ValidatorStartArgs {
 
     #[clap(long, help = "GCP machine type")]
     gcp_machine_type: Option<String>,
+}
+
+#[derive(Args)]
+pub struct AssignOwnershipArgs {
+    /// Account name or ID to assign ownership
+    #[clap(help = "Name or ID of the account to assign ownership")]
+    identifier: String,
+
+    /// Program ID to transfer ownership to
+    #[clap(long, help = "Program ID to transfer ownership to")]
+    program_id: String,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
+}
+
+#[derive(Args)]
+pub struct UpdateAccountArgs {
+    /// Account name or ID to update
+    #[clap(help = "Name or ID of the account to update")]
+    identifier: String,
+
+    /// Path to the data file
+    #[clap(long, help = "Path to file containing the account data bytes")]
+    data_file: PathBuf,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
 }
 
 pub async fn init() -> Result<()> {
@@ -3623,48 +3662,51 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     )
     .await?;
 
-    // Determine the program ID to transfer ownership to
-    let program_id = if let Some(hex_program_id) = &args.program_id {
-        if hex_program_id.is_empty() {
+    // Only transfer ownership if program_id is provided
+    if let Some(hex_program_id) = &args.program_id {
+        if !hex_program_id.is_empty() {
+            let program_id_bytes = hex::decode(hex_program_id)
+                .context("Failed to decode program ID from hex")?;
+            let program_id = Pubkey::from_slice(&program_id_bytes);
+            
+            let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+            
+            // Transfer ownership to the program
+            transfer_account_ownership(
+                &caller_keypair,
+                &caller_pubkey,
+                &program_id,
+                rpc_url,
+            ).await?;
+            
             println!(
-                "  {} No program ID provided. Using system program.",
-                "ℹ".bold().blue()
+                "{}",
+                "Account created and ownership transferred successfully!"
+                    .bold()
+                    .green()
             );
-            Pubkey::system_program()
         } else {
-            let program_id_bytes =
-                hex::decode(hex_program_id).context("Failed to decode program ID from hex")?;
-            Pubkey::from_slice(&program_id_bytes)
+            println!(
+                "{}",
+                "Account created successfully!"
+                    .bold()
+                    .green()
+            );
         }
     } else {
         println!(
-            "  {} No program ID provided. Using system program.",
-            "ℹ".bold().blue()
+            "{}",
+            "Account created successfully!"
+                .bold()
+                .green()
         );
-        Pubkey::system_program()
-    };
-
-    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
-
-    // Transfer ownership to the program
-    transfer_account_ownership(
-        &caller_keypair,
-        &caller_pubkey,
-        &program_id,
-        rpc_url,
-    ).await?;
+    }
 
     // Save the account information to keys.json
     save_keypair_to_json(&keys_file, &caller_keypair, &caller_pubkey, &args.name)?;
 
     // Output the private key to the user
     let private_key_hex = hex::encode(secret_key.secret_bytes());
-    println!(
-        "{}",
-        "Account created and ownership transferred successfully!"
-            .bold()
-            .green()
-    );
     println!(
         "{}",
         "IMPORTANT: Please save your private key securely. It will not be displayed again."
@@ -5676,6 +5718,124 @@ EXPOSE 443
     println!("Proxy IP: {}", proxy_ip);
     println!("HTTPS endpoint: {}", format!("https://{}", proxy_ip).yellow());
     println!("\nNote: Using self-signed certificate. You may need to accept the security warning in your browser.");
+
+    Ok(())
+}
+
+pub async fn assign_ownership(args: &AssignOwnershipArgs, config: &Config) -> Result<()> {
+    println!("{}", "Assigning program ownership...".bold().green());
+
+    // Get the keys file
+    let keys_file = get_config_dir()?.join("keys.json");
+
+    // Get the keypair and pubkey for the account
+    let (caller_keypair, caller_pubkey) = if args.identifier.len() == 64 {
+        // If identifier is a public key
+        let key_name = find_key_name_by_pubkey(&keys_file, &args.identifier)?;
+        let pubkey_bytes = hex::decode(&args.identifier)?;
+        (
+            get_keypair_from_name(&key_name, &keys_file)?,
+            Pubkey::from_slice(&pubkey_bytes),
+        )
+    } else {
+        // If identifier is a name
+        let pubkey = get_pubkey_from_name(&args.identifier, &keys_file)?;
+        let pubkey_bytes = hex::decode(&pubkey)?;
+        (
+            get_keypair_from_name(&args.identifier, &keys_file)?,
+            Pubkey::from_slice(&pubkey_bytes),
+        )
+    };
+
+    // Decode program ID
+    let program_id_bytes = hex::decode(&args.program_id)
+        .context("Failed to decode program ID from hex")?;
+    let program_id = Pubkey::from_slice(&program_id_bytes);
+
+    // Get RPC URL
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+    println!("  {} RPC URL: {}", "ℹ".bold().blue(), rpc_url.yellow());
+
+    // Transfer ownership
+    transfer_account_ownership(
+        &caller_keypair,
+        &caller_pubkey,
+        &program_id,
+        rpc_url,
+    ).await?;
+
+    println!(
+        "  {} Successfully transferred ownership to program: {}",
+        "✓".bold().green(),
+        args.program_id.bright_green()
+    );
+
+    Ok(())
+}
+
+pub async fn update_account(args: &UpdateAccountArgs, config: &Config) -> Result<()> {
+    println!("{}", "Updating account data...".bold().green());
+
+    // Get the keys file
+    let keys_file = get_config_dir()?.join("keys.json");
+
+    // Get the keypair and pubkey for the account
+    let (caller_keypair, caller_pubkey) = if args.identifier.len() == 64 {
+        // If identifier is a public key
+        let key_name = find_key_name_by_pubkey(&keys_file, &args.identifier)?;
+        let pubkey_bytes = hex::decode(&args.identifier)?;
+        let pubkey = Pubkey::from_slice(&pubkey_bytes);
+        (
+            get_keypair_from_name(&key_name, &keys_file)?,
+            pubkey,
+        )
+    } else {
+        // If identifier is a name
+        let pubkey = get_pubkey_from_name(&args.identifier, &keys_file)?;
+        let pubkey_bytes = hex::decode(&pubkey)?;
+        let pubkey = Pubkey::from_slice(&pubkey_bytes);
+        (
+            get_keypair_from_name(&args.identifier, &keys_file)?,
+            pubkey,
+        )
+    };
+
+    // Read the data file
+    let data = fs::read(&args.data_file)
+        .context(format!("Failed to read data file: {:?}", args.data_file))?;
+
+    // Get RPC URL
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+    println!("  {} RPC URL: {}", "ℹ".bold().blue(), rpc_url.yellow());
+
+    // Create the extend bytes instruction
+    let caller_keypair_clone = caller_keypair.clone();
+    let caller_pubkey_clone = caller_pubkey;
+    let rpc_url_clone = rpc_url.clone();
+    let data_clone = data.clone();
+
+    // Send the extend bytes instruction
+    let (txid, _) = tokio::task::spawn_blocking(move || {
+        sign_and_send_instruction(
+            SystemInstruction::new_extend_bytes_instruction(
+                data_clone,
+                caller_pubkey_clone,
+            ),
+            vec![caller_keypair_clone],
+            rpc_url_clone,
+        )
+    }).await??;
+
+    println!(
+        "  {} Successfully updated account data. Transaction ID: {}",
+        "✓".bold().green(),
+        txid.yellow()
+    );
+    println!(
+        "  {} Updated {} bytes",
+        "ℹ".bold().blue(),
+        data.len().to_string().bright_white()
+    );
 
     Ok(())
 }
