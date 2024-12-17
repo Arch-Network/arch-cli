@@ -269,17 +269,25 @@ pub enum DemoCommands {
 
 #[derive(Subcommand)]
 pub enum AccountCommands {
-    /// Create an account for the dApp
-    #[clap(long_about = "Creates an account for the dApp, prompts for funding, and transfers ownership to the program.")]
+    /// Create a new account
+    #[clap(long_about = "Creates a new account without assigning program ownership")]
     Create(CreateAccountArgs),
 
     /// List all accounts
-    #[clap(long_about = "Lists all accounts stored in the accounts file.")]
+    #[clap(long_about = "Lists all accounts stored in the accounts file")]
     List,
 
     /// Delete an account
-    #[clap(long_about = "Deletes an account from the accounts file.")]
+    #[clap(long_about = "Deletes an account from the accounts file")]
     Delete(DeleteAccountArgs),
+
+    /// Assign program ownership to an account
+    #[clap(long_about = "Transfers ownership of an account to a program")]
+    AssignOwnership(AssignOwnershipArgs),
+
+    /// Update account data
+    #[clap(long_about = "Updates the account data from a file")]
+    Update(UpdateAccountArgs),
 }
 
 #[derive(Subcommand)]
