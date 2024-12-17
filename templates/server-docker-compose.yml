@@ -28,6 +28,7 @@ services:
 
   local_validator:
     platform: linux/amd64
+    container_name: local_validator
     image: ghcr.io/arch-network/local_validator:latest
     restart: unless-stopped
     ports:

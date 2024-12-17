@@ -1173,14 +1173,21 @@ pub async fn server_start(config: &Config) -> Result<()> {
 pub async fn server_stop(config: &Config) -> Result<()> {
     println!("{}", "Stopping the development server...".bold().green());
 
-    let docker_compose_file = config.get_string("networks.development.docker_compose_file")?;
+    let selected_network = config.get_string("selected_network")
+        .unwrap_or_else(|_| "development".to_string());
+
+    set_env_vars(config, &selected_network)?;
+
+    let docker_compose_file = config.get_string(&format!("networks.{}.docker_compose_file", selected_network))?;
+    let docker_compose_file = format!("{}/{}", config.get_string("config_dir")?, docker_compose_file);
+
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
 
     println!("  {} Stopping services...", "→".bold().blue());
 
     let output = Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(["-f", &docker_compose_file, "down", "-v"])
+        .args(["-f", &docker_compose_file, "down", "-v", "--remove-orphans"])
         .status()?;
 
     if !output.success() {
