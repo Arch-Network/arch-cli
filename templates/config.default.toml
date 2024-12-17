@@ -12,16 +12,16 @@ docker_compose_file = "./bitcoin-docker-compose.yml"
 leader_rpc_endpoint = "http://host.docker.internal:9002"
 services = ["local_validator"]
 
-[networks.development2]
-type = "development2"
+[networks.e2e]
+type = "e2e"
 bitcoin_rpc_endpoint = "localhost"
 bitcoin_rpc_port = "18443"
 bitcoin_rpc_user = "bitcoin"
 bitcoin_rpc_password = "password"
 bitcoin_rpc_wallet = "devwallet"
-docker_compose_file = "./bitcoin-docker-compose.yml"
+docker_compose_file = "./server-docker-compose.yml"
 leader_rpc_endpoint = "http://localhost:9002"
-services = ["bitcoin", "electrs", "btc-rpc-explorer"]
+services = ["bitcoin", "electrs", "btc-rpc-explorer", "local_validator"]
 
 [networks.testnet]
 type = "testnet"
