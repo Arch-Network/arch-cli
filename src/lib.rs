@@ -5751,16 +5751,20 @@ pub async fn update_account(args: &UpdateAccountArgs, config: &Config) -> Result
     let (caller_keypair, caller_pubkey) = if args.identifier.len() == 64 {
         // If identifier is a public key
         let key_name = find_key_name_by_pubkey(&keys_file, &args.identifier)?;
+        let pubkey_bytes = hex::decode(&args.identifier)?;
+        let pubkey = Pubkey::from_slice(&pubkey_bytes);
         (
             get_keypair_from_name(&key_name, &keys_file)?,
-            Pubkey::from_str(&args.identifier)?,
+            pubkey,
         )
     } else {
         // If identifier is a name
         let pubkey = get_pubkey_from_name(&args.identifier, &keys_file)?;
+        let pubkey_bytes = hex::decode(&pubkey)?;
+        let pubkey = Pubkey::from_slice(&pubkey_bytes);
         (
             get_keypair_from_name(&args.identifier, &keys_file)?,
-            Pubkey::from_str(&pubkey)?,
+            pubkey,
         )
     };
 
