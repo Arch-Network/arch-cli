@@ -302,9 +302,10 @@ pub enum ConfigCommands {
 
 #[derive(Args)]
 pub struct CreateAccountArgs {
-    /// Program ID to transfer ownership to
+    /// Program ID to transfer ownership to (optional)
     #[clap(long, help = "Specifies the program ID to transfer ownership to")]
     program_id: Option<String>,
+
     /// Custom name for the account
     #[clap(long, help = "Specifies a custom name for the account")]
     name: String,
@@ -3631,48 +3632,51 @@ pub async fn create_account(args: &CreateAccountArgs, config: &Config) -> Result
     )
     .await?;
 
-    // Determine the program ID to transfer ownership to
-    let program_id = if let Some(hex_program_id) = &args.program_id {
-        if hex_program_id.is_empty() {
+    // Only transfer ownership if program_id is provided
+    if let Some(hex_program_id) = &args.program_id {
+        if !hex_program_id.is_empty() {
+            let program_id_bytes = hex::decode(hex_program_id)
+                .context("Failed to decode program ID from hex")?;
+            let program_id = Pubkey::from_slice(&program_id_bytes);
+            
+            let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+            
+            // Transfer ownership to the program
+            transfer_account_ownership(
+                &caller_keypair,
+                &caller_pubkey,
+                &program_id,
+                rpc_url,
+            ).await?;
+            
             println!(
-                "  {} No program ID provided. Using system program.",
-                "ℹ".bold().blue()
+                "{}",
+                "Account created and ownership transferred successfully!"
+                    .bold()
+                    .green()
             );
-            Pubkey::system_program()
         } else {
-            let program_id_bytes =
-                hex::decode(hex_program_id).context("Failed to decode program ID from hex")?;
-            Pubkey::from_slice(&program_id_bytes)
+            println!(
+                "{}",
+                "Account created successfully!"
+                    .bold()
+                    .green()
+            );
         }
     } else {
         println!(
-            "  {} No program ID provided. Using system program.",
-            "ℹ".bold().blue()
+            "{}",
+            "Account created successfully!"
+                .bold()
+                .green()
         );
-        Pubkey::system_program()
-    };
-
-    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
-
-    // Transfer ownership to the program
-    transfer_account_ownership(
-        &caller_keypair,
-        &caller_pubkey,
-        &program_id,
-        rpc_url,
-    ).await?;
+    }
 
     // Save the account information to keys.json
     save_keypair_to_json(&keys_file, &caller_keypair, &caller_pubkey, &args.name)?;
 
     // Output the private key to the user
     let private_key_hex = hex::encode(secret_key.secret_bytes());
-    println!(
-        "{}",
-        "Account created and ownership transferred successfully!"
-            .bold()
-            .green()
-    );
     println!(
         "{}",
         "IMPORTANT: Please save your private key securely. It will not be displayed again."
