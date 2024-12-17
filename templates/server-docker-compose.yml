@@ -1,0 +1,142 @@
+services:
+  bitcoin:
+    platform: linux/amd64
+    image: ruimarinho/bitcoin-core:24-alpine
+    restart: unless-stopped
+    ports:
+      - "${BITCOIN_RPC_PORT}:${BITCOIN_RPC_PORT}"
+    volumes:
+      - bitcoin-data:/home/bitcoin/.bitcoin
+    networks:
+      - internal
+    environment:
+      - BITCOIN_RPC_AUTH=${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASSWORD}
+    command: -printtoconsole
+      -txindex=1
+      -regtest=1
+      -rpcallowip=0.0.0.0/0
+      -rpcbind=0.0.0.0
+      -rpcuser=${BITCOIN_RPC_USER}
+      -rpcport=${BITCOIN_RPC_PORT}
+      -rpcpassword=${BITCOIN_RPC_PASSWORD}
+      -fallbackfee=0.00001
+    healthcheck:
+      test: bitcoin-cli -regtest -rpcuser=${BITCOIN_RPC_USER} -rpcpassword=${BITCOIN_RPC_PASSWORD} getrpcinfo
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  local_validator:
+    platform: linux/amd64
+    image: ghcr.io/arch-network/local_validator:latest
+    restart: unless-stopped
+    ports:
+      - "${VALIDATOR_P2P_PORT:-19001}:${VALIDATOR_P2P_PORT:-19001}"
+      - "${VALIDATOR_RPC_PORT:-9001}:${VALIDATOR_RPC_PORT:-9001}"
+    environment:
+      RUST_LOG: "${RUST_LOG:-info,validator=info}"
+      RUST_BACKTRACE: "${RUST_BACKTRACE:-1}"
+      NETWORK_MODE: "${NETWORK_MODE:-localnet}"
+    command: >
+      local_validator
+      --rpc-bind-ip 0.0.0.0
+      --rpc-bind-port ${VALIDATOR_RPC_PORT:-9001}      
+      --bitcoin-rpc-endpoint bitcoin
+      --bitcoin-rpc-port ${BITCOIN_RPC_PORT}
+      --bitcoin-rpc-username ${BITCOIN_RPC_USER}
+      --bitcoin-rpc-password ${BITCOIN_RPC_PASSWORD}
+    volumes:
+      - ${ARCH_DATA_DIR:-./arch-data}:/arch-data
+    depends_on:
+      bitcoin:
+        condition: service_healthy
+    networks:
+      - internal
+
+  ordinals-ord:
+    platform: linux/amd64
+    image: haffjjj/ordinals-ord:v0.18.4
+    restart: unless-stopped
+    ports:
+      - "${ORD_PORT}:${ORD_PORT}"
+    volumes:
+      - ord-data:/root/.local/share
+    depends_on:
+      bitcoin:
+        condition: service_healthy
+    networks:
+      - internal
+    command: --chain=regtest
+      --bitcoin-rpc-url=http://bitcoin:${BITCOIN_RPC_PORT}
+      --bitcoin-rpc-username=${BITCOIN_RPC_USER}
+      --bitcoin-rpc-password=${BITCOIN_RPC_PASSWORD}
+      --index-sats
+      --index-runes
+      server
+      --http-port=${ORD_PORT}
+    healthcheck:
+      test: curl -f localhost:${ORD_PORT}/blockheight || exit 1
+      start_period: 5s
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  blockstream-electrs:
+    platform: linux/amd64
+    image: haffjjj/blockstream-electrs:v1.0.0
+    restart: unless-stopped
+    ports:
+      - "${ELECTRS_REST_API_PORT}:${ELECTRS_REST_API_PORT}"
+      - "${ELECTRS_ELECTRUM_PORT}:${ELECTRS_ELECTRUM_PORT}"
+    volumes:
+      - electrs-data:/data/db
+    depends_on:
+      bitcoin:
+        condition: service_healthy
+    networks:
+      - internal
+    command: -vvvv
+      --jsonrpc-import
+      --network=regtest
+      --daemon-rpc-addr=bitcoin:${BITCOIN_RPC_PORT}
+      --cookie=${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASSWORD}
+      --lightmode=1
+      --index-unspendables=1
+      --utxos-limit=100000
+      --electrum-txs-limit=100000
+      --http-addr=0.0.0.0:${ELECTRS_REST_API_PORT}
+      --electrum-rpc-addr=0.0.0.0:${ELECTRS_ELECTRUM_PORT}
+
+  btc-rpc-explorer:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: btc-rpc-explorer.dockerfile
+    restart: unless-stopped
+    ports:
+      - "${BTC_RPC_EXPLORER_PORT}:${BTC_RPC_EXPLORER_PORT}"
+    depends_on:
+      bitcoin:
+        condition: service_healthy
+    networks:
+      - internal
+    environment:
+      BTCEXP_HOST: 0.0.0.0
+      BTCEXP_PORT: ${BTC_RPC_EXPLORER_PORT}
+      BTCEXP_BITCOIND_URI: bitcoin://${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASSWORD}@bitcoin:${BITCOIN_RPC_PORT}?timeout=10000
+      BTCEXP_ADDRESS_API: electrum
+      BTCEXP_ELECTRUM_SERVERS: tcp://blockstream-electrs:${ELECTRS_ELECTRUM_PORT}
+      BTCEXP_ELECTRUM_TXINDEX: "true"
+
+networks:
+  internal:
+    name: internal
+    external: false
+
+volumes:
+  bitcoin-data:
+    driver: local
+  electrs-data:
+    driver: local
+  ord-data:
+    driver: local 

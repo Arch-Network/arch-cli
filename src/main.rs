@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     let result = match &cli.command {
         Commands::Init => init().await,
         Commands::Server(ServerCommands::Start) => server_start(&config).await,
-        Commands::Server(ServerCommands::Stop) => server_stop().await,
+        Commands::Server(ServerCommands::Stop) => server_stop(&config).await,
         Commands::Server(ServerCommands::Status) => server_status(&config).await,
         Commands::Server(ServerCommands::Logs { service }) => server_logs(service, &config).await,
         Commands::Server(ServerCommands::Clean) => server_clean(&config).await,
@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
         Commands::Config(ConfigCommands::Edit) => config_edit().await,
         Commands::Config(ConfigCommands::Reset) => config_reset().await,
         Commands::Start => server_start(&config).await,
-        Commands::Stop => server_stop().await,
+        Commands::Stop => server_stop(&config).await,
         Commands::Indexer(IndexerCommands::Start(args)) => indexer_start(args, &config).await,
         Commands::Indexer(IndexerCommands::Stop(args)) => indexer_stop(args, &config).await,
         Commands::Indexer(IndexerCommands::Clean) => indexer_clean(&config).await,

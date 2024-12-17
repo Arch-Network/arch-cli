@@ -48,7 +48,7 @@ use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::task;
-use toml_edit::{value, Document, Item};
+use toml_edit::{value, Document, Item, Array};
 use include_dir::{include_dir, Dir};
 
 use common::wallet_manager::*;
@@ -1135,41 +1135,60 @@ fn _start_or_create_services(service_name: &str, service_config: &ServiceConfig)
 }
 
 pub async fn server_start(config: &Config) -> Result<()> {
-    println!("{}", "Starting the development server...".bold().green());
+    println!("{}", "Starting the server...".bold().green());
 
     let arch_data_dir = get_arch_data_dir(config)?;
-
-    // Set the ARCH_DATA_DIR environment variable
     env::set_var("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap());
 
-    // Get the selected network from the config
     let selected_network = config.get_string("selected_network")
         .unwrap_or_else(|_| "development".to_string());
 
-    // Set environment variables for the selected network
     set_env_vars(config, &selected_network)?;
 
-    start_docker_service(
-        "Bitcoin",
-        "bitcoin",
-        &config.get_string("docker_compose_file")?,
-    )?;
+    let docker_compose_file = config.get_string(&format!("networks.{}.docker_compose_file", selected_network))?;
+    let docker_compose_file = format!("{}/{}", config.get_string("config_dir")?, docker_compose_file);
 
-    // Start Arch Network services
-    let arch_compose_file = config.get_string("arch.docker_compose_file")?;
     let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
 
-    Command::new(docker_compose_cmd)
+    println!("  {} Starting services...", "→".bold().blue());
+
+    let output = Command::new(docker_compose_cmd)
         .args(docker_compose_args)
-        .args(["-f", &arch_compose_file, "up", "-d"])
+        .args(["-f", &docker_compose_file, "up", "-d"])
         .env("ARCH_DATA_DIR", arch_data_dir.to_str().unwrap())
         .status()?;
 
-    // Start the DKG process
-    start_dkg(config).await?;
+    if !output.success() {
+        return Err(anyhow!("Failed to start services"));
+    }
 
     println!(
         "  {} Development server started successfully.",
+        "✓".bold().green()
+    );
+
+    Ok(())
+}
+
+pub async fn server_stop(config: &Config) -> Result<()> {
+    println!("{}", "Stopping the development server...".bold().green());
+
+    let docker_compose_file = config.get_string("networks.development.docker_compose_file")?;
+    let (docker_compose_cmd, docker_compose_args) = get_docker_compose_command();
+
+    println!("  {} Stopping services...", "→".bold().blue());
+
+    let output = Command::new(docker_compose_cmd)
+        .args(docker_compose_args)
+        .args(["-f", &docker_compose_file, "down", "-v"])
+        .status()?;
+
+    if !output.success() {
+        return Err(anyhow!("Failed to stop services"));
+    }
+
+    println!(
+        "  {} Development server stopped successfully.",
         "✓".bold().green()
     );
 
@@ -1281,21 +1300,6 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     );
     display_program_id(&program_pubkey);
 
-    Ok(())
-}
-pub async fn server_stop() -> Result<()> {
-    println!("{}", "Stopping development server...".bold().yellow());
-
-    stop_all_related_containers()?;
-
-    println!(
-        "{}",
-        "Development server stopped successfully!".bold().green()
-    );
-    println!(
-        "{}",
-        "You can restart the server later using the 'server start' command.".italic()
-    );
     Ok(())
 }
 
@@ -2028,7 +2032,14 @@ pub fn load_config(network: &str) -> Result<Config> {
     
     let mut builder = Config::builder();
     
-    // Check if the config file exists
+    // Load default configuration first
+    let default_config = include_str!("../templates/config.default.toml");
+    builder = builder.add_source(config::File::from_str(
+        default_config,
+        config::FileFormat::Toml
+    ));
+
+    // Check if the user config file exists
     if config_path.exists() {
         builder = builder.add_source(File::with_name(config_path.to_str().unwrap()));
         println!(
@@ -2047,10 +2058,63 @@ pub fn load_config(network: &str) -> Result<Config> {
     // Add environment variables and set config_dir
     builder = builder
         .add_source(Environment::with_prefix("ARCH_CLI").separator("_"))
-        .set_override("config_dir", config_dir)?;
+        .set_override("config_dir", config_dir.clone())?;
 
     // Build the initial configuration
     let initial_config = builder.build()?;
+
+    // Check if e2e network configuration exists
+    let e2e_config: Option<Value> = initial_config.get("networks.e2e").ok();
+
+    if e2e_config.is_none() {
+        println!(
+            "  {} e2e network configuration not found, creating from default...",
+            "ℹ".bold().blue()
+        );
+
+        // If config file doesn't exist, create the directory and file
+        if !config_path.exists() {
+            fs::create_dir_all(&config_dir)?;
+            fs::write(&config_path, default_config)?;
+            println!(
+                "  {} Created new config file at {}",
+                "✓".bold().green(),
+                config_path.display().to_string().yellow()
+            );
+        } else {
+            // Read existing config
+            let mut config_content = fs::read_to_string(&config_path)?;
+
+            // Parse default config to get e2e network section
+            let default_toml: Value = toml::from_str(default_config)?;
+            let e2e_network = default_toml
+                .get("networks")
+                .and_then(|n| n.get("e2e"))
+                .ok_or_else(|| anyhow!("e2e network configuration not found in default config"))?;
+
+            // Add e2e network section to existing config
+            if !config_content.contains("[networks.e2e]") {
+                config_content.push_str("\n\n[networks.e2e]\n");
+                config_content.push_str(&toml::to_string(e2e_network)?);
+
+                fs::write(&config_path, config_content)?;
+                println!(
+                    "  {} Added e2e network configuration to {}",
+                    "✓".bold().green(),
+                    config_path.display().to_string().yellow()
+                );
+            }
+        }
+
+        // Reload the configuration
+        builder = Config::builder()
+            .add_source(config::File::from_str(
+                &fs::read_to_string(&config_path)?,
+                config::FileFormat::Toml
+            ))
+            .add_source(Environment::with_prefix("ARCH_CLI").separator("_"))
+            .set_override("config_dir", config_dir)?;
+    }
 
     // Try to get the network-specific configuration
     let network_config: Option<Value> = initial_config.get(&format!("networks.{}", network)).ok();
@@ -2086,6 +2150,7 @@ pub fn load_config(network: &str) -> Result<Config> {
         "mainnet" => "bitcoin",
         "testnet" => "testnet",
         "development" => "regtest",
+        "e2e" => "regtest",
         _ => "regtest", // Default to regtest if unknown
     };
     builder = builder.set_override("bitcoin.network", bitcoin_network)?;
@@ -2098,8 +2163,8 @@ pub fn load_config(network: &str) -> Result<Config> {
         .context("Failed to build configuration")?;
 
     Ok(final_config)
-
 }
+
 pub fn get_arch_data_dir(config: &Config) -> Result<PathBuf> {
     let config_dir = config.get_string("config_dir")?;
     Ok(PathBuf::from(config_dir).join("arch-data"))
@@ -4799,11 +4864,9 @@ async fn start_local_validator(args: &ValidatorStartArgs, config: &Config) -> Re
     // Validate Bitcoin RPC endpoint format
     let bitcoin_rpc_endpoint = {
         let endpoint = config.get_string("bitcoin_rpc_endpoint")?;
-        // Check if endpoint contains protocol or path
         if endpoint.contains("://") || endpoint.contains("/") {
             return Err(anyhow!("Bitcoin RPC endpoint should not contain protocol (http://) or path. Expected format: domain"));
         }
-        // Validate format using regex
         let endpoint_regex = regex::Regex::new(r"^[a-zA-Z0-9.-]+$")?;
         if !endpoint_regex.is_match(&endpoint) {
             return Err(anyhow!("Invalid Bitcoin RPC endpoint format. Expected format: domain (e.g., localhost)"));
@@ -5511,6 +5574,7 @@ fn copy_template_files() -> Result<()> {
         ("arch-docker-compose.yml", "arch-docker-compose.yml"),
         ("bitcoin-docker-compose.yml", "bitcoin-docker-compose.yml"),
         ("btc-rpc-explorer.dockerfile", "btc-rpc-explorer.dockerfile"),
+        ("server-docker-compose.yml", "server-docker-compose.yml"),
         ("leader.sh", "leader.sh"),
         ("validator.sh", "validator.sh"),
     ];
@@ -5525,6 +5589,7 @@ fn copy_template_files() -> Result<()> {
                 "arch-docker-compose.yml" => include_str!("../templates/arch-docker-compose.yml"),
                 "bitcoin-docker-compose.yml" => include_str!("../templates/bitcoin-docker-compose.yml"),
                 "btc-rpc-explorer.dockerfile" => include_str!("../templates/btc-rpc-explorer.dockerfile"),
+                "server-docker-compose.yml" => include_str!("../templates/server-docker-compose.yml"),
                 "leader.sh" => include_str!("../templates/leader.sh"),
                 "validator.sh" => include_str!("../templates/validator.sh"),
                 _ => return Err(anyhow!("Unknown template file: {}", template)),
@@ -5838,4 +5903,49 @@ pub async fn update_account(args: &UpdateAccountArgs, config: &Config) -> Result
     );
 
     Ok(())
+}
+
+pub fn load_and_update_config(config_path: &str) -> Result<Config> {
+    let config_file_path = Path::new(config_path);
+
+    if config_file_path.exists() {
+        // Existing logic to load and update the config
+        let mut config_content = fs::read_to_string(config_file_path)
+            .context("Failed to read existing config.toml")?;
+        let mut doc = config_content.parse::<Document>()
+            .context("Failed to parse existing config.toml")?;
+    
+        // Check if e2e network is already present
+        if !doc["networks"]["e2e"].is_table() {
+            // Add e2e network configuration
+            doc["networks"]["e2e"] = Item::Table({
+                let mut table = toml_edit::Table::new();
+                table["type"] = value("e2e");
+                table["bitcoin_rpc_endpoint"] = value("localhost");
+                table["bitcoin_rpc_port"] = value("18443");
+                table["bitcoin_rpc_user"] = value("bitcoin");
+                table["bitcoin_rpc_password"] = value("password");
+                table["bitcoin_rpc_wallet"] = value("devwallet");
+                table["docker_compose_file"] = value("./server-docker-compose.yml");
+                table["leader_rpc_endpoint"] = value("http://localhost:9002");
+                let mut services = toml_edit::Array::new();
+                services.push("bitcoin");
+                services.push("electrs");
+                services.push("btc-rpc-explorer");
+                services.push("local_validator");
+                table["services"] = value(services);
+                table
+            });
+    
+            // Save the updated config back to the file
+            fs::write(config_file_path, doc.to_string())
+                .context("Failed to write updated config.toml")?;
+        }
+    } else {
+        // If config.toml does not exist, create it from the default template
+        ensure_default_config()?;
+    }
+    
+    // Load the configuration using the existing method
+    load_config(config_path)
 }
