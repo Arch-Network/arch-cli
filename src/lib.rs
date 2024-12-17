@@ -418,6 +418,36 @@ pub struct ValidatorStartArgs {
     gcp_machine_type: Option<String>,
 }
 
+#[derive(Args)]
+pub struct AssignOwnershipArgs {
+    /// Account name or ID to assign ownership
+    #[clap(help = "Name or ID of the account to assign ownership")]
+    identifier: String,
+
+    /// Program ID to transfer ownership to
+    #[clap(long, help = "Program ID to transfer ownership to")]
+    program_id: String,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
+}
+
+#[derive(Args)]
+pub struct UpdateAccountArgs {
+    /// Account name or ID to update
+    #[clap(help = "Name or ID of the account to update")]
+    identifier: String,
+
+    /// Path to the data file
+    #[clap(long, help = "Path to file containing the account data bytes")]
+    data_file: PathBuf,
+
+    /// RPC URL for connecting to the Arch Network
+    #[clap(long, help = "RPC URL for the Arch Network node")]
+    rpc_url: Option<String>,
+}
+
 pub async fn init() -> Result<()> {
     println!("{}", "Initializing new Arch Network app...".bold().green());
 
@@ -5702,16 +5732,18 @@ pub async fn assign_ownership(args: &AssignOwnershipArgs, config: &Config) -> Re
     let (caller_keypair, caller_pubkey) = if args.identifier.len() == 64 {
         // If identifier is a public key
         let key_name = find_key_name_by_pubkey(&keys_file, &args.identifier)?;
+        let pubkey_bytes = hex::decode(&args.identifier)?;
         (
             get_keypair_from_name(&key_name, &keys_file)?,
-            Pubkey::from_str(&args.identifier)?,
+            Pubkey::from_slice(&pubkey_bytes),
         )
     } else {
         // If identifier is a name
         let pubkey = get_pubkey_from_name(&args.identifier, &keys_file)?;
+        let pubkey_bytes = hex::decode(&pubkey)?;
         (
             get_keypair_from_name(&args.identifier, &keys_file)?,
-            Pubkey::from_str(&pubkey)?,
+            Pubkey::from_slice(&pubkey_bytes),
         )
     };
 
