@@ -1,7 +1,7 @@
 services:
   bitcoin:
     platform: linux/amd64
-    image: ruimarinho/bitcoin-core:24-alpine
+    image: bitcoin/bitcoin:28-alpine
     restart: unless-stopped
     ports:
       - "${BITCOIN_RPC_PORT}:${BITCOIN_RPC_PORT}"
