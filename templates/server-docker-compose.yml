@@ -56,7 +56,7 @@ services:
 
   ordinals-ord:
     platform: linux/amd64
-    image: haffjjj/ordinals-ord:v0.18.4
+    image: haffjjj/ordinals-ord:v0.22.0
     restart: unless-stopped
     ports:
       - "${ORD_PORT}:${ORD_PORT}"

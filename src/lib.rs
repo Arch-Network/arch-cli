@@ -5574,6 +5574,11 @@ pub fn ensure_global_config() -> Result<()> {
 
 fn copy_template_files() -> Result<()> {
     let config_dir = get_config_dir()?;
+    // Files that should always be updated on new versions
+    let force_update_templates = [
+        "server-docker-compose.yml",
+    ];
+
     let templates = [
         ("config.default.toml", "config.toml"),
         ("init.sh", "init.sh"),
@@ -5588,7 +5593,9 @@ fn copy_template_files() -> Result<()> {
 
     for (template, dest) in templates.iter() {
         let dest_path = config_dir.join(dest);
-        if !dest_path.exists() {
+        let should_update = !dest_path.exists() || force_update_templates.contains(dest);
+
+        if should_update {
             let template_content = match *template {
                 "config.default.toml" => include_str!("../templates/config.default.toml"),
                 "init.sh" => include_str!("../templates/init.sh"),
@@ -5601,8 +5608,14 @@ fn copy_template_files() -> Result<()> {
                 "validator.sh" => include_str!("../templates/validator.sh"),
                 _ => return Err(anyhow!("Unknown template file: {}", template)),
             };
+
+            if dest_path.exists() {
+                println!("Updating {} with new version", dest);
+            } else {
+                println!("Creating {} at {:?}", dest, dest_path);
+            }
+
             fs::write(&dest_path, template_content)?;
-            println!("Created {} at {:?}", dest, dest_path);
         }
     }
 
