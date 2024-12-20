@@ -1205,10 +1205,12 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         return Err(anyhow!("ELF binary not found at: {}", elf_path.display()));
     }
 
-    // Load program keypair from file
     let secp = Secp256k1::new();
+    let keys_file = get_config_dir()?.join("keys.json");
+
     // Handle program key loading
     let program_keypair = if let Some(key_path) = &args.program_key {
+        // Load from provided key file
         let key_path = PathBuf::from(key_path);
         if !key_path.exists() {
             return Err(anyhow!("Program key file not found at: {}", key_path.display()));
@@ -1220,31 +1222,26 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         UntweakedKeypair::from_seckey_slice(&secp, &key_bytes)
             .map_err(|e| anyhow!("Invalid private key: {}", e))?
     } else {
-        // No key provided - prompt user to choose from keys.json
-        let keys_file = get_config_dir()?.join("keys.json");
-        if !keys_file.exists() {
-            return Err(anyhow!("No keys.json file found. Please create a key first or provide a program key file."));
-        }
+        // No key provided - show options including creating new key
+        let mut key_names: Vec<String> = if keys_file.exists() {
+            let keys: Value = serde_json::from_str(&fs::read_to_string(&keys_file)?)?;
+            keys.as_object()
+                .ok_or_else(|| anyhow!("Invalid keys.json format"))?
+                .keys()
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-        // List available keys
-        let keys: Value = serde_json::from_str(&fs::read_to_string(&keys_file)?)?;
-        let key_names: Vec<String> = keys.as_object()
-            .ok_or_else(|| anyhow!("Invalid keys.json format"))?
-            .keys()
-            .cloned()
-            .collect();
-
-        if key_names.is_empty() {
-            return Err(anyhow!("No keys found in keys.json"));
-        }
-
-        println!("Available keys:");
+        println!("Available options:");
+        println!("  0. Create new key");
         for (i, name) in key_names.iter().enumerate() {
             println!("  {}. {}", i + 1, name);
         }
 
         let selected_key = loop {
-            print!("Choose a key (1-{}) or 'q' to quit: ", key_names.len());
+            print!("Choose an option (0-{}) or 'q' to quit: ", key_names.len());
             io::stdout().flush()?;
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
@@ -1255,7 +1252,19 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
             }
 
             if let Ok(choice) = input.parse::<usize>() {
-                if choice > 0 && choice <= key_names.len() {
+                if choice == 0 {
+                    // Create new key
+                    let key_name = create_unique_key_name(&keys_file)?;
+                    create_account(
+                        &CreateAccountArgs {
+                            name: key_name.clone(),
+                            program_id: None,
+                            rpc_url: args.rpc_url.clone(),
+                        },
+                        config,
+                    ).await?;
+                    break key_name;
+                } else if choice <= key_names.len() {
                     break key_names[choice - 1].clone();
                 }
             }
@@ -1265,6 +1274,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         get_keypair_from_name(&selected_key, &keys_file)?
     };
 
+    // Rest of deploy function remains the same
     let program_pubkey = Pubkey::from_slice(
         &XOnlyPublicKey::from_keypair(&program_keypair).0.serialize()
     );
@@ -1302,6 +1312,23 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     println!("Program ID: {}", program_pubkey);
 
     Ok(())
+}
+
+pub fn create_unique_key_name(keys_file: &Path) -> Result<String> {
+    let mut counter = 1;
+    let base_name = "program_key";
+    
+    let existing_keys: Value = if keys_file.exists() {
+        serde_json::from_str(&fs::read_to_string(keys_file)?)?
+    } else {
+        json!({})
+    };
+
+    while existing_keys.get(&format!("{}{}", base_name, counter)).is_some() {
+        counter += 1;
+    }
+
+    Ok(format!("{}{}", base_name, counter))
 }
 
 pub async fn send_coins(args: &SendCoinsArgs, config: &Config) -> Result<()> {
