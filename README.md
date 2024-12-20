@@ -127,10 +127,41 @@ These commands start, stop, check the status of, view logs for, and clean up the
 ### Deploy a program
 
 ```sh
-arch-cli deploy [--directory <path>] [--program-key <path>] [--folder <folder>]
+arch-cli deploy --elf-path <path> [--program-key <path>] [--rpc-url <url>]
 ```
 
-Compiles and deploys the specified program to the Arch Network.
+Deploys a compiled program to the Arch Network. The deploy command handles the complete deployment process, including:
+- Verifying the ELF binary
+- Managing program keys
+- Setting up Bitcoin RPC client
+- Funding the program account
+- Deploying program transactions
+- Making the program executable
+
+#### Arguments:
+
+- `--elf-path <path>` (Required): Path to the compiled ELF binary file
+- `--program-key <path>` (Optional): Path to a file containing hex-encoded private key for deployment
+  - If not provided, you'll be prompted to either:
+    - Choose from existing keys in your keys.json
+    - Create a new program key
+- `--rpc-url <url>` (Optional): RPC URL for connecting to the Arch Network
+  - Defaults to the configured leader_rpc_endpoint or NODE1_ADDRESS
+
+#### Example Usage:
+
+```sh
+# Deploy with a specific program key
+arch-cli deploy --elf-path target/deploy/myprogram.so --program-key keys/program.key
+
+# Deploy using interactive key selection
+arch-cli deploy --elf-path target/deploy/myprogram.so
+
+# Deploy to a specific RPC endpoint
+arch-cli deploy --elf-path target/deploy/myprogram.so --rpc-url http://localhost:9002
+```
+
+The deployment process will display progress information and the final Program ID upon successful completion.
 
 ### Manage a project
 
