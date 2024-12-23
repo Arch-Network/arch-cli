@@ -331,15 +331,21 @@ pub struct CreateProjectArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct DeployArgs {
-    /// Path to the compiled ELF binary
+    /// Path to the compiled ELF binary (optional)
     #[clap(
         long,
-        required = true,
-        help = "Path to the compiled ELF binary file"
+        help = "Path to the compiled ELF binary file. If not provided, will compile from source"
     )]
-    elf_path: String,
+    elf_path: Option<String>,
 
-    /// Path to the program key file (optional - will prompt to choose from keys.json if not provided)
+    /// Directory containing the program source (optional if elf_path is provided)
+    #[clap(
+        long,
+        help = "Directory containing your Arch Network program source"
+    )]
+    directory: Option<String>,
+
+    /// Path to the program key file (optional)
     #[clap(
         long,
         help = "Path to a file containing hex-encoded private key for deployment"
@@ -1197,18 +1203,48 @@ pub async fn server_stop(config: &Config) -> Result<()> {
 }
 
 pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
-    println!("{}", "Deploying your Arch Network program...".bold().green());
+    println!("{}", "Deploying program...".bold().green());
 
-    // Verify ELF file exists
-    let elf_path = PathBuf::from(&args.elf_path);
-    if !elf_path.exists() {
-        return Err(anyhow!("ELF binary not found at: {}", elf_path.display()));
-    }
+    // Find the program binary or compile from source
+    let program_path = if let Some(dir) = &args.directory {
+        PathBuf::from(dir)
+    } else {
+        // Get project directory from config
+        let project_dir = PathBuf::from(config.get_string("project.directory")?);
+        let projects_dir = project_dir.join("projects");
 
+        // Get list of projects
+        let projects: Vec<_> = fs::read_dir(&projects_dir)?
+            .filter_map(|entry| {
+                entry.ok().and_then(|e| {
+                    let path = e.path();
+                    if path.is_dir() && path.join("app/program").exists() {
+                        Some(path.file_name().unwrap().to_string_lossy().into_owned())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if projects.is_empty() {
+            return Err(anyhow!("No deployable projects found. Make sure your projects have an 'app/program' folder."));
+        }
+
+        // Ask user to select a project
+        let selection = Select::new()
+            .with_prompt("Select a project to deploy")
+            .items(&projects)
+            .interact()?;
+
+        let selected_project = &projects[selection];
+        projects_dir.join(selected_project).join("app/program")
+    };
+
+    // Handle program key selection
     let secp = Secp256k1::new();
     let keys_file = get_config_dir()?.join("keys.json");
 
-    // Handle program key loading
     let program_keypair = if let Some(key_path) = &args.program_key {
         // Load from provided key file
         let key_path = PathBuf::from(key_path);
@@ -1222,95 +1258,71 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
         UntweakedKeypair::from_seckey_slice(&secp, &key_bytes)
             .map_err(|e| anyhow!("Invalid private key: {}", e))?
     } else {
-        // No key provided - show options including creating new key
-        let mut key_names: Vec<String> = if keys_file.exists() {
-            let keys: Value = serde_json::from_str(&fs::read_to_string(&keys_file)?)?;
-            keys.as_object()
-                .ok_or_else(|| anyhow!("Invalid keys.json format"))?
-                .keys()
-                .cloned()
-                .collect()
+        // Show key selection menu
+        let mut keys: Value = if keys_file.exists() {
+            serde_json::from_str(&fs::read_to_string(&keys_file)?)?
         } else {
-            Vec::new()
+            json!({})
         };
 
-        println!("Available options:");
-        println!("  0. Create new key");
-        for (i, name) in key_names.iter().enumerate() {
-            println!("  {}. {}", i + 1, name);
-        }
-
-        let selected_key = loop {
-            print!("Choose an option (0-{}) or 'q' to quit: ", key_names.len());
-            io::stdout().flush()?;
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-
-            let input = input.trim();
-            if input.eq_ignore_ascii_case("q") {
-                return Ok(());
-            }
-
-            if let Ok(choice) = input.parse::<usize>() {
-                if choice == 0 {
-                    // Create new key
-                    let key_name = create_unique_key_name(&keys_file)?;
-                    create_account(
-                        &CreateAccountArgs {
-                            name: key_name.clone(),
-                            program_id: None,
-                            rpc_url: args.rpc_url.clone(),
-                        },
-                        config,
-                    ).await?;
-                    break key_name;
-                } else if choice <= key_names.len() {
-                    break key_names[choice - 1].clone();
-                }
-            }
-            println!("Invalid selection. Please try again.");
-        };
-
-        get_keypair_from_name(&selected_key, &keys_file)?
+        let (selected_keypair, _) = select_existing_key(&mut keys)?;
+        selected_keypair
     };
 
-    // Rest of deploy function remains the same
     let program_pubkey = Pubkey::from_slice(
         &XOnlyPublicKey::from_keypair(&program_keypair).0.serialize()
     );
 
-    // Display the program public key
     println!("Program ID: {}", program_pubkey);
 
     // Set up Bitcoin RPC client and handle funding
     let wallet_manager = WalletManager::new(config)?;
     ensure_wallet_balance(&wallet_manager.client).await?;
 
+    // Deploy the program
+    let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
+    println!("Using RPC URL: {}", rpc_url);
+
+    // Get the program binary path
+    let elf_path = if program_path.is_file() {
+        program_path
+    } else {
+        // Compile from source
+        println!("  {} Compiling program...", "→".bold().blue());
+        let status = Command::new("cargo")
+            .current_dir(&program_path)
+            .arg("build-sbf")
+            .status()
+            .context("Failed to run cargo build-sbf")?;
+
+        if !status.success() {
+            return Err(anyhow!("Failed to compile program"));
+        }
+
+        // Find the compiled binary
+        let target_dir = program_path.join("target/deploy");
+        fs::read_dir(&target_dir)?
+            .filter_map(Result::ok)
+            .find(|entry| entry.path().extension().map_or(false, |ext| ext == "so"))
+            .ok_or_else(|| anyhow!("No .so file found in target/deploy directory"))?
+            .path()
+    };
+
+    // Deploy the program
     let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
 
-    // Get account address and fund it
-    let rpc_url_clone = rpc_url.clone();
-    let account_address = task::spawn_blocking(move || {
-        get_account_address(&rpc_url_clone, program_pubkey.clone())
-    }).await?;
-
-    let tx_info = fund_address(&wallet_manager.client, &account_address, config).await?;
-
-    // Deploy the program using the ELF binary
-    println!("Deploying program from: {}", elf_path.display());
-    deploy_program_txs(
+    // Deploy the program
+    deploy_program_from_path(
         &elf_path,
-        &program_keypair,
-        &program_pubkey,
         config,
-        args.rpc_url.clone().unwrap_or_else(|| common::constants::NODE1_ADDRESS.to_string())
+        Some((program_keypair.clone(), program_pubkey)),
+        rpc_url.clone(),
     ).await?;
 
-    wallet_manager.close_wallet()?;
+    // Make the program executable
+    make_program_executable(&program_keypair, &program_pubkey, rpc_url).await?;
 
-    println!("{}", "Your program has been deployed successfully!".bold().green());
-    println!("Program ID: {}", program_pubkey);
-
+    println!("{}", "Program deployed successfully!".bold().green());
     Ok(())
 }
 
@@ -2344,10 +2356,32 @@ fn _create_docker_network(network_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn get_program_path(args: &DeployArgs) -> PathBuf {
-    let mut path = PathBuf::from(&args.elf_path);
-    path.push("Cargo.toml");
-    path
+fn get_program_path(args: &DeployArgs, config: &Config) -> Result<PathBuf> {
+    match &args.elf_path {
+        Some(path) => Ok(PathBuf::from(path)),
+        None => {
+            let (_, projects_dir) = setup_base_structure(config)?;
+            let projects: Vec<_> = fs::read_dir(&projects_dir)?
+                .filter_map(Result::ok)
+                .filter(|e| e.path().join("program").exists())
+                .collect();
+
+            if projects.is_empty() {
+                return Err(anyhow!("No deployable projects found"));
+            }
+
+            let selections: Vec<_> = projects.iter()
+                .map(|p| p.file_name().to_string_lossy().into_owned())
+                .collect();
+
+            let selection = Select::new()
+                .with_prompt("Select a project to deploy")
+                .items(&selections)
+                .interact()?;
+
+            Ok(projects[selection].path().join("program"))
+        }
+    }
 }
 
 fn _get_program_key_path(args: &DeployArgs, config: &Config) -> Result<String> {
