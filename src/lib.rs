@@ -387,6 +387,10 @@ pub struct DemoStartArgs {
     /// RPC URL for connecting to the Arch Network
     #[clap(long, help = "RPC URL for the Arch Network node")]
     rpc_url: Option<String>,
+
+    /// Skip cleanup of existing containers and network
+    #[clap(long, help = "Skip stopping existing containers and removing network")]
+    skip_cleanup: bool,
 }
 
 #[derive(Args)]
@@ -3173,33 +3177,54 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
     env_content = env_content.replace("VITE_WALL_ACCOUNT_PUBKEY=", &format!("VITE_WALL_ACCOUNT_PUBKEY={}", graffiti_wall_state_pubkey));
     fs::write(&env_file, env_content).context("Failed to write to .env file")?;
 
-    // Stop existing demo containers
-    println!(
-        "  {} Stopping any existing demo containers...",
-        "→".bold().blue()
-    );
-
-    // Change to the demo directory
-    std::env::set_current_dir(&demo_dir).context("Failed to change to demo directory")?;
-
-    let stop_output = ShellCommand::new("docker-compose")
-        .arg("-f")
-        .arg("app/demo-docker-compose.yml")
-        .arg("down")
-        .output()
-        .context("Failed to stop existing demo containers")?;
-
-    
-
-    if !stop_output.status.success() {
+    if !args.skip_cleanup {
+        // Stop existing demo containers
         println!(
-            "  {} Warning: Failed to stop existing demo containers. Proceeding anyway.",
-            "⚠".bold().yellow()
+            "  {} Stopping any existing demo containers...",
+            "→".bold().blue()
         );
+
+        // Change to the demo directory
+        std::env::set_current_dir(&demo_dir).context("Failed to change to demo directory")?;
+
+        let stop_output = ShellCommand::new("docker-compose")
+            .arg("-f")
+            .arg("app/demo-docker-compose.yml")
+            .arg("down")
+            .output()
+            .context("Failed to stop existing demo containers")?;
+
+        if !stop_output.status.success() {
+            println!(
+                "  {} Warning: Failed to stop existing demo containers. Proceeding anyway.",
+                "⚠".bold().yellow()
+            );
+        } else {
+            println!(
+                "  {} Existing demo containers stopped successfully",
+                "✓".bold().green()
+            );
+        }
+
+        // Remove the arch-network
+        println!("  {} Removing arch-network...", "→".bold().blue());
+        let remove_network_output = ShellCommand::new("docker")
+            .args(&["network", "rm", "arch-network"])
+            .output()
+            .context("Failed to remove arch-network")?;
+
+        if !remove_network_output.status.success() {
+            let error_message = String::from_utf8_lossy(&remove_network_output.stderr);
+            if !error_message.contains("not found") {
+                println!("  {} Warning: Failed to remove arch-network: {}", "⚠".bold().yellow(), error_message);
+            }
+        }
+
+        println!("  {} arch-network removed", "✓".bold().green());
     } else {
         println!(
-            "  {} Existing demo containers stopped successfully",
-            "✓".bold().green()
+            "  {} Skipping cleanup of existing containers and network",
+            "ℹ".bold().blue()
         );
     }
 
