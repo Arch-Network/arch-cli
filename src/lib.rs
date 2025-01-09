@@ -1324,7 +1324,7 @@ pub async fn deploy(args: &DeployArgs, config: &Config) -> Result<()> {
     ).await?;
 
     // Make the program executable
-    make_program_executable(&program_keypair, &program_pubkey, rpc_url).await?;
+    make_program_executable(&program_keypair, &program_pubkey, &rpc_url).await?;
 
     println!("{}", "Program deployed successfully!".bold().green());
     Ok(())
@@ -2408,7 +2408,7 @@ async fn deploy_program_with_tx_info(
             0,
             deploy_folder.map(|folder| format!("{}/app/program", folder)),
             config,
-            rpc_url,
+            &rpc_url,
         )
         .await?;
         println!("  {} Program deployed successfully", "✓".bold().green());
@@ -2736,7 +2736,7 @@ async fn deploy_program(
     vout: u32,
     deploy_folder: Option<String>,
     config: &Config,
-    rpc_url: String,
+    rpc_url: &String,
 ) -> Result<()> {
     // Create a new account for the program
     create_program_account(program_keypair, program_pubkey, txid, vout, rpc_url.clone()).await?;
@@ -2810,7 +2810,7 @@ pub async fn deploy_program_from_path(
 async fn make_program_executable(
     program_keypair: &Keypair,
     program_pubkey: &Pubkey,
-    rpc_url: String,
+    rpc_url: &String,
 ) -> Result<()> {
     println!("    Making program executable...");
 
@@ -3153,7 +3153,7 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
 
     // Make the program executable
     let rpc_url = get_rpc_url_with_fallback(args.rpc_url.clone(), config).unwrap();
-    make_program_executable(&program_keypair, &program_pubkey, rpc_url).await?;
+    make_program_executable(&program_keypair, &program_pubkey, &rpc_url).await?;
 
     let graffiti_wall_state_exists = key_name_exists(&keys_file, "graffiti_wall_state")?;
 
@@ -3260,8 +3260,10 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
 
     println!("  {} arch-network created or already exists", "✓".bold().green());
 
-    // Creating longer-lived values for the environment variables to avoid temporary value drop errors
+    // Convert program_pubkey to a string to ensure it's not dropped before use
     let program_pubkey_str = hex::encode(program_pubkey.serialize());
+
+    // Convert graffiti_wall_state_pubkey to a string to ensure it's not dropped before use
     let graffiti_wall_state_pubkey_str = graffiti_wall_state_pubkey.to_string();
     let demo_frontend_port_str = "5173".to_string();
     let indexer_port_str = "5175".to_string();
@@ -3271,16 +3273,26 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
         ("VITE_WALL_ACCOUNT_PUBKEY", &graffiti_wall_state_pubkey_str),
         ("DEMO_FRONTEND_PORT", &demo_frontend_port_str),
         ("INDEXER_PORT", &indexer_port_str),
+        ("VITE_RPC_URL", &rpc_url),
     ];
+
+    // Print the current directory
+    println!("Current directory: {:?}", std::env::current_dir()?);
 
     // Start the demo application
     println!("  {} Starting demo containers...", "→".bold().blue());
+
+    // Store original directory before any directory changes
+    let original_dir = std::env::current_dir()?;
+
+    // Change to the demo directory
+    std::env::set_current_dir(&demo_dir)?;
 
     // Create the docker-compose command with environment variables
     let mut command = ShellCommand::new("docker-compose");
     command
         .arg("-f")
-        .arg("app/demo-docker-compose.yml")
+        .arg("app/demo-docker-compose.yml")  // Update path to be relative to original directory
         .arg("up")
         .arg("--build")
         .arg("-d");
@@ -3305,6 +3317,9 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
         "{}",
         "Demo application started successfully!".bold().green()
     );
+
+    // Restore original directory before docker-compose
+    std::env::set_current_dir(&original_dir)?;
 
     // Open the browser with the demo application
     if let Err(e) = open_browser(webbrowser::Browser::Default, &format!("http://localhost:5173")) {

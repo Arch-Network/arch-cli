@@ -109,7 +109,7 @@ pub async fn setup_demo_environment(
 
     // Clone the rpc_url before using it to avoid the "use of moved value" error
     let rpc_url_clone = rpc_url.clone();
-    make_program_executable(&program_keypair, &program_pubkey_bytes, rpc_url_clone).await?;
+    make_program_executable(&program_keypair, &program_pubkey_bytes, &rpc_url_clone).await?;
 
     // Setup wall account
     let wall_pubkey = if key_name_exists(&keys_file, "graffiti_wall_state")? {
