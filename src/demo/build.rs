@@ -14,16 +14,18 @@ pub fn build_frontend(
     let env_file = demo_dir.join("app/frontend/.env");
     let mut env_content = fs::read_to_string(&env_file)?;
 
-    env_content = env_content
-        .replace(
-            "VITE_PROGRAM_PUBKEY=",
-            &format!("VITE_PROGRAM_PUBKEY={}", program_pubkey),
-        )
-        .replace(
-            "VITE_WALL_ACCOUNT_PUBKEY=",
-            &format!("VITE_WALL_ACCOUNT_PUBKEY={}", wall_pubkey),
-        )
-        .replace("VITE_NETWORK=", &format!("VITE_NETWORK={}", network));
+    env_content = Regex::new(r"VITE_PROGRAM_PUBKEY=.*")
+        .unwrap()
+        .replace(&env_content,&format!("VITE_PROGRAM_PUBKEY={}", program_pubkey))
+        .to_string();
+    env_content = Regex::new(r"VITE_WALL_ACCOUNT_PUBKEY=.*")
+        .unwrap()
+        .replace(&env_content,&format!("VITE_WALL_ACCOUNT_PUBKEY={}", wall_pubkey))
+        .to_string();
+    env_content = Regex::new(r"VITE_NETWORK=.*")
+        .unwrap()
+        .replace(&env_content, &format!("VITE_NETWORK={}", network))
+        .to_string();
 
     if let Some(url) = rpc_url {
         let re = Regex::new(r"VITE_RPC_URL=.*").unwrap();

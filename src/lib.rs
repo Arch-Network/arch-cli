@@ -3174,7 +3174,8 @@ pub async fn start_local_demo(args: &DemoStartArgs, config: &Config) -> Result<(
     // Write the graffiti_wall_state public key into the app/frontend/.env file
     let env_file = PathBuf::from(&demo_dir).join("app/frontend/.env");
     let mut env_content = fs::read_to_string(&env_file).context("Failed to read .env file")?;
-    env_content = env_content.replace("VITE_WALL_ACCOUNT_PUBKEY=", &format!("VITE_WALL_ACCOUNT_PUBKEY={}", graffiti_wall_state_pubkey));
+    let re = regex::Regex::new(r"VITE_WALL_ACCOUNT_PUBKEY=.*").unwrap();
+    env_content = re.replace(&env_content, format!("VITE_WALL_ACCOUNT_PUBKEY={}", graffiti_wall_state_pubkey)).to_string();
     fs::write(&env_file, env_content).context("Failed to write to .env file")?;
 
     if !args.skip_cleanup {
