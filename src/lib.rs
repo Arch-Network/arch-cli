@@ -1,4 +1,5 @@
 mod demo;
+use arch_program::msg;
 use demo::{setup_demo_environment, build_frontend, get_cloud_run_url};
 use anyhow::anyhow;
 use anyhow::{Context, Result};
@@ -2571,7 +2572,8 @@ fn display_program_id(program_pubkey: &Pubkey) {
 
 async fn ensure_wallet_balance(client: &Client) -> Result<()> {
     let balance = client.get_balance(None, None)?;
-    if balance == Amount::ZERO {
+    let blockchain_info = client.get_blockchain_info()?;
+    if balance == Amount::ZERO && blockchain_info.chain == bitcoin::Network::Regtest {
         println!(
             "  {} Generating initial blocks for mining rewards...",
             "→".blue()
