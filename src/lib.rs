@@ -4965,7 +4965,7 @@ async fn start_local_validator(args: &ValidatorStartArgs, config: &Config) -> Re
             .arg(format!("RUST_LOG={}", rust_log))
             .arg("-p")
             .arg(format!("{}:{}", rpc_bind_port, rpc_bind_port))
-            .arg("ghcr.io/arch-network/local_validator:latest")
+            .arg("ghcr.io/arch-network/local_validator:0.2.17")
             .arg("/usr/bin/local_validator")
             .arg("--rpc-bind-ip")
             .arg(rpc_bind_ip)
