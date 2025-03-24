@@ -2597,8 +2597,6 @@ async fn fund_address(
     let bitcoin_network =
         Network::from_str(&network).context("Invalid Bitcoin network specified in config")?;
 
-        println!("Network: {}", bitcoin_network);
-
     let address = Address::from_str(account_address).context("Invalid account address")?;
     let checked_address = address
         .require_network(bitcoin_network)
@@ -2616,7 +2614,7 @@ async fn fund_address(
             let checked_address = new_address.require_network(bitcoin_network)?;
             rpc.generate_to_address(101, &checked_address)?;
             println!(
-                "  {} Initial blocks generated. Waiting for balance to be available...",
+                "  {} Initial blocks generated.",
                 "✓".bold().green()
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -2640,55 +2638,19 @@ async fn fund_address(
             "✓".bold().green(),
             tx.to_string().yellow()
         );
+
         // Generate a block to confirm the transaction
         let new_address = rpc.get_new_address(None, None)?;
         let checked_new_address = new_address.require_network(bitcoin_network)?;
         rpc.generate_to_address(1, &checked_new_address)?;
 
-        // Create a progress bar for waiting
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.blue} {msg}")
-                .unwrap()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈"),
+        // Get transaction info without waiting for confirmation
+        let tx_info = rpc.get_transaction(&tx, None)?;
+        println!(
+            "  {} Transaction broadcast successfully. It will be confirmed in the next block.",
+            "✓".bold().green()
         );
-
-        let start_time = std::time::Instant::now();
-        let timeout = Duration::from_secs(3600); // 60 minutes timeout
-
-        // Wait for transaction confirmation
-        loop {
-            if start_time.elapsed() > timeout {
-                pb.finish_with_message("❌ Transaction confirmation timed out after 60 minutes");
-                return Err(anyhow!("Transaction confirmation timed out"));
-            }
-
-            match rpc.get_transaction(&tx, None) {
-                Ok(info) if info.info.confirmations > 0 => {
-                    pb.finish_with_message(format!(
-                        "✓ Transaction confirmed with {} confirmations",
-                        info.info.confirmations.to_string().yellow()
-                    ));
-                    return Ok(Some(info));
-                }
-                Ok(_) => {
-                    let elapsed = start_time.elapsed().as_secs();
-                    pb.set_message(format!(
-                        "Waiting for confirmation... ({:02}:{:02})",
-                        elapsed / 60,
-                        elapsed % 60
-                    ));
-                }
-                Err(e) => {
-                    pb.set_message(format!(
-                        "⚠ Error checking transaction: {}. Retrying...",
-                        e.to_string()
-                    ));
-                }
-            }
-            tokio::time::sleep(Duration::from_secs(5)).await; // Check every 5 seconds instead of 1
-        }
+        return Ok(Some(tx_info));
     } else {
         println!("{}", "Please deposit funds to continue:".bold());
         println!(
@@ -2699,22 +2661,19 @@ async fn fund_address(
         println!(
             "  {} Minimum required: {} satoshis",
             "ℹ".bold().blue(),
-            "3000".yellow()
+            "5000".yellow()
         );
         println!("  {} Waiting for funds...", "⏳".bold().blue());
 
-        // Implement balance checking for non-REGTEST networks
-        loop {
-            let balance = rpc.get_balance(None, None)?;
-            if balance > Amount::from_sat(5000) {
-                println!("  {} Funds received", "✓".bold().green());
-                return Ok(None);
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        // Just check once for non-REGTEST networks
+        let balance = rpc.get_balance(None, None)?;
+        if balance > Amount::from_sat(5000) {
+            println!("  {} Funds received", "✓".bold().green());
+        } else {
+            println!("  {} Insufficient funds, but proceeding anyway", "⚠".bold().yellow());
         }
+        return Ok(None);
     }
-
-    Ok(None)
 }
 
 pub fn get_rpc_url_with_fallback(rpc_url: Option<String>, config: &Config) -> Result<String> {

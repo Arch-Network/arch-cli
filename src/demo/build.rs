@@ -16,11 +16,17 @@ pub fn build_frontend(
 
     env_content = Regex::new(r"VITE_PROGRAM_PUBKEY=.*")
         .unwrap()
-        .replace(&env_content,&format!("VITE_PROGRAM_PUBKEY={}", program_pubkey))
+        .replace(
+            &env_content,
+            &format!("VITE_PROGRAM_PUBKEY={}", program_pubkey),
+        )
         .to_string();
     env_content = Regex::new(r"VITE_WALL_ACCOUNT_PUBKEY=.*")
         .unwrap()
-        .replace(&env_content,&format!("VITE_WALL_ACCOUNT_PUBKEY={}", wall_pubkey))
+        .replace(
+            &env_content,
+            &format!("VITE_WALL_ACCOUNT_PUBKEY={}", wall_pubkey),
+        )
         .to_string();
     env_content = Regex::new(r"VITE_NETWORK=.*")
         .unwrap()
