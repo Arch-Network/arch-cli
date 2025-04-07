@@ -1,3 +1,6 @@
+THIS REPO IS NO LONGER BEING DEVELOPED. USE FOR EDUCATIONAL PURPOSES ONLY. PLEASE SEE HERE FOR LATEST CLI VERSION: https://github.com/Arch-Network/arch-node/releases
+
+
 # Arch-CLI
 
 Arch-CLI is a command-line interface tool designed to streamline the development process for Arch Network applications. It provides a set of commands to initialize, manage, and deploy Arch Network programs efficiently.
